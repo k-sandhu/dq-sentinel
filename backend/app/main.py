@@ -1,6 +1,5 @@
 """FastAPI application factory. Run: uvicorn app.main:app --reload --app-dir backend"""
 
-import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -10,8 +9,9 @@ from app import __version__
 from app.api import api_router
 from app.config import get_settings
 from app.db import init_db
+from app.observability import RequestContextMiddleware, configure_logging, metrics_endpoint
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+configure_logging(get_settings().log_format, get_settings().log_level)
 
 
 @asynccontextmanager
@@ -29,6 +29,7 @@ def create_app() -> FastAPI:
         docs_url="/docs",
         openapi_url="/api/v1/openapi.json",
     )
+    app.add_middleware(RequestContextMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
@@ -40,7 +41,18 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/health", tags=["meta"])
     def health():
-        return {"status": "ok", "version": __version__, "llm_enabled": settings.llm_enabled}
+        from app.llm.client import provider_info
+
+        return {
+            "status": "ok",
+            "version": __version__,
+            "llm_enabled": settings.llm_enabled,
+            **provider_info(),
+        }
+
+    # Prometheus scrape target — unauthenticated by design (counts only, no data);
+    # keep it network-internal in production.
+    app.get("/metrics", include_in_schema=False)(metrics_endpoint)
 
     return app
 

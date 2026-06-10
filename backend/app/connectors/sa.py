@@ -5,6 +5,7 @@ connection id. All ad-hoc SQL goes through guard_sql() + enforce_limit().
 """
 
 import threading
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -14,6 +15,7 @@ from sqlalchemy.engine import Engine, make_url
 
 from app.connectors.safety import SqlNotAllowed, enforce_limit, guard_sql
 from app.models import Connection
+from app.observability import SOURCE_QUERIES, SOURCE_QUERY_SECONDS
 
 ALLOWED_SCHEMES = {"sqlite", "duckdb", "postgresql", "postgresql+psycopg", "postgresql+psycopg2"}
 
@@ -163,6 +165,10 @@ class Connector:
         return f"CREATE TABLE {self.table_ref(table, schema)} (\n{body}\n);", "synthesized"
 
     # ---- querying ----
+    def _observe(self, start: float) -> None:
+        SOURCE_QUERIES.labels(self.kind).inc()
+        SOURCE_QUERY_SECONDS.labels(self.kind).observe(time.perf_counter() - start)
+
     def run_select(
         self, sql: str, params: dict[str, Any] | None = None, limit: int | None = None
     ) -> QueryResult:
@@ -170,16 +176,24 @@ class Connector:
         cleaned = guard_sql(sql)
         if limit is not None:
             cleaned = enforce_limit(cleaned, limit)
-        with self.engine.connect() as conn:
-            res = conn.execute(text(cleaned), params or {})
-            cols = list(res.keys())
-            rows = [list(r) for r in res.fetchall()]
+        start = time.perf_counter()
+        try:
+            with self.engine.connect() as conn:
+                res = conn.execute(text(cleaned), params or {})
+                cols = list(res.keys())
+                rows = [list(r) for r in res.fetchall()]
+        finally:
+            self._observe(start)
         return QueryResult(columns=cols, rows=rows)
 
     def scalar(self, sql: str, params: dict[str, Any] | None = None) -> Any:
         cleaned = guard_sql(sql)
-        with self.engine.connect() as conn:
-            return conn.execute(text(cleaned), params or {}).scalar()
+        start = time.perf_counter()
+        try:
+            with self.engine.connect() as conn:
+                return conn.execute(text(cleaned), params or {}).scalar()
+        finally:
+            self._observe(start)
 
     def row_count(self, table: str, schema: str | None = None) -> int:
         return int(self.scalar(f"SELECT COUNT(*) FROM {self.table_ref(table, schema)}") or 0)
@@ -187,8 +201,12 @@ class Connector:
     def fetch_df(self, sql: str, limit: int) -> pd.DataFrame:
         """Bounded DataFrame fetch for profiling / ML sampling."""
         cleaned = enforce_limit(guard_sql(sql), limit)
-        with self.engine.connect() as conn:
-            return pd.read_sql(text(cleaned), conn)
+        start = time.perf_counter()
+        try:
+            with self.engine.connect() as conn:
+                return pd.read_sql(text(cleaned), conn)
+        finally:
+            self._observe(start)
 
     def test(self) -> tuple[bool, str, int | None]:
         try:

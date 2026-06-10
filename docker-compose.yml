@@ -27,8 +27,15 @@ services:
       DQ_DATABASE_URL: postgresql+psycopg://dq:dq@postgres:5432/dqsentinel
       DQ_SECRET_KEY: ${DQ_SECRET_KEY:-change-me-in-prod-0123456789abcdef}
       DQ_CORS_ORIGINS: http://localhost:3000,http://localhost:5173
+      DQ_LOG_FORMAT: json
+      # LLM (provider-agnostic): set ANTHROPIC_API_KEY for native Anthropic, or
+      # DQ_LLM_API_KEY + DQ_LLM_MODEL for any OpenAI-compatible endpoint
+      # (defaults to OpenRouter; override DQ_LLM_BASE_URL for vLLM/Ollama/etc).
+      DQ_LLM_PROVIDER: ${DQ_LLM_PROVIDER:-auto}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      DQ_LLM_MODEL: ${DQ_LLM_MODEL:-claude-opus-4-8}
+      DQ_LLM_API_KEY: ${DQ_LLM_API_KEY:-}
+      DQ_LLM_BASE_URL: ${DQ_LLM_BASE_URL:-https://openrouter.ai/api/v1}
+      DQ_LLM_MODEL: ${DQ_LLM_MODEL:-}
     volumes:
       - ./samples:/data/samples:ro # register with dsn sqlite:////data/samples/shopdb.sqlite
     ports:
@@ -56,5 +63,55 @@ services:
     depends_on:
       - api
 
+  # ---- observability (all open source: Prometheus / Grafana OSS / Loki) ----
+  prometheus:
+    image: prom/prometheus:v3.4.0
+    restart: unless-stopped
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    ports:
+      - "9090:9090"
+
+  loki:
+    image: grafana/loki:3.4.2
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/config.yml"]
+    volumes:
+      - ./monitoring/loki-config.yml:/etc/loki/config.yml:ro
+      - lokidata:/loki
+
+  promtail:
+    image: grafana/promtail:3.4.2
+    restart: unless-stopped
+    command: ["-config.file=/etc/promtail/config.yml"]
+    volumes:
+      - ./monitoring/promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    depends_on:
+      - loki
+
+  grafana:
+    image: grafana/grafana-oss:11.6.1
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafanadata:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+      - loki
+
 volumes:
   pgdata:
+  promdata:
+  lokidata:
+  grafanadata:

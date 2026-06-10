@@ -1,6 +1,7 @@
 """Execute checks and persist runs + exception records."""
 
 import logging
+import time
 from datetime import datetime
 
 from sqlalchemy.orm import Session
@@ -8,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.connectors.sa import connector_for
 from app.core.check_types import CheckContext, CheckResult, run_check_type
 from app.models import Check, CheckRun, ExceptionRecord, utcnow
+from app.observability import CHECK_RUN_SECONDS, CHECK_RUNS, EXCEPTIONS_RECORDED
 
 log = logging.getLogger(__name__)
 
@@ -21,6 +23,7 @@ def _status_for(check: Check, result: CheckResult) -> str:
 
 def run_check(db: Session, check: Check, triggered_by: str = "manual") -> CheckRun:
     dataset = check.dataset
+    started = time.perf_counter()
     run = CheckRun(
         check_id=check.id,
         dataset_id=dataset.id,
@@ -68,6 +71,19 @@ def run_check(db: Session, check: Check, triggered_by: str = "manual") -> CheckR
     db.add(run)
     db.commit()
     db.refresh(run)
+
+    CHECK_RUNS.labels(run.status, check.check_type, triggered_by).inc()
+    CHECK_RUN_SECONDS.labels(check.check_type).observe(time.perf_counter() - started)
+    if run.exceptions:
+        EXCEPTIONS_RECORDED.inc(len(run.exceptions))
+    log.info(
+        "check run finished",
+        extra={
+            "event": "check_run",
+            "status": run.status,
+            "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+        },
+    )
     return run
 
 

@@ -1,0 +1,19 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: dq-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api:8000"]
+        labels: { service: api }
+
+  - job_name: dq-worker
+    static_configs:
+      - targets: ["worker:9100"]
+        labels: { service: worker }
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

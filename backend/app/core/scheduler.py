@@ -15,6 +15,7 @@ from app.config import get_settings
 from app.core.runner import compute_next_run, run_check
 from app.db import session_factory
 from app.models import Check, utcnow
+from app.observability import WORKER_CLAIMS, WORKER_UP
 
 log = logging.getLogger(__name__)
 
@@ -66,23 +67,27 @@ def poll_once(executor: ThreadPoolExecutor) -> int:
             db.commit()
             if res.rowcount == 1:  # we won the claim
                 claimed += 1
+                WORKER_CLAIMS.inc()
                 executor.submit(_execute, check.id)
     return claimed
 
 
 def run_forever() -> None:  # pragma: no cover - long-running entrypoint
     settings = get_settings()
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     log.info(
         "DQ Sentinel worker started (poll every %ss, concurrency %s)",
         settings.worker_poll_seconds, settings.worker_concurrency,
     )
-    with ThreadPoolExecutor(max_workers=settings.worker_concurrency) as executor:
-        while True:
-            try:
-                n = poll_once(executor)
-                if n:
-                    log.info("Claimed %s due check(s)", n)
-            except Exception:  # noqa: BLE001 - the loop must survive transient DB errors
-                log.exception("Scheduler pass failed; continuing")
-            time.sleep(settings.worker_poll_seconds)
+    WORKER_UP.set(1)
+    try:
+        with ThreadPoolExecutor(max_workers=settings.worker_concurrency) as executor:
+            while True:
+                try:
+                    n = poll_once(executor)
+                    if n:
+                        log.info("Claimed %s due check(s)", n)
+                except Exception:  # noqa: BLE001 - the loop must survive transient DB errors
+                    log.exception("Scheduler pass failed; continuing")
+                time.sleep(settings.worker_poll_seconds)
+    finally:
+        WORKER_UP.set(0)

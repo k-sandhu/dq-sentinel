@@ -1,0 +1,85 @@
+{
+  "uid": "dq-overview",
+  "title": "DQ Sentinel Overview",
+  "tags": ["dq-sentinel"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-3h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "API requests/s by status",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "uid": "dq-prometheus" },
+      "targets": [{ "expr": "sum by (status) (rate(dq_http_requests_total[5m]))", "legendFormat": "{{status}}" }]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "API latency p50 / p95 / p99",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "uid": "dq-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "expr": "histogram_quantile(0.5, sum by (le) (rate(dq_http_request_seconds_bucket[5m])))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum by (le) (rate(dq_http_request_seconds_bucket[5m])))", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, sum by (le) (rate(dq_http_request_seconds_bucket[5m])))", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "Check runs/min by outcome",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "datasource": { "uid": "dq-prometheus" },
+      "targets": [{ "expr": "sum by (status) (rate(dq_check_runs_total[10m])) * 60", "legendFormat": "{{status}}" }]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Source queries/s by engine",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "datasource": { "uid": "dq-prometheus" },
+      "targets": [{ "expr": "sum by (engine) (rate(dq_source_queries_total[5m]))", "legendFormat": "{{engine}}" }]
+    },
+    {
+      "id": 5, "type": "stat", "title": "Worker up",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 8 },
+      "datasource": { "uid": "dq-prometheus" },
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } }, "overrides": [] },
+      "targets": [{ "expr": "max(dq_worker_up)" }]
+    },
+    {
+      "id": 6, "type": "stat", "title": "Exceptions captured (1h)",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 8 },
+      "datasource": { "uid": "dq-prometheus" },
+      "targets": [{ "expr": "sum(increase(dq_exceptions_recorded_total[1h]))" }]
+    },
+    {
+      "id": 7, "type": "stat", "title": "Worker claims (1h)",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 12 },
+      "datasource": { "uid": "dq-prometheus" },
+      "targets": [{ "expr": "sum(increase(dq_worker_claims_total[1h]))" }]
+    },
+    {
+      "id": 8, "type": "stat", "title": "API 5xx (1h)",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 12 },
+      "datasource": { "uid": "dq-prometheus" },
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
+      "targets": [{ "expr": "sum(increase(dq_http_requests_total{status=~\"5..\"}[1h]))" }]
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "LLM calls/min by provider/model/outcome",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "uid": "dq-prometheus" },
+      "targets": [{ "expr": "sum by (provider, model, outcome) (rate(dq_llm_requests_total[10m])) * 60", "legendFormat": "{{provider}}/{{model}} {{outcome}}" }]
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "LLM tokens/min",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "uid": "dq-prometheus" },
+      "targets": [{ "expr": "sum by (direction) (rate(dq_llm_tokens_total[10m])) * 60", "legendFormat": "{{direction}}" }]
+    },
+    {
+      "id": 11, "type": "logs", "title": "API + worker logs (errors highlighted by level label)",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 24 },
+      "datasource": { "uid": "dq-loki" },
+      "options": { "showLabels": false, "showTime": true, "wrapLogMessage": true, "enableLogDetails": true },
+      "targets": [{ "expr": "{service=~\"api|worker\"}" }]
+    }
+  ]
+}
