@@ -41,3 +41,6 @@ desktop.ini
 # OneDrive sync artifacts
 *.tmp
 ~$*
+
+# Claude Code harness artifacts
+.claude/*.lock
