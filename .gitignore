@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+
+# Node
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# App & sample databases (regenerate with data/generate_sample_data.py)
+*.sqlite
+*.sqlite3
+*.db
+*.duckdb
+*.duckdb.wal
+samples/
+backend/dqsentinel.db*
+
+# Env & secrets
+.env
+.env.local
+.env.*.local
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+
+# OneDrive sync artifacts
+*.tmp
+~$*
