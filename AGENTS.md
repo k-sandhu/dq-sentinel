@@ -145,12 +145,36 @@ Push coherent checkpoints to `main` frequently (CI gates them) rather than batch
 
 ## LLM integration notes
 
-- Provider: Anthropic (`anthropic` SDK). Env: `ANTHROPIC_API_KEY`, `DQ_LLM_MODEL`
-  (default in `app/config.py`), `DQ_LLM_MAX_EXPLORE_TURNS`.
+- **Provider-agnostic** (`app/llm/providers.py`): `AnthropicProvider` (native API: adaptive
+  thinking, structured outputs, MCP connector) and `OpenAICompatProvider` (ANY base_url+key —
+  OpenRouter default, vLLM/Ollama/Together/...). Selection via `DQ_LLM_PROVIDER`
+  (auto|anthropic|openai|openrouter) + `ANTHROPIC_API_KEY` / `DQ_LLM_API_KEY` +
+  `DQ_LLM_BASE_URL` + `DQ_LLM_MODEL`; resolution logic lives in `config.Settings.resolved_llm()`.
+- Everything upstream (agent loops, check-gen, suggestions, dashboards) works on the normalized
+  `LlmResponse`/history contract — never import an SDK outside `providers.py`. Each provider keeps
+  its raw assistant payload in history for fidelity (Anthropic thinking signatures, OpenAI
+  tool_call ids) — don't strip `raw`.
+- Capability differences are handled inside providers: structured outputs fall back to
+  prompt-embedded schemas on endpoints without `response_format`; the MCP connector only attaches
+  on the Anthropic path. Test loop changes with the `FakeProvider` in `tests/test_llm_providers.py`.
 - All agent SQL goes through the same `guard_sql()` + row-limit path as humans.
 - The explorer and RCA agents are bounded loops (max turns, max rows per query) — keep bounds.
 - When changing prompts, keep the JSON output contracts in `app/llm/prompts.py` in sync with the
   parsers next to them; parsers must tolerate markdown-fenced JSON.
+
+## Observability
+
+- Logging: `app/observability.py` — `DQ_LOG_FORMAT=json|text`, request-ID correlation
+  (`X-Request-ID` in/out), one structured line per request. Don't `print()`; use module loggers,
+  pass structured fields via `extra={"event": ...}`.
+- Metrics: prometheus-client. API serves `/metrics` (unauthenticated by design — counts only;
+  keep it network-internal in prod); worker exposes `:9100`. Domain metrics: `dq_check_runs_total`,
+  `dq_source_queries_total{engine}`, `dq_llm_requests_total{provider,model,outcome}`,
+  `dq_llm_tokens_total`, `dq_worker_*`. Label cardinality discipline: route templates, engine
+  names, providers — never raw paths/SQL/dataset names.
+- Stack (all OSS): Prometheus + Grafana OSS + Loki + Promtail in docker-compose; configs under
+  `monitoring/`. Grafana on :3001 (admin/admin) auto-provisions the "DQ Sentinel Overview"
+  dashboard. New metrics belong on that dashboard (`monitoring/grafana/dashboards/dq-sentinel.json`).
 
 ## OneDrive gotchas (this repo may live inside OneDrive on Windows)
 

@@ -232,8 +232,15 @@ export default function SettingsPage() {
           <div className="value" style={{ fontSize: 18 }}>
             {health?.llm_enabled ? <span className="badge ai">enabled</span> : <span className="badge">disabled</span>}
           </div>
-          {!health?.llm_enabled && (
-            <div className="hint">Set ANTHROPIC_API_KEY in the backend env to enable AI generation, exploration and RCA.</div>
+          {health?.llm_enabled ? (
+            <div className="hint">
+              provider <strong>{health.llm_provider}</strong> · model <code>{health.llm_model}</code>
+            </div>
+          ) : (
+            <div className="hint">
+              Provider-agnostic: set ANTHROPIC_API_KEY (native) or DQ_LLM_API_KEY + DQ_LLM_MODEL for any
+              OpenAI-compatible endpoint (OpenRouter by default; DQ_LLM_BASE_URL to point elsewhere).
+            </div>
           )}
         </div>
         <div className="card stat-card">

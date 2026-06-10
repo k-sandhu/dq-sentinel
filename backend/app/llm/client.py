@@ -1,37 +1,33 @@
-"""Anthropic client wrapper + the shared SQL-tool agentic loop.
-
-All LLM features degrade gracefully: callers must check llm_enabled() and fall
-back (heuristics for check generation, 503 for explorer/RCA).
+"""LLM entrypoints used across the app, built on the provider-agnostic layer
+(app/llm/providers.py). All features degrade gracefully: callers must check
+llm_enabled() and fall back (heuristics for generation, 503 for agents).
 """
 
 import json
 import logging
 import re
 from collections.abc import Callable
-from functools import lru_cache
 from typing import Any
 
 from app.config import get_settings
+from app.llm.providers import LlmResponse, get_provider
 
 log = logging.getLogger(__name__)
-
-# Models with adaptive thinking support (Fable / Opus 4.6+ / Sonnet 4.6).
-_ADAPTIVE_RE = re.compile(r"(fable|opus-4-[6-9]|sonnet-4-[6-9])")
 
 
 def llm_enabled() -> bool:
     return get_settings().llm_enabled
 
 
-@lru_cache
-def _client():
-    import anthropic
-
-    return anthropic.Anthropic(api_key=get_settings().anthropic_api_key)
+def provider_info() -> dict[str, Any]:
+    resolved = get_settings().resolved_llm()
+    if resolved is None:
+        return {"llm_provider": None, "llm_model": None}
+    return {"llm_provider": resolved["provider"], "llm_model": resolved["model"]}
 
 
 def enabled_mcp_servers() -> list[dict[str, Any]]:
-    """Admin-registered MCP servers (issue #36) to pass via the Claude MCP connector."""
+    """Admin-registered MCP servers (issue #36), attached on the Anthropic path."""
     from app.db import session_factory
     from app.models import McpServer
 
@@ -49,42 +45,26 @@ def enabled_mcp_servers() -> list[dict[str, Any]]:
     return out
 
 
-def create_message(
+def complete(
     system: str,
-    messages: list[dict[str, Any]],
+    user_prompt: str,
     tools: list[dict[str, Any]] | None = None,
     json_schema: dict[str, Any] | None = None,
     max_tokens: int | None = None,
     use_mcp: bool = False,
-):
-    settings = get_settings()
-    kwargs: dict[str, Any] = {
-        "model": settings.llm_model,
-        "max_tokens": max_tokens or settings.llm_max_output_tokens,
-        "system": system,
-        "messages": messages,
-    }
-    if _ADAPTIVE_RE.search(settings.llm_model):
-        kwargs["thinking"] = {"type": "adaptive"}
-    if tools:
-        kwargs["tools"] = tools
-    if json_schema:
-        kwargs["output_config"] = {"format": {"type": "json_schema", "schema": json_schema}}
-
-    if use_mcp:
-        servers = enabled_mcp_servers()
-        if servers:
-            try:
-                return _client().beta.messages.create(
-                    **kwargs, mcp_servers=servers, betas=["mcp-client-2025-11-20"]
-                )
-            except Exception as exc:  # noqa: BLE001 - MCP connector is best-effort (experimental)
-                log.warning("MCP connector call failed (%s); retrying without MCP servers", exc)
-    return _client().messages.create(**kwargs)
-
-
-def extract_text(response) -> str:
-    return "".join(b.text for b in response.content if b.type == "text")
+) -> LlmResponse:
+    """One-shot completion on whichever provider is configured."""
+    provider = get_provider()
+    if provider is None:
+        raise RuntimeError("No LLM provider configured")
+    return provider.complete(
+        system,
+        [{"role": "user", "text": user_prompt}],
+        tools=tools,
+        json_schema=json_schema,
+        max_tokens=max_tokens,
+        use_mcp=use_mcp,
+    )
 
 
 def format_rows(columns: list[str], rows: list[list[Any]], max_cell: int = 120) -> str:
@@ -162,33 +142,36 @@ def run_agent_loop(
     max_turns: int,
     transcript: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
-    """Generic bounded agentic loop: call handler tools until the model calls
-    `final_tool`. Returns the final tool's input dict, or None if the loop expired.
-    The transcript list is appended to in place (text/sql/tool/result/final steps).
+    """Generic bounded agentic loop on the provider abstraction: call handler
+    tools until the model calls `final_tool`. Returns the final tool's input
+    dict, or None if the loop expired. The transcript list is appended to in
+    place (text/sql/tool/result/final steps).
     """
+    provider = get_provider()
+    if provider is None:
+        raise RuntimeError("No LLM provider configured")
+
     all_tools = [*tools, final_tool]
-    messages: list[dict[str, Any]] = [{"role": "user", "content": user_prompt}]
+    history: list[dict[str, Any]] = [{"role": "user", "text": user_prompt}]
     nudges = 0
 
     for _turn in range(max_turns):
-        response = create_message(system=system, messages=messages, tools=all_tools, use_mcp=True)
-        messages.append({"role": "assistant", "content": response.content})
+        response = provider.complete(system, history, tools=all_tools, use_mcp=True)
+        history.append({"role": "assistant", "response": response})
 
-        text = extract_text(response)
-        if text.strip():
-            transcript.append({"type": "text", "content": text.strip()})
+        if response.text.strip():
+            transcript.append({"type": "text", "content": response.text.strip()})
 
-        tool_uses = [b for b in response.content if b.type == "tool_use"]
-        if not tool_uses:
-            if response.stop_reason == "pause_turn":
+        if not response.tool_calls:
+            if response.stop_reason == "pause":
                 continue
             nudges += 1
             if nudges > 2:
                 break
-            messages.append(
+            history.append(
                 {
                     "role": "user",
-                    "content": f"When you are done investigating, call the `{final_tool['name']}` tool "
+                    "text": f"When you are done investigating, call the `{final_tool['name']}` tool "
                     "with your conclusions. Continue now.",
                 }
             )
@@ -196,49 +179,33 @@ def run_agent_loop(
 
         results = []
         finished: dict[str, Any] | None = None
-        for block in tool_uses:
-            if block.name == final_tool["name"]:
-                finished = dict(block.input)
+        for call in response.tool_calls:
+            if call.name == final_tool["name"]:
+                finished = dict(call.input)
                 transcript.append({"type": "final", "content": finished})
-                results.append(
-                    {"type": "tool_result", "tool_use_id": block.id, "content": "Report recorded."}
-                )
-            elif block.name in handlers:
-                if block.name == "run_sql":
+                results.append({"id": call.id, "content": "Report recorded.", "is_error": False})
+            elif call.name in handlers:
+                if call.name == "run_sql":
                     transcript.append(
                         {
                             "type": "sql",
-                            "purpose": str(block.input.get("purpose", "")),
-                            "sql": str(block.input.get("sql", "")),
+                            "purpose": str(call.input.get("purpose", "")),
+                            "sql": str(call.input.get("sql", "")),
                         }
                     )
                 else:
-                    transcript.append({"type": "tool", "name": block.name, "content": dict(block.input)})
+                    transcript.append({"type": "tool", "name": call.name, "content": dict(call.input)})
                 try:
-                    output = handlers[block.name](dict(block.input))
+                    output = handlers[call.name](dict(call.input))
                     is_error = False
                 except Exception as exc:  # noqa: BLE001 - feed errors back so the agent adapts
-                    output = f"{block.name} failed: {type(exc).__name__}: {exc}"
+                    output = f"{call.name} failed: {type(exc).__name__}: {exc}"
                     is_error = True
                 transcript.append({"type": "result", "content": output[:4000], "error": is_error})
-                results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": output[:8000],
-                        "is_error": is_error,
-                    }
-                )
-            else:  # tool executed server-side (e.g. MCP connector) or unknown
-                results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": "Unknown tool",
-                        "is_error": True,
-                    }
-                )
-        messages.append({"role": "user", "content": results})
+                results.append({"id": call.id, "content": output[:8000], "is_error": is_error})
+            else:
+                results.append({"id": call.id, "content": "Unknown tool", "is_error": True})
+        history.append({"role": "tool_results", "results": results})
         if finished is not None:
             return finished
 

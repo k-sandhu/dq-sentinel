@@ -12,6 +12,18 @@ def test_health_is_public(client):
     body = resp.json()
     assert body["status"] == "ok"
     assert body["llm_enabled"] is False
+    assert body["llm_provider"] is None  # no keys configured in tests
+    assert resp.headers.get("X-Request-ID")  # correlation id on every response
+
+
+def test_metrics_endpoint(client, admin_headers):
+    client.get("/api/v1/datasets", headers=admin_headers)  # generate one request metric
+    resp = client.get("/metrics")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "dq_http_requests_total" in body
+    assert "dq_source_query_seconds" in body
+    assert "dq_llm_requests_total" in body or "dq_llm" in body  # registered even if zero
 
 
 def test_auth_required(client):

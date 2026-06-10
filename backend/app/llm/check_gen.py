@@ -5,7 +5,7 @@ from typing import Any
 
 from app.core.check_types import CHECK_TYPES, validate_check
 from app.llm import prompts
-from app.llm.client import create_message, extract_text, parse_json_text
+from app.llm.client import complete, parse_json_text
 
 log = logging.getLogger(__name__)
 
@@ -68,19 +68,15 @@ def generate_checks_llm(
     valid_columns: set[str],
 ) -> list[dict[str, Any]]:
     """Returns normalized check proposal dicts (same shape as generator.heuristic_proposals)."""
-    response = create_message(
+    response = complete(
         system=prompts.CHECK_GEN_SYSTEM,
-        messages=[
-            {
-                "role": "user",
-                "content": prompts.check_gen_user_prompt(
-                    table_name, profile_summary, knowledge, exploration, existing_checks
-                ),
-            }
-        ],
+        user_prompt=prompts.check_gen_user_prompt(
+            table_name, profile_summary, knowledge, exploration, existing_checks
+        ),
         json_schema=CHECKS_SCHEMA,
+        use_mcp=True,
     )
-    data = parse_json_text(extract_text(response))
+    data = parse_json_text(response.text)
 
     proposals: list[dict[str, Any]] = []
     for raw in data.get("checks", []):

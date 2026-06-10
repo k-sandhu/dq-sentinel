@@ -257,6 +257,8 @@ export interface Health {
   status: string;
   version: string;
   llm_enabled: boolean;
+  llm_provider: string | null;
+  llm_model: string | null;
 }
 
 // ---- workbench ----
