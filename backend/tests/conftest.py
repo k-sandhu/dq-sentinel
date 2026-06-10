@@ -59,6 +59,8 @@ def source_db() -> str:
             status = "x"
         score = 50.0 + (i % 10)  # tight cluster for outlier tests
         created = (now - timedelta(hours=2, minutes=i)).strftime("%Y-%m-%d %H:%M:%S")
+        if i == 12:  # future-dated row: must not mask staleness in freshness checks
+            created = (now + timedelta(days=10)).strftime("%Y-%m-%d %H:%M:%S")
         rows.append((i, email, age, status, score, created))
     con.executemany("INSERT INTO people VALUES (?,?,?,?,?,?)", rows)
     con.commit()

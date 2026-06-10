@@ -231,10 +231,32 @@ def _run_regex(ctx: CheckContext) -> CheckResult:
 
 # ---------------------------------------------------------------- freshness
 def _run_freshness(ctx: CheckContext) -> CheckResult:
+    """Newest timestamp must be recent. Future-dated rows (themselves a DQ smell)
+    are excluded from the staleness computation and reported as a metric, so a
+    handful of bad future dates can't mask a stale table.
+    """
     max_age = float(ctx.params.get("max_age_hours", 24))
-    latest_raw = ctx.connector.scalar(f"SELECT MAX({ctx.col}) FROM {ctx.ref}")
+    now_iso = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+    if ctx.connector.kind == "sqlite":
+        not_future = f"datetime({ctx.col}) <= datetime(:now_iso)"
+        is_future = f"datetime({ctx.col}) > datetime(:now_iso)"
+    else:
+        not_future = f"{ctx.col} <= CAST(:now_iso AS TIMESTAMP)"
+        is_future = f"{ctx.col} > CAST(:now_iso AS TIMESTAMP)"
+    params = {"now_iso": now_iso}
+
+    latest_raw = ctx.connector.scalar(
+        f"SELECT MAX({ctx.col}) FROM {ctx.ref} WHERE {not_future}", params
+    )
+    future_rows = int(
+        ctx.connector.scalar(f"SELECT COUNT(*) FROM {ctx.ref} WHERE {is_future}", params) or 0
+    )
     if latest_raw is None:
-        return CheckResult(violation_count=1, detail="No values found for freshness column", metrics={})
+        return CheckResult(
+            violation_count=1,
+            detail="No non-future values found for freshness column",
+            metrics={"future_rows": future_rows},
+        )
     latest = pd.to_datetime(str(latest_raw), errors="coerce", utc=True)
     if latest is pd.NaT:
         return CheckResult(violation_count=1, detail=f"Cannot parse {latest_raw!r} as timestamp")
@@ -242,10 +264,18 @@ def _run_freshness(ctx: CheckContext) -> CheckResult:
     stale = age_h > max_age
     return CheckResult(
         violation_count=1 if stale else 0,
-        metrics={"latest": str(latest), "age_hours": round(age_h, 2), "max_age_hours": max_age},
+        metrics={
+            "latest": str(latest),
+            "age_hours": round(age_h, 2),
+            "max_age_hours": max_age,
+            "future_rows": future_rows,
+        },
         detail=(
-            f"Newest {ctx.column} is {age_h:.1f}h old (SLA {max_age}h)" if stale else f"Fresh: {age_h:.1f}h old"
-        ),
+            f"Newest {ctx.column} is {age_h:.1f}h old (SLA {max_age}h)"
+            if stale
+            else f"Fresh: {age_h:.1f}h old"
+        )
+        + (f"; {future_rows} future-dated rows excluded" if future_rows else ""),
     )
 
 

@@ -19,8 +19,9 @@ _DENY = re.compile(
 _STARTS_OK = re.compile(r"^(select|with)\b", re.IGNORECASE)
 
 
-class SqlNotAllowed(Exception):
-    pass
+class SqlNotAllowed(ValueError):
+    """Raised for non-SELECT / multi-statement / denylisted SQL. Subclasses
+    ValueError so API validation paths (`except ValueError -> 422`) catch it."""
 
 
 def _strip_comments_and_strings(sql: str) -> str:

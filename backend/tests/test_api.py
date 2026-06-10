@@ -133,6 +133,14 @@ def test_full_flow(client, admin_headers, source_db):
     assert run["violation_count"] == NULL_EMAILS
     assert run["exception_count"] == NULL_EMAILS
 
+    # write SQL in a custom check is rejected with 422 (not a 500)
+    resp = client.post(
+        "/api/v1/checks",
+        json={"dataset_id": ds["id"], "check_type": "custom_sql", "params": {"sql": "DELETE FROM people"}},
+        headers=h,
+    )
+    assert resp.status_code == 422
+
     # exceptions + triage
     resp = client.get(f"/api/v1/exceptions?run_id={run['id']}", headers=h)
     excs = resp.json()

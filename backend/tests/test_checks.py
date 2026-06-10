@@ -65,6 +65,9 @@ def test_freshness(ctx_factory):
     fresh = run_check_type(ctx_factory("created_at", {"max_age_hours": 100}), "freshness")
     assert fresh.violation_count == 0
     assert fresh.metrics["age_hours"] > 1
+    # the future-dated row is excluded from staleness and surfaced as a metric
+    assert fresh.metrics["future_rows"] == 1
+    assert fresh.metrics["age_hours"] < 200  # not computed from the +10d row
 
 
 def test_row_count_min(ctx_factory):
