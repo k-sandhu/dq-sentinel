@@ -30,12 +30,32 @@ def _client():
     return anthropic.Anthropic(api_key=get_settings().anthropic_api_key)
 
 
+def enabled_mcp_servers() -> list[dict[str, Any]]:
+    """Admin-registered MCP servers (issue #36) to pass via the Claude MCP connector."""
+    from app.db import session_factory
+    from app.models import McpServer
+
+    try:
+        with session_factory()() as db:
+            servers = db.query(McpServer).filter(McpServer.enabled.is_(True)).all()
+    except Exception:  # noqa: BLE001 - never let metadata-DB hiccups break LLM calls
+        return []
+    out = []
+    for s in servers:
+        entry: dict[str, Any] = {"type": "url", "name": s.name, "url": s.url}
+        if s.auth_token:
+            entry["authorization_token"] = s.auth_token
+        out.append(entry)
+    return out
+
+
 def create_message(
     system: str,
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None = None,
     json_schema: dict[str, Any] | None = None,
     max_tokens: int | None = None,
+    use_mcp: bool = False,
 ):
     settings = get_settings()
     kwargs: dict[str, Any] = {
@@ -50,6 +70,16 @@ def create_message(
         kwargs["tools"] = tools
     if json_schema:
         kwargs["output_config"] = {"format": {"type": "json_schema", "schema": json_schema}}
+
+    if use_mcp:
+        servers = enabled_mcp_servers()
+        if servers:
+            try:
+                return _client().beta.messages.create(
+                    **kwargs, mcp_servers=servers, betas=["mcp-client-2025-11-20"]
+                )
+            except Exception as exc:  # noqa: BLE001 - MCP connector is best-effort (experimental)
+                log.warning("MCP connector call failed (%s); retrying without MCP servers", exc)
     return _client().messages.create(**kwargs)
 
 
@@ -107,26 +137,41 @@ RUN_SQL_TOOL = {
     },
 }
 
+GET_TABLE_CODE_TOOL = {
+    "name": "get_table_code",
+    "description": (
+        "Fetch how a table or view in this source database is defined: its CREATE statement / "
+        "view SQL where the database exposes it, otherwise a synthesized column definition. "
+        "Use it when the data's structure or derivation matters to your investigation."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {"table": {"type": "string", "description": "Table or view name"}},
+        "required": ["table"],
+        "additionalProperties": False,
+    },
+}
+
 
 def run_agent_loop(
     system: str,
     user_prompt: str,
-    execute_sql: Callable[[str], str],
+    handlers: dict[str, Callable[[dict[str, Any]], str]],
+    tools: list[dict[str, Any]],
     final_tool: dict[str, Any],
     max_turns: int,
     transcript: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
-    """Generic bounded agentic loop: run_sql until the model calls `final_tool`.
-
-    Returns the final tool's input dict, or None if the loop expired.
-    The transcript list is appended to in place (text/sql/result/final steps).
+    """Generic bounded agentic loop: call handler tools until the model calls
+    `final_tool`. Returns the final tool's input dict, or None if the loop expired.
+    The transcript list is appended to in place (text/sql/tool/result/final steps).
     """
-    tools = [RUN_SQL_TOOL, final_tool]
+    all_tools = [*tools, final_tool]
     messages: list[dict[str, Any]] = [{"role": "user", "content": user_prompt}]
     nudges = 0
 
     for _turn in range(max_turns):
-        response = create_message(system=system, messages=messages, tools=tools)
+        response = create_message(system=system, messages=messages, tools=all_tools, use_mcp=True)
         messages.append({"role": "assistant", "content": response.content})
 
         text = extract_text(response)
@@ -158,15 +203,22 @@ def run_agent_loop(
                 results.append(
                     {"type": "tool_result", "tool_use_id": block.id, "content": "Report recorded."}
                 )
-            elif block.name == "run_sql":
-                sql = str(block.input.get("sql", ""))
-                purpose = str(block.input.get("purpose", ""))
-                transcript.append({"type": "sql", "purpose": purpose, "sql": sql})
+            elif block.name in handlers:
+                if block.name == "run_sql":
+                    transcript.append(
+                        {
+                            "type": "sql",
+                            "purpose": str(block.input.get("purpose", "")),
+                            "sql": str(block.input.get("sql", "")),
+                        }
+                    )
+                else:
+                    transcript.append({"type": "tool", "name": block.name, "content": dict(block.input)})
                 try:
-                    output = execute_sql(sql)
+                    output = handlers[block.name](dict(block.input))
                     is_error = False
                 except Exception as exc:  # noqa: BLE001 - feed errors back so the agent adapts
-                    output = f"Query failed: {type(exc).__name__}: {exc}"
+                    output = f"{block.name} failed: {type(exc).__name__}: {exc}"
                     is_error = True
                 transcript.append({"type": "result", "content": output[:4000], "error": is_error})
                 results.append(
@@ -177,7 +229,7 @@ def run_agent_loop(
                         "is_error": is_error,
                     }
                 )
-            else:  # unknown tool — shouldn't happen
+            else:  # tool executed server-side (e.g. MCP connector) or unknown
                 results.append(
                     {
                         "type": "tool_result",

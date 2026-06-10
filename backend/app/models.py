@@ -176,6 +176,37 @@ class ExceptionRecord(Base):
     run: Mapped[CheckRun] = relationship(back_populates="exceptions")
 
 
+class McpServer(Base):
+    """Admin-registered MCP servers passed to LLM calls via the Claude MCP
+    connector, giving agents code context (dbt models, repos, docs)."""
+
+    __tablename__ = "mcp_servers"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    url: Mapped[str] = mapped_column(Text)
+    auth_token: Mapped[str] = mapped_column(Text, default="")  # write-only; masked in API responses
+    description: Mapped[str] = mapped_column(Text, default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class AdhocDashboard(Base):
+    """A generated investigation dashboard: panels of {sql, viz} re-executed on open."""
+
+    __tablename__ = "adhoc_dashboards"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id"), index=True)
+    title: Mapped[str] = mapped_column(String(300))
+    focus: Mapped[str] = mapped_column(Text, default="")
+    origin: Mapped[str] = mapped_column(String(20), default="heuristic")  # llm | heuristic
+    spec: Mapped[dict] = mapped_column(JSON, default=dict)  # {panels: [PanelSpec]}
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_refreshed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class RcaSession(Base):
     __tablename__ = "rca_sessions"
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -11,6 +11,7 @@ router = APIRouter(prefix="/runs", tags=["runs"])
 
 @router.get("", response_model=list[schemas.RunOut])
 def list_runs(
+    response: Response,
     dataset_id: int | None = None,
     check_id: int | None = None,
     status: str | None = None,
@@ -26,6 +27,7 @@ def list_runs(
         q = q.filter(models.CheckRun.check_id == check_id)
     if status:
         q = q.filter(models.CheckRun.status == status)
+    response.headers["X-Total-Count"] = str(q.count())
     runs = q.order_by(models.CheckRun.id.desc()).offset(offset).limit(min(limit, 200)).all()
     return [run_out(db, r) for r in runs]
 

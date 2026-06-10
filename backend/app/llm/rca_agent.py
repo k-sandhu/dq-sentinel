@@ -13,7 +13,13 @@ from app.connectors.sa import connector_for
 from app.core.profiler import summarize_profile_for_llm
 from app.db import session_factory
 from app.llm import prompts
-from app.llm.client import format_rows, redact_rows, run_agent_loop
+from app.llm.client import (
+    GET_TABLE_CODE_TOOL,
+    RUN_SQL_TOOL,
+    format_rows,
+    redact_rows,
+    run_agent_loop,
+)
 from app.models import Check, CheckRun, Dataset, ExceptionRecord, Profile, RcaSession, utcnow
 
 log = logging.getLogger(__name__)
@@ -126,14 +132,21 @@ def run_rca_session(session_id: int) -> None:
             pii = list(((ctx.get("knowledge") or {}).get("pii_columns")) or [])
             transcript: list[dict[str, Any]] = []
 
-            def execute_sql(sql: str) -> str:
-                res = connector.run_select(sql, limit=settings.agent_query_row_limit)
+            def execute_sql(inp: dict[str, Any]) -> str:
+                res = connector.run_select(
+                    str(inp.get("sql", "")), limit=settings.agent_query_row_limit
+                )
                 return format_rows(res.columns, redact_rows(res.columns, res.rows, pii))
+
+            def get_code(inp: dict[str, Any]) -> str:
+                ddl, source = connector.get_ddl(str(inp.get("table", "")))
+                return f"-- definition source: {source}\n{ddl}"
 
             result = run_agent_loop(
                 system=prompts.RCA_SYSTEM,
                 user_prompt=prompts.rca_user_prompt(ctx),
-                execute_sql=execute_sql,
+                handlers={"run_sql": execute_sql, "get_table_code": get_code},
+                tools=[RUN_SQL_TOOL, GET_TABLE_CODE_TOOL],
                 final_tool=SUBMIT_REPORT_TOOL,
                 max_turns=settings.llm_max_rca_turns,
                 transcript=transcript,

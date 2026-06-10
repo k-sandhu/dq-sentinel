@@ -42,13 +42,14 @@ def _readonly_engine(dsn: str) -> Engine:
         return create_engine(dsn, connect_args={"check_same_thread": False})
     if kind == "duckdb":
         return create_engine(dsn, connect_args={"read_only": True})
-    # postgresql: force read-only transactions for the session
+    # postgresql: read-only transactions + a statement timeout so ad-hoc
+    # workbench/agent queries can't camp on the source (issue #40)
     return create_engine(
         dsn,
         pool_pre_ping=True,
         pool_size=5,
         max_overflow=5,
-        connect_args={"options": "-c default_transaction_read_only=on"},
+        connect_args={"options": "-c default_transaction_read_only=on -c statement_timeout=30000"},
     )
 
 
@@ -109,6 +110,57 @@ class Connector:
             {"name": c["name"], "dtype": str(c["type"]), "nullable": bool(c.get("nullable", True))}
             for c in insp.get_columns(table, schema=schema)
         ]
+
+    def schema_tree(self) -> list[dict[str, Any]]:
+        """All tables/views with their columns — for the workbench sidebar."""
+        out = []
+        for t in self.list_tables():
+            try:
+                cols = self.get_columns(t["table_name"], t["schema_name"])
+            except Exception:  # noqa: BLE001 - skip objects we can't introspect
+                cols = []
+            out.append({**t, "columns": cols})
+        return out
+
+    def get_ddl(self, table: str, schema: str | None = None) -> tuple[str, str]:
+        """Return (ddl, source). Real definition where the dialect exposes it,
+        otherwise a CREATE TABLE synthesized from introspection."""
+        try:
+            if self.kind == "sqlite":
+                ddl = self.scalar(
+                    "SELECT sql FROM sqlite_master WHERE name = :t", {"t": table}
+                )
+                if ddl:
+                    return str(ddl), "database"
+            elif self.kind == "duckdb":
+                ddl = self.scalar(
+                    "SELECT sql FROM duckdb_views() WHERE view_name = :t", {"t": table}
+                )
+                if ddl:
+                    return str(ddl), "database"
+                ddl = self.scalar(
+                    "SELECT sql FROM duckdb_tables() WHERE table_name = :t", {"t": table}
+                )
+                if ddl:
+                    return str(ddl), "database"
+            elif self.kind == "postgresql":
+                ddl = self.scalar(
+                    "SELECT pg_get_viewdef(c.oid, true) FROM pg_class c "
+                    "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    "WHERE c.relname = :t AND c.relkind IN ('v', 'm') "
+                    "AND n.nspname = COALESCE(:s, n.nspname)",
+                    {"t": table, "s": schema},
+                )
+                if ddl:
+                    return f"CREATE VIEW {table} AS\n{ddl}", "database"
+        except Exception:  # noqa: BLE001 - fall through to synthesized DDL
+            pass
+
+        cols = self.get_columns(table, schema)
+        body = ",\n".join(
+            f"    {c['name']} {c['dtype']}{'' if c['nullable'] else ' NOT NULL'}" for c in cols
+        )
+        return f"CREATE TABLE {self.table_ref(table, schema)} (\n{body}\n);", "synthesized"
 
     # ---- querying ----
     def run_select(

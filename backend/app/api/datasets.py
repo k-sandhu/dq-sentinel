@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -16,13 +17,20 @@ router = APIRouter(prefix="/datasets", tags=["datasets"])
 @router.get("", response_model=list[schemas.DatasetOut])
 def list_datasets(
     connection_id: int | None = None,
+    q: str | None = None,
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
-    q = db.query(models.Dataset)
+    query = db.query(models.Dataset)
     if connection_id is not None:
-        q = q.filter(models.Dataset.connection_id == connection_id)
-    return [dataset_out(db, d) for d in q.order_by(models.Dataset.table_name).all()]
+        query = query.filter(models.Dataset.connection_id == connection_id)
+    if q:
+        needle = f"%{q.lower()}%"
+        query = query.filter(
+            func.lower(models.Dataset.table_name).like(needle)
+            | func.lower(models.Dataset.display_name).like(needle)
+        )
+    return [dataset_out(db, d) for d in query.order_by(models.Dataset.table_name).all()]
 
 
 @router.post("/register", response_model=list[schemas.DatasetOut], status_code=201)

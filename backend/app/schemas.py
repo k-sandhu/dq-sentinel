@@ -104,6 +104,8 @@ class DatasetOut(ORMModel):
     active_checks: int = 0
     open_exceptions: int = 0
     health: str | None = None  # pass | warn | fail | unknown
+    importance: str | None = None  # from table knowledge
+    owner: str | None = None
 
 
 class PreviewOut(BaseModel):
@@ -298,6 +300,131 @@ class RcaOut(ORMModel):
     model: str
     created_at: datetime
     finished_at: datetime | None
+
+
+# ---- workbench / queries ----
+class QueryRunIn(BaseModel):
+    connection_id: int
+    sql: str
+    limit: int = Field(default=200, ge=1, le=2000)
+
+
+class QueryRunOut(BaseModel):
+    columns: list[str]
+    rows: list[list[Any]]
+    row_count: int
+    truncated: bool
+    elapsed_ms: int
+
+
+class SchemaTable(BaseModel):
+    schema_name: str | None = None
+    table_name: str
+    kind: Literal["table", "view"] = "table"
+    columns: list[ColumnInfo] = []
+
+
+class DdlOut(BaseModel):
+    table_name: str
+    ddl: str
+    source: Literal["database", "synthesized"]
+
+
+class SuggestIn(BaseModel):
+    connection_id: int | None = None
+    dataset_id: int | None = None
+    check_id: int | None = None
+    run_id: int | None = None
+    exception_id: int | None = None
+    goal: str = ""
+
+
+class Suggestion(BaseModel):
+    title: str
+    sql: str
+    rationale: str = ""
+
+
+class SuggestOut(BaseModel):
+    mode: Literal["llm", "heuristic"]
+    connection_id: int
+    suggestions: list[Suggestion]
+
+
+class ConnectionHealth(BaseModel):
+    id: int
+    name: str
+    ok: bool
+    message: str
+    latency_ms: int | None = None
+
+
+# ---- MCP servers ----
+class McpServerIn(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    url: str = Field(min_length=8)
+    auth_token: str = ""
+    description: str = ""
+    enabled: bool = True
+
+
+class McpServerUpdate(BaseModel):
+    name: str | None = None
+    url: str | None = None
+    auth_token: str | None = None  # empty string clears; None leaves unchanged
+    description: str | None = None
+    enabled: bool | None = None
+
+
+class McpServerOut(ORMModel):
+    id: int
+    name: str
+    url: str
+    description: str
+    enabled: bool
+    has_token: bool = False
+    created_at: datetime
+
+
+# ---- ad-hoc dashboards ----
+class PanelViz(BaseModel):
+    type: Literal["number", "bar", "line", "area", "pie", "table"] = "table"
+    x: str | None = None
+    y: str | None = None
+
+
+class PanelSpec(BaseModel):
+    title: str
+    description: str = ""
+    sql: str
+    viz: PanelViz = PanelViz()
+
+
+class PanelData(PanelSpec):
+    columns: list[str] = []
+    rows: list[list[Any]] = []
+    error: str | None = None
+    elapsed_ms: int = 0
+
+
+class GenerateDashboardIn(BaseModel):
+    dataset_id: int
+    focus: str = ""
+
+
+class AdhocDashboardMeta(ORMModel):
+    id: int
+    dataset_id: int
+    title: str
+    focus: str
+    origin: str
+    created_at: datetime
+    last_refreshed_at: datetime | None
+    panel_count: int = 0
+
+
+class AdhocDashboardOut(AdhocDashboardMeta):
+    panels: list[PanelData] = []
 
 
 # ---- dashboard ----

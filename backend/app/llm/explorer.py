@@ -6,7 +6,13 @@ from typing import Any
 from app.config import get_settings
 from app.connectors.sa import Connector
 from app.llm import prompts
-from app.llm.client import format_rows, redact_rows, run_agent_loop
+from app.llm.client import (
+    GET_TABLE_CODE_TOOL,
+    RUN_SQL_TOOL,
+    format_rows,
+    redact_rows,
+    run_agent_loop,
+)
 
 log = logging.getLogger(__name__)
 
@@ -50,15 +56,20 @@ def explore_dataset(
     pii = list((knowledge or {}).get("pii_columns") or [])
     transcript: list[dict[str, Any]] = []
 
-    def execute_sql(sql: str) -> str:
-        res = connector.run_select(sql, limit=settings.agent_query_row_limit)
+    def execute_sql(inp: dict[str, Any]) -> str:
+        res = connector.run_select(str(inp.get("sql", "")), limit=settings.agent_query_row_limit)
         rows = redact_rows(res.columns, res.rows, pii)
         return format_rows(res.columns, rows)
+
+    def get_code(inp: dict[str, Any]) -> str:
+        ddl, source = connector.get_ddl(str(inp.get("table", "")))
+        return f"-- definition source: {source}\n{ddl}"
 
     result = run_agent_loop(
         system=prompts.EXPLORER_SYSTEM,
         user_prompt=prompts.explorer_user_prompt(table_ref, profile_summary, knowledge),
-        execute_sql=execute_sql,
+        handlers={"run_sql": execute_sql, "get_table_code": get_code},
+        tools=[RUN_SQL_TOOL, GET_TABLE_CODE_TOOL],
         final_tool=SUBMIT_INSIGHTS_TOOL,
         max_turns=settings.llm_max_explore_turns,
         transcript=transcript,

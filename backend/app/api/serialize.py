@@ -77,4 +77,7 @@ def dataset_out(db: Session, ds: models.Dataset) -> schemas.DatasetOut:
         out.health = "warn"
     else:
         out.health = "pass"
+    if ds.knowledge:
+        out.importance = ds.knowledge.importance
+        out.owner = ds.knowledge.owner or None
     return out

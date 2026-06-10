@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -12,25 +13,36 @@ router = APIRouter(prefix="/exceptions", tags=["exceptions"])
 
 @router.get("", response_model=list[schemas.ExceptionOut])
 def list_exceptions(
+    response: Response,
     dataset_id: int | None = None,
     check_id: int | None = None,
     run_id: int | None = None,
     status: str | None = None,
+    q: str | None = None,
     limit: int = 100,
     offset: int = 0,
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
-    q = db.query(models.ExceptionRecord)
+    query = db.query(models.ExceptionRecord)
     if dataset_id is not None:
-        q = q.filter(models.ExceptionRecord.dataset_id == dataset_id)
+        query = query.filter(models.ExceptionRecord.dataset_id == dataset_id)
     if check_id is not None:
-        q = q.filter(models.ExceptionRecord.check_id == check_id)
+        query = query.filter(models.ExceptionRecord.check_id == check_id)
     if run_id is not None:
-        q = q.filter(models.ExceptionRecord.run_id == run_id)
+        query = query.filter(models.ExceptionRecord.run_id == run_id)
     if status:
-        q = q.filter(models.ExceptionRecord.status == status)
-    excs = q.order_by(models.ExceptionRecord.id.desc()).offset(offset).limit(min(limit, 500)).all()
+        query = query.filter(models.ExceptionRecord.status == status)
+    if q:
+        needle = f"%{q.lower()}%"
+        query = query.filter(
+            func.lower(models.ExceptionRecord.reason).like(needle)
+            | func.lower(models.ExceptionRecord.note).like(needle)
+        )
+    response.headers["X-Total-Count"] = str(query.count())
+    excs = (
+        query.order_by(models.ExceptionRecord.id.desc()).offset(offset).limit(min(limit, 500)).all()
+    )
     return [exception_out(db, e) for e in excs]
 
 

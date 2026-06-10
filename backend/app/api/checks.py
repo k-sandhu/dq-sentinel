@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -37,15 +38,22 @@ def check_types(_: models.User = Depends(get_current_user)):
 def list_checks(
     dataset_id: int | None = None,
     status: str | None = None,
+    q: str | None = None,
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
-    q = db.query(models.Check).filter(models.Check.status != "archived")
+    query = db.query(models.Check).filter(models.Check.status != "archived")
     if dataset_id is not None:
-        q = q.filter(models.Check.dataset_id == dataset_id)
+        query = query.filter(models.Check.dataset_id == dataset_id)
     if status:
-        q = q.filter(models.Check.status == status)
-    return [check_out(c) for c in q.order_by(models.Check.dataset_id, models.Check.id).all()]
+        query = query.filter(models.Check.status == status)
+    if q:
+        needle = f"%{q.lower()}%"
+        query = query.filter(
+            func.lower(models.Check.name).like(needle)
+            | func.lower(func.coalesce(models.Check.column_name, "")).like(needle)
+        )
+    return [check_out(c) for c in query.order_by(models.Check.dataset_id, models.Check.id).all()]
 
 
 @router.post("", response_model=schemas.CheckOut, status_code=201)

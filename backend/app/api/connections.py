@@ -1,3 +1,6 @@
+import time
+from concurrent.futures import ThreadPoolExecutor
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -8,6 +11,31 @@ from app.db import get_db
 from app.security import get_current_user, require_role
 
 router = APIRouter(prefix="/connections", tags=["connections"])
+
+
+@router.get("/health", response_model=list[schemas.ConnectionHealth])
+def fleet_health(db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+    """Test every source concurrently — one glance across the whole fleet."""
+    conns = db.query(models.Connection).order_by(models.Connection.name).all()
+
+    def probe(conn: models.Connection) -> schemas.ConnectionHealth:
+        start = time.perf_counter()
+        try:
+            ok, message, _count = connector_for(conn).test()
+        except Exception as exc:  # noqa: BLE001
+            ok, message = False, f"{type(exc).__name__}: {exc}"
+        return schemas.ConnectionHealth(
+            id=conn.id,
+            name=conn.name,
+            ok=ok,
+            message=message,
+            latency_ms=int((time.perf_counter() - start) * 1000),
+        )
+
+    if not conns:
+        return []
+    with ThreadPoolExecutor(max_workers=min(8, len(conns))) as pool:
+        return list(pool.map(probe, conns))
 
 
 @router.get("", response_model=list[schemas.ConnectionOut])

@@ -69,7 +69,11 @@ Investigate progressively:
 
 When you have a clear picture (or are running low on turns), call submit_insights with concrete, \
 evidence-backed findings. Each insight should state what you observed (with numbers) and why it \
-matters for data quality."""
+matters for data quality.
+
+You may call get_table_code to read how a table or view is defined (its DDL / view SQL) when \
+structure or derivation matters. If external code-context tools (MCP) are available, use them to \
+inspect upstream models and transformations."""
 
 
 RCA_SYSTEM = """You are a root-cause analyst for data quality incidents. A data quality check failed; \
@@ -84,6 +88,10 @@ Method:
 (missing parents, mismatched aggregates)?
 4. Hypothesize: distinguish between (a) upstream pipeline bug, (b) source-system change, \
 (c) legitimate business change, (d) a miscalibrated check.
+
+You may call get_table_code to read how a table or view is defined — essential when the failing \
+data is produced by a view or derived column. If external code-context tools (MCP) are available, \
+use them to inspect upstream pipeline code (dbt models, ETL repos).
 
 Rules:
 - Every claim in your report must be backed by a query you actually ran.
@@ -137,6 +145,29 @@ def explorer_user_prompt(table_ref: str, profile_summary: str, knowledge: dict[s
         f"## Table knowledge\n{knowledge_block(knowledge)}\n\n"
         "Explore the data and submit your data-quality insights."
     )
+
+
+SUGGEST_SYSTEM = """You are a senior data quality analyst. Given context about a dataset (and \
+optionally a failed check / exception), propose the next SQL queries an investigator should run \
+to localize and understand the issue. Rules:
+- Read-only: single SELECT or WITH statements only. Prefer aggregates; LIMIT samples to ≤50 rows.
+- Each query must be directly runnable on the given dialect against the given table.
+- Make each one answer a distinct question (when did it start? which segment? what do offenders \
+share? is the reference data consistent?).
+- 4-7 suggestions, ordered most-valuable first. Keep titles short and rationales one sentence."""
+
+
+DASHBOARD_SYSTEM = """You design small investigation dashboards for a data quality analyst. Given a \
+table's profile (and optionally a focus question), produce 4-8 panels. Each panel is a read-only \
+SQL query (single SELECT/WITH) plus a visualization hint.
+
+Rules:
+- Aggregate: every panel should return ≤ 100 rows (one row for 'number' panels).
+- Alias output columns with short lowercase names and reference them in viz.x / viz.y.
+- viz.type: number (single value), bar, line, area (time series), pie (≤8 slices), table.
+- Use GROUP BY 1 style; the SQL must run as-is on the given dialect.
+- Cover: volume over time, segment splits, distributions of risky numerics, and anything the \
+focus question demands. Panel descriptions say what a healthy result looks like."""
 
 
 def rca_user_prompt(context: dict[str, Any]) -> str:
