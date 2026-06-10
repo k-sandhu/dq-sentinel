@@ -1,0 +1,159 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import { Link } from "react-router";
+import { api } from "../api/client";
+import type { Connection, ConnectionTest } from "../api/types";
+import { isAdmin, useAuth } from "../auth";
+import { EmptyState, ErrorBox, Icon, Modal, Spinner } from "../components/ui";
+import { fmtDateTime } from "../lib/format";
+
+const DSN_EXAMPLES = [
+  ["SQLite", "sqlite:///C:/path/to/samples/shopdb.sqlite"],
+  ["DuckDB", "duckdb:///C:/path/to/samples/nyc_taxi.duckdb"],
+  ["PostgreSQL", "postgresql+psycopg://user:pass@host:5432/dbname"],
+];
+
+function AddConnectionModal({ onClose }: { onClose: () => void }) {
+  const qc = useQueryClient();
+  const [name, setName] = useState("");
+  const [dsn, setDsn] = useState("");
+  const [testResult, setTestResult] = useState<ConnectionTest | null>(null);
+
+  const test = useMutation({
+    mutationFn: () => api.post<ConnectionTest>("/connections/test", { name: name || "test", dsn }),
+    onSuccess: setTestResult,
+  });
+  const create = useMutation({
+    mutationFn: () => api.post<Connection>("/connections", { name, dsn }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["connections"] });
+      onClose();
+    },
+  });
+
+  return (
+    <Modal
+      title="Add a connection"
+      onClose={onClose}
+      footer={
+        <>
+          <button onClick={() => test.mutate()} disabled={!dsn || test.isPending}>
+            {test.isPending ? "Testing…" : "Test connection"}
+          </button>
+          <button className="primary" onClick={() => create.mutate()} disabled={!name || !dsn || create.isPending}>
+            Save
+          </button>
+        </>
+      }
+    >
+      <ErrorBox error={create.error || test.error} />
+      {testResult && (
+        <div className={testResult.ok ? "info-box" : "error-box"}>{testResult.message}</div>
+      )}
+      <label className="field">
+        Display name <span className="req">*</span>
+        <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Shop database" />
+      </label>
+      <label className="field">
+        Connection string (SQLAlchemy DSN) <span className="req">*</span>
+        <input type="text" value={dsn} onChange={(e) => setDsn(e.target.value)} placeholder="sqlite:///C:/data/shop.sqlite" style={{ fontFamily: "var(--mono)", fontSize: 12 }} />
+        <div className="field-hint">
+          Sources are always opened <strong>read-only</strong>. Supported:
+          {DSN_EXAMPLES.map(([label, ex]) => (
+            <div key={label} style={{ marginTop: 3 }}>
+              <strong>{label}</strong>: <code>{ex}</code>
+            </div>
+          ))}
+        </div>
+      </label>
+    </Modal>
+  );
+}
+
+export default function ConnectionsPage() {
+  const { user } = useAuth();
+  const qc = useQueryClient();
+  const [adding, setAdding] = useState(false);
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["connections"],
+    queryFn: () => api.get<Connection[]>("/connections"),
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: number) => api.del(`/connections/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["connections"] });
+      qc.invalidateQueries({ queryKey: ["datasets"] });
+    },
+  });
+
+  return (
+    <div className="page">
+      <div className="page-header">
+        <div>
+          <h1>Connections</h1>
+          <div className="sub">Databases DQ Sentinel can profile and monitor (opened read-only)</div>
+        </div>
+        {isAdmin(user) && (
+          <button className="primary" onClick={() => setAdding(true)}>
+            <Icon name="plus" size={14} /> Add connection
+          </button>
+        )}
+      </div>
+      <ErrorBox error={error || remove.error} />
+      {isLoading ? (
+        <Spinner />
+      ) : !data?.length ? (
+        <div className="card">
+          <EmptyState title="No connections yet" hint="Add a database to start profiling tables. Try the bundled sample: run `python data/generate_sample_data.py`, then connect sqlite:///<repo>/samples/shopdb.sqlite">
+            {isAdmin(user) && (
+              <button className="primary" onClick={() => setAdding(true)}>Add your first connection</button>
+            )}
+          </EmptyState>
+        </div>
+      ) : (
+        <div className="card table-wrap">
+          <table className="data">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Engine</th>
+                <th>DSN</th>
+                <th className="num">Datasets</th>
+                <th>Added</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {data.map((c) => (
+                <tr key={c.id}>
+                  <td style={{ fontWeight: 700, color: "var(--text-dark)" }}>{c.name}</td>
+                  <td><span className="badge kind">{c.kind}</span></td>
+                  <td className="mono" style={{ maxWidth: 340, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.dsn_masked}</td>
+                  <td className="num">{c.dataset_count}</td>
+                  <td style={{ color: "var(--text-light)" }}>{fmtDateTime(c.created_at)}</td>
+                  <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                    <Link to={`/connections/${c.id}/browse`} className="btn small" style={{ marginRight: 6 }}>
+                      <Icon name="search" size={12} /> Browse tables
+                    </Link>
+                    {isAdmin(user) && (
+                      <button
+                        className="small danger"
+                        onClick={() => {
+                          if (confirm(`Delete connection "${c.name}" and its ${c.dataset_count} dataset(s), checks and history?`)) remove.mutate(c.id);
+                        }}
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {adding && <AddConnectionModal onClose={() => setAdding(false)} />}
+    </div>
+  );
+}

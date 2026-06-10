@@ -1,0 +1,258 @@
+// Mirrors backend/app/schemas.py — keep in sync when the API changes.
+
+export type Role = "viewer" | "editor" | "admin";
+export type Severity = "info" | "warn" | "error";
+export type CheckStatus = "proposed" | "active" | "disabled" | "archived";
+export type RunStatus = "pass" | "warn" | "fail" | "error";
+export type ExceptionStatus = "open" | "acknowledged" | "expected" | "resolved" | "muted";
+
+export interface User {
+  id: number;
+  email: string;
+  name: string;
+  role: Role;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface TokenOut {
+  access_token: string;
+  token_type: string;
+  user: User;
+}
+
+export interface Connection {
+  id: number;
+  name: string;
+  kind: string;
+  dsn_masked: string;
+  created_at: string;
+  dataset_count: number;
+}
+
+export interface ConnectionTest {
+  ok: boolean;
+  message: string;
+  table_count: number | null;
+}
+
+export interface TableInfo {
+  schema_name: string | null;
+  table_name: string;
+  kind: "table" | "view";
+  registered_dataset_id: number | null;
+}
+
+export interface ColumnInfo {
+  name: string;
+  dtype: string;
+  nullable: boolean;
+}
+
+export interface Dataset {
+  id: number;
+  connection_id: number;
+  connection_name: string;
+  schema_name: string | null;
+  table_name: string;
+  display_name: string;
+  row_count: number | null;
+  last_profiled_at: string | null;
+  created_at: string;
+  active_checks: number;
+  open_exceptions: number;
+  health: "pass" | "warn" | "fail" | "unknown" | null;
+}
+
+export interface Preview {
+  columns: string[];
+  rows: unknown[][];
+  total_rows: number | null;
+}
+
+export interface TopValue {
+  value: unknown;
+  count: number;
+}
+
+export interface ColumnProfile {
+  name: string;
+  dtype: string;
+  kind: "numeric" | "temporal" | "string" | "boolean" | "other";
+  null_count: number;
+  null_pct: number;
+  distinct_count: number;
+  distinct_pct: number;
+  min?: unknown;
+  max?: unknown;
+  mean?: number | null;
+  stddev?: number | null;
+  quantiles: Record<string, number>;
+  min_len?: number | null;
+  avg_len?: number | null;
+  max_len?: number | null;
+  patterns: Record<string, number>;
+  top_values: TopValue[];
+  sample_values: unknown[];
+}
+
+export interface Profile {
+  id: number;
+  dataset_id: number;
+  created_at: string;
+  row_count: number;
+  sampled_rows: number;
+  columns: ColumnProfile[];
+  table_facts: {
+    pk_candidates?: string[];
+    temporal_columns?: { name: string; max: string }[];
+    column_count?: number;
+  };
+}
+
+export interface Knowledge {
+  dataset_id?: number;
+  business_context: string;
+  known_issues: string;
+  importance: "low" | "medium" | "high" | "critical";
+  owner: string;
+  freshness_sla_hours: number | null;
+  pii_columns: string[];
+  notes: string;
+  updated_at?: string | null;
+}
+
+export interface Check {
+  id: number;
+  dataset_id: number;
+  dataset_name: string;
+  name: string;
+  check_type: string;
+  column_name: string | null;
+  params: Record<string, unknown>;
+  severity: Severity;
+  status: CheckStatus;
+  origin: string;
+  rationale: string;
+  schedule_kind: string | null;
+  schedule_expr: string | null;
+  next_run_at: string | null;
+  last_run_at: string | null;
+  last_status: string | null;
+  created_at: string;
+}
+
+export interface CheckTypeInfo {
+  key: string;
+  label: string;
+  description: string;
+  needs_column: boolean;
+  params: { name: string; type: string; required: boolean; default: unknown; description: string }[];
+}
+
+export interface GenerateResult {
+  created: number;
+  skipped_duplicates: number;
+  mode: "llm" | "heuristic";
+  explored: boolean;
+  checks: Check[];
+}
+
+export interface Run {
+  id: number;
+  check_id: number;
+  check_name: string;
+  check_type: string;
+  dataset_id: number;
+  dataset_name: string;
+  started_at: string;
+  finished_at: string | null;
+  status: RunStatus;
+  violation_count: number;
+  rows_evaluated: number | null;
+  metrics: Record<string, unknown>;
+  error_message: string;
+  triggered_by: string;
+  exception_count: number;
+}
+
+export interface ExceptionRecord {
+  id: number;
+  run_id: number;
+  check_id: number;
+  check_name: string;
+  check_type: string;
+  column_name: string | null;
+  dataset_id: number;
+  dataset_name: string;
+  row_data: Record<string, unknown>;
+  reason: string;
+  outlier_score: number | null;
+  status: ExceptionStatus;
+  note: string;
+  marked_by: string | null;
+  marked_at: string | null;
+  created_at: string;
+}
+
+export interface RcaSession {
+  id: number;
+  dataset_id: number;
+  dataset_name: string;
+  check_run_id: number | null;
+  question: string;
+  status: "running" | "complete" | "failed";
+  report_md: string;
+  root_cause_summary: string;
+  transcript: TranscriptStep[];
+  model: string;
+  created_at: string;
+  finished_at: string | null;
+}
+
+export interface TranscriptStep {
+  type: "text" | "sql" | "result" | "final";
+  content?: unknown;
+  sql?: string;
+  purpose?: string;
+  error?: boolean;
+}
+
+export interface Exploration {
+  insights: {
+    title: string;
+    detail: string;
+    risk: "low" | "medium" | "high";
+    column: string | null;
+    suggested_check_type: string | null;
+  }[];
+  queries_run: number;
+}
+
+export interface TrendPoint {
+  day: string;
+  passed: number;
+  warned: number;
+  failed: number;
+  errored: number;
+}
+
+export interface Dashboard {
+  datasets: number;
+  active_checks: number;
+  proposed_checks: number;
+  runs_24h: number;
+  failing_checks: number;
+  open_exceptions: number;
+  llm_enabled: boolean;
+  pass_rate_7d: number | null;
+  trend: TrendPoint[];
+  recent_runs: Run[];
+  worst_datasets: Dataset[];
+}
+
+export interface Health {
+  status: string;
+  version: string;
+  llm_enabled: boolean;
+}

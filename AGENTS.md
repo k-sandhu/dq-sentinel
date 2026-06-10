@@ -72,7 +72,7 @@ when symlinks are unavailable). Read this top-to-bottom before making changes.
 5. **Adding a check type** touches exactly four places: `core/check_types.py` (registry entry +
    compiler), `schemas.py` (if params need validation), `frontend/src/api/types.ts` +
    `frontend/src/lib/checkMeta.ts` (label/description), and a test in `tests/test_checks.py`.
-6. **Tests must pass before you commit**: `cd backend && pytest` and `cd frontend && npx tsc -b && npm run build`.
+6. **Tests must pass before you commit**: `cd backend && pytest` and `cd frontend && npm run build`.
 7. **Reference GitHub issues** in commits (`Refs #N` / `Closes #N`). Track new feature work as issues first (`gh issue create`).
 8. **Privacy in prompts:** LLM prompts may include aggregates and ≤25 sample rows. Columns listed
    in a dataset's knowledge `pii_columns` are redacted before being sent. Keep it that way.
@@ -112,8 +112,8 @@ Or run everything with Docker: `docker compose up --build` (frontend on :3000, P
 |---|---|
 | Backend tests | `cd backend && pytest -q` |
 | Backend lint | `cd backend && ruff check app tests` |
-| Frontend typecheck | `cd frontend && npx tsc -b` |
-| Frontend build | `cd frontend && npm run build` |
+| Frontend typecheck | `cd frontend && npm run typecheck` |
+| Frontend build | `cd frontend && npm run build` (runs typecheck first) |
 | Regenerate sample data | `python data/generate_sample_data.py --force` |
 | Download public dataset | `python data/download_public_data.py` |
 | One-shot bootstrap | `scripts/dev.ps1` (PowerShell) / `scripts/dev.sh` |
@@ -181,6 +181,7 @@ Or run everything with Docker: `docker compose up --build` (frontend on :3000, P
 | `database is locked` (app DB) | OneDrive/WAL contention — retry; keep worker count at 1 for SQLite |
 | `regex check unsupported` on SQLite | expected: regex checks run via the Python fallback path (chunked fetch) |
 | LLM endpoints return 503 | `ANTHROPIC_API_KEY` not set — heuristic generation still works |
-| `npm run dev` proxy errors | backend not running on :8000, or `VITE_API_BASE` overridden |
+| `npm run dev` proxy errors | backend not running on :8000, or `VITE_API_PROXY` overridden |
+| `Cannot find module '@rollup/rollup-win32-x64-msvc'` | npm optional-deps bug (worse under OneDrive): `npm install @rollup/rollup-win32-x64-msvc --no-save` — do NOT add it to package.json (platform-specific; CI runs Linux) |
 | Worker runs nothing | checks need `status=active` + a schedule; check `next_run_at` in DB |
 | `duckdb.IOException: database is locked` | another process (e.g. a notebook) holds the DuckDB file — DuckDB allows one writer; connectors open read-only, so close the writer |
