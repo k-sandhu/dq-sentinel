@@ -34,11 +34,21 @@ def ok(label: str, condition: bool, detail: str = "") -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", default="http://localhost:8000")
+    parser.add_argument(
+        "--dsn",
+        default=None,
+        help="DSN for the sample DB AS SEEN BY THE API. Defaults to the local repo path; "
+        "for the docker stack use sqlite:////data/samples/shopdb.sqlite",
+    )
     args = parser.parse_args()
     base = f"{args.base}/api/v1"
 
-    if not SAMPLE.exists():
-        sys.exit(f"Sample DB missing — run: python data/generate_sample_data.py (expected {SAMPLE})")
+    if args.dsn:
+        dsn = args.dsn
+    else:
+        if not SAMPLE.exists():
+            sys.exit(f"Sample DB missing — run: python data/generate_sample_data.py (expected {SAMPLE})")
+        dsn = f"sqlite:///{SAMPLE.as_posix()}"
 
     c = httpx.Client(base_url=base, timeout=180)
 
@@ -50,7 +60,6 @@ def main() -> None:
     c.headers["Authorization"] = f"Bearer {r.json()['access_token']}"
 
     print("== connection & registration ==")
-    dsn = f"sqlite:///{SAMPLE.as_posix()}"
     r = c.post("/connections", json={"name": "sample-shop", "dsn": dsn})
     if r.status_code == 409:  # rerun: reuse existing
         conn = next(x for x in c.get("/connections").json() if x["name"] == "sample-shop")

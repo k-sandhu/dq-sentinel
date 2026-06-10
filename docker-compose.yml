@@ -7,6 +7,7 @@
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: dq
       POSTGRES_PASSWORD: dq
@@ -21,6 +22,7 @@ services:
 
   api:
     build: ./backend
+    restart: unless-stopped
     environment: &backend_env
       DQ_DATABASE_URL: postgresql+psycopg://dq:dq@postgres:5432/dqsentinel
       DQ_SECRET_KEY: ${DQ_SECRET_KEY:-change-me-in-prod-0123456789abcdef}
@@ -37,6 +39,7 @@ services:
 
   worker:
     build: ./backend
+    restart: unless-stopped
     command: python -m app.worker
     environment: *backend_env
     volumes:
@@ -47,6 +50,7 @@ services:
 
   frontend:
     build: ./frontend
+    restart: unless-stopped
     ports:
       - "3000:80"
     depends_on:

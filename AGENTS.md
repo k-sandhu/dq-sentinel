@@ -104,7 +104,19 @@ cd frontend; npm install; npm run dev
 ```
 
 First login: `admin@example.com` / `admin123` (seeded in dev when no users exist; change via Settings).
-Or run everything with Docker: `docker compose up --build` (frontend on :3000, Postgres-backed).
+
+### Standing demo (Docker) — keep it running
+
+The owner reviews by clicking through a live UI. Keep the compose stack up as the standing demo:
+
+```powershell
+docker compose up --build -d        # UI on http://localhost:3000 (Postgres-backed, auto-restarts)
+python scripts/e2e_smoke.py --base http://127.0.0.1:8000 --dsn sqlite:////data/samples/shopdb.sqlite
+#   ^ seeds connection/datasets/profiles/checks/runs/exceptions (4 slashes = container path)
+docker compose up --build -d api worker   # rebuild backend after changes (frontend analogous)
+```
+
+Push coherent checkpoints to `main` frequently (CI gates them) rather than batching big drops.
 
 ## Commands cheat-sheet
 
