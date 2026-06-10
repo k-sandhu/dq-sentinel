@@ -1,0 +1,57 @@
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from app import models, schemas
+from app.api.serialize import exception_out
+from app.db import get_db
+from app.models import utcnow
+from app.security import get_current_user, require_role
+
+router = APIRouter(prefix="/exceptions", tags=["exceptions"])
+
+
+@router.get("", response_model=list[schemas.ExceptionOut])
+def list_exceptions(
+    dataset_id: int | None = None,
+    check_id: int | None = None,
+    run_id: int | None = None,
+    status: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    q = db.query(models.ExceptionRecord)
+    if dataset_id is not None:
+        q = q.filter(models.ExceptionRecord.dataset_id == dataset_id)
+    if check_id is not None:
+        q = q.filter(models.ExceptionRecord.check_id == check_id)
+    if run_id is not None:
+        q = q.filter(models.ExceptionRecord.run_id == run_id)
+    if status:
+        q = q.filter(models.ExceptionRecord.status == status)
+    excs = q.order_by(models.ExceptionRecord.id.desc()).offset(offset).limit(min(limit, 500)).all()
+    return [exception_out(db, e) for e in excs]
+
+
+@router.post("/triage", response_model=list[schemas.ExceptionOut])
+def triage(
+    body: schemas.TriageIn,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_role("editor")),
+):
+    if not body.ids:
+        raise HTTPException(422, "No exception ids provided")
+    excs = (
+        db.query(models.ExceptionRecord).filter(models.ExceptionRecord.id.in_(body.ids)).all()
+    )
+    if not excs:
+        raise HTTPException(404, "No matching exceptions found")
+    for e in excs:
+        e.status = body.status
+        if body.note:
+            e.note = body.note
+        e.marked_by_id = user.id
+        e.marked_at = utcnow()
+    db.commit()
+    return [exception_out(db, e) for e in excs]
