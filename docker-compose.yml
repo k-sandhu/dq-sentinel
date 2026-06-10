@@ -1,0 +1,56 @@
+# Full stack: PostgreSQL app DB + API + scheduler worker + nginx frontend.
+#   docker compose up --build      ->  UI on http://localhost:3000
+# Set ANTHROPIC_API_KEY in your shell or a .env file to enable AI features.
+# Mount your source databases (read-only) into the api+worker containers, e.g.
+# the bundled sample under ./samples (generate it first).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: dq
+      POSTGRES_PASSWORD: dq
+      POSTGRES_DB: dqsentinel
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dq -d dqsentinel"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: ./backend
+    environment: &backend_env
+      DQ_DATABASE_URL: postgresql+psycopg://dq:dq@postgres:5432/dqsentinel
+      DQ_SECRET_KEY: ${DQ_SECRET_KEY:-change-me-in-prod-0123456789abcdef}
+      DQ_CORS_ORIGINS: http://localhost:3000,http://localhost:5173
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      DQ_LLM_MODEL: ${DQ_LLM_MODEL:-claude-opus-4-8}
+    volumes:
+      - ./samples:/data/samples:ro # register with dsn sqlite:////data/samples/shopdb.sqlite
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build: ./backend
+    command: python -m app.worker
+    environment: *backend_env
+    volumes:
+      - ./samples:/data/samples:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
