@@ -56,10 +56,19 @@ export default function RunsTable({
                 <span className="badge">{r.triggered_by}</span>
               </td>
               <td style={{ whiteSpace: "nowrap" }}>{fmtDateTime(r.started_at)}</td>
-              <td>
+              <td style={{ whiteSpace: "nowrap" }}>
                 {r.exception_count > 0 && (
                   <Link to={`/exceptions?run_id=${r.id}`}>
                     {r.exception_count} exception{r.exception_count === 1 ? "" : "s"}
+                  </Link>
+                )}
+                {(r.status === "fail" || r.status === "error" || r.status === "warn") && (
+                  <Link
+                    to={`/workbench?dataset_id=${r.dataset_id}&run_id=${r.id}`}
+                    title="Open the workbench with suggested investigation queries for this failure"
+                    style={{ marginLeft: 8 }}
+                  >
+                    investigate →
                   </Link>
                 )}
               </td>

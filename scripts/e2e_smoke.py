@@ -191,6 +191,41 @@ def main() -> None:
     r = c.post("/exceptions/triage", json={"ids": ids, "status": "expected", "note": "seeded demo issue"})
     ok("bulk triage", r.status_code == 200 and all(e["status"] == "expected" for e in r.json()))
 
+    print("== workbench ==")
+    r = c.post(
+        "/query/run",
+        json={"connection_id": conn["id"], "sql": "SELECT status, COUNT(*) AS n FROM orders GROUP BY 1"},
+    )
+    ok("workbench query runs", r.status_code == 200 and r.json()["row_count"] >= 4, r.text[:120])
+    r = c.post("/query/run", json={"connection_id": conn["id"], "sql": "DROP TABLE orders"})
+    ok("workbench rejects writes", r.status_code == 422)
+    r = c.get(f"/connections/{conn['id']}/schema")
+    ok("schema tree", any(t["table_name"] == "orders" and t["columns"] for t in r.json()))
+    r = c.get(f"/connections/{conn['id']}/ddl?table=order_revenue")
+    ok("view DDL from database", r.json()["source"] == "database" and "SELECT" in r.json()["ddl"].upper())
+    r = c.post("/query/suggest", json={"dataset_id": orders_id})
+    sugg = r.json()
+    ok("suggested queries", len(sugg["suggestions"]) >= 3, f"mode={sugg['mode']}")
+    runnable = sum(
+        1
+        for s in sugg["suggestions"]
+        if c.post("/query/run", json={"connection_id": conn["id"], "sql": s["sql"]}).status_code == 200
+    )
+    ok("all suggestions runnable", runnable == len(sugg["suggestions"]), f"{runnable}/{len(sugg['suggestions'])}")
+
+    print("== ad-hoc dashboards ==")
+    r = c.post("/adhoc-dashboards/generate", json={"dataset_id": orders_id, "focus": "order health"})
+    ok("dashboard generated", r.status_code == 201, r.text[:120])
+    dash = r.json()
+    ok("panels executed", dash["panel_count"] > 0 and all(p["error"] is None for p in dash["panels"]),
+       f"{dash['panel_count']} panels via {dash['origin']}")
+    r = c.get(f"/adhoc-dashboards/{dash['id']}")
+    ok("dashboard reopens with fresh data", r.status_code == 200 and r.json()["panels"][0]["columns"])
+
+    print("== fleet health ==")
+    r = c.get("/connections/health")
+    ok("fleet health probes", r.status_code == 200 and all("latency_ms" in h for h in r.json()))
+
     print("== dashboard & rca fallback ==")
     dash = c.get("/dashboard").json()
     ok("dashboard aggregates", dash["datasets"] >= 3 and dash["active_checks"] >= 6 and dash["open_exceptions"] > 0,

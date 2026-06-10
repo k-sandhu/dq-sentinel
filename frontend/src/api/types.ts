@@ -62,6 +62,8 @@ export interface Dataset {
   active_checks: number;
   open_exceptions: number;
   health: "pass" | "warn" | "fail" | "unknown" | null;
+  importance: string | null;
+  owner: string | null;
 }
 
 export interface Preview {
@@ -255,4 +257,92 @@ export interface Health {
   status: string;
   version: string;
   llm_enabled: boolean;
+}
+
+// ---- workbench ----
+export interface QueryRunResult {
+  columns: string[];
+  rows: unknown[][];
+  row_count: number;
+  truncated: boolean;
+  elapsed_ms: number;
+}
+
+export interface SchemaTable {
+  schema_name: string | null;
+  table_name: string;
+  kind: "table" | "view";
+  columns: ColumnInfo[];
+}
+
+export interface Ddl {
+  table_name: string;
+  ddl: string;
+  source: "database" | "synthesized";
+}
+
+export interface Suggestion {
+  title: string;
+  sql: string;
+  rationale: string;
+}
+
+export interface SuggestResult {
+  mode: "llm" | "heuristic";
+  connection_id: number;
+  suggestions: Suggestion[];
+}
+
+export interface ConnectionHealth {
+  id: number;
+  name: string;
+  ok: boolean;
+  message: string;
+  latency_ms: number | null;
+}
+
+// ---- MCP ----
+export interface McpServer {
+  id: number;
+  name: string;
+  url: string;
+  description: string;
+  enabled: boolean;
+  has_token: boolean;
+  created_at: string;
+}
+
+// ---- ad-hoc dashboards ----
+export type VizType = "number" | "bar" | "line" | "area" | "pie" | "table";
+
+export interface PanelViz {
+  type: VizType;
+  x: string | null;
+  y: string | null;
+}
+
+export interface Panel {
+  title: string;
+  description: string;
+  sql: string;
+  viz: PanelViz;
+  columns: string[];
+  rows: unknown[][];
+  error: string | null;
+  elapsed_ms: number;
+}
+
+export interface AdhocDashboardMeta {
+  id: number;
+  dataset_id: number;
+  title: string;
+  focus: string;
+  origin: "llm" | "heuristic";
+  created_at: string;
+  last_refreshed_at: string | null;
+  panel_count: number;
+}
+
+export interface AdhocDashboard extends AdhocDashboardMeta {
+  panels: Panel[];
 }

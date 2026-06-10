@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
 import { api } from "../api/client";
-import type { Connection, ConnectionTest } from "../api/types";
+import type { Connection, ConnectionHealth, ConnectionTest } from "../api/types";
 import { isAdmin, useAuth } from "../auth";
 import { EmptyState, ErrorBox, Icon, Modal, Spinner } from "../components/ui";
 import { fmtDateTime } from "../lib/format";
@@ -79,6 +79,13 @@ export default function ConnectionsPage() {
     queryFn: () => api.get<Connection[]>("/connections"),
   });
 
+  const health = useQuery({
+    queryKey: ["fleet-health"],
+    queryFn: () => api.get<ConnectionHealth[]>("/connections/health"),
+    enabled: false, // on demand — probing dozens of sources is deliberate
+  });
+  const healthById = new Map((health.data ?? []).map((h) => [h.id, h]));
+
   const remove = useMutation({
     mutationFn: (id: number) => api.del(`/connections/${id}`),
     onSuccess: () => {
@@ -87,20 +94,37 @@ export default function ConnectionsPage() {
     },
   });
 
+  const okCount = (health.data ?? []).filter((h) => h.ok).length;
+
   return (
     <div className="page">
       <div className="page-header">
         <div>
           <h1>Connections</h1>
-          <div className="sub">Databases DQ Sentinel can profile and monitor (opened read-only)</div>
+          <div className="sub">
+            Databases DQ Sentinel can profile and monitor (opened read-only)
+            {health.data && (
+              <span style={{ marginLeft: 8 }}>
+                · fleet: <strong style={{ color: okCount === health.data.length ? "var(--ok)" : "var(--danger-dark)" }}>
+                  {okCount}/{health.data.length} reachable
+                </strong>
+              </span>
+            )}
+          </div>
         </div>
-        {isAdmin(user) && (
-          <button className="primary" onClick={() => setAdding(true)}>
-            <Icon name="plus" size={14} /> Add connection
+        <div className="header-actions">
+          <button onClick={() => health.refetch()} disabled={health.isFetching}>
+            {health.isFetching ? <span className="spinner" style={{ width: 13, height: 13 }} /> : <Icon name="bolt" size={13} />}
+            {health.isFetching ? "Probing…" : "Check fleet health"}
           </button>
-        )}
+          {isAdmin(user) && (
+            <button className="primary" onClick={() => setAdding(true)}>
+              <Icon name="plus" size={14} /> Add connection
+            </button>
+          )}
+        </div>
       </div>
-      <ErrorBox error={error || remove.error} />
+      <ErrorBox error={error || remove.error || health.error} />
       {isLoading ? (
         <Spinner />
       ) : !data?.length ? (
@@ -117,6 +141,7 @@ export default function ConnectionsPage() {
             <thead>
               <tr>
                 <th>Name</th>
+                <th>Status</th>
                 <th>Engine</th>
                 <th>DSN</th>
                 <th className="num">Datasets</th>
@@ -128,6 +153,18 @@ export default function ConnectionsPage() {
               {data.map((c) => (
                 <tr key={c.id}>
                   <td style={{ fontWeight: 700, color: "var(--text-dark)" }}>{c.name}</td>
+                  <td>
+                    {healthById.has(c.id) ? (
+                      <span
+                        className={`pill ${healthById.get(c.id)!.ok ? "pass" : "fail"}`}
+                        title={healthById.get(c.id)!.message}
+                      >
+                        {healthById.get(c.id)!.ok ? `up · ${healthById.get(c.id)!.latency_ms}ms` : "down"}
+                      </span>
+                    ) : (
+                      <span className="pill unknown">—</span>
+                    )}
+                  </td>
                   <td><span className="badge kind">{c.kind}</span></td>
                   <td className="mono" style={{ maxWidth: 340, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.dsn_masked}</td>
                   <td className="num">{c.dataset_count}</td>

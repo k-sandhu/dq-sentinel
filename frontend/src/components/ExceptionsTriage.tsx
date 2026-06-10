@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
+import { Link } from "react-router";
 import { api } from "../api/client";
 import type { ExceptionRecord, ExceptionStatus } from "../api/types";
 import { canEdit, useAuth } from "../auth";
@@ -19,13 +20,16 @@ const TRIAGE_ACTIONS: { status: ExceptionStatus; label: string; hint: string }[]
 function RowDetailModal({ exc, onClose }: { exc: ExceptionRecord; onClose: () => void }) {
   return (
     <Modal title={`Exception #${exc.id}`} onClose={onClose} wide>
-      <div style={{ marginBottom: 10 }}>
-        <Pill value={exc.status} /> <strong style={{ marginLeft: 6 }}>{exc.reason}</strong>
-        {exc.outlier_score != null && (
-          <span className="score-chip" style={{ marginLeft: 8 }}>
-            score {exc.outlier_score}
-          </span>
-        )}
+      <div style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <Pill value={exc.status} /> <strong>{exc.reason}</strong>
+        {exc.outlier_score != null && <span className="score-chip">score {exc.outlier_score}</span>}
+        <Link
+          to={`/workbench?dataset_id=${exc.dataset_id}&exception_id=${exc.id}`}
+          className="btn small"
+          style={{ marginLeft: "auto" }}
+        >
+          Investigate in workbench →
+        </Link>
       </div>
       <div style={{ fontSize: 12.5, color: "var(--text-light)", marginBottom: 12 }}>
         {exc.check_name} · {exc.dataset_name} · run #{exc.run_id} · {fmtDateTime(exc.created_at)}

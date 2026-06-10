@@ -1,18 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useParams } from "react-router";
+import { Link, useNavigate, useParams } from "react-router";
 import { api } from "../api/client";
 import type { Dataset, Profile } from "../api/types";
 import { canEdit, useAuth } from "../auth";
 import { ErrorBox, Icon, Pill, Spinner } from "../components/ui";
 import { fmtNum, timeAgo } from "../lib/format";
 import ChecksTab from "./dataset/ChecksTab";
+import DashboardsTab from "./dataset/DashboardsTab";
 import ExceptionsTab from "./dataset/ExceptionsTab";
 import KnowledgeTab from "./dataset/KnowledgeTab";
 import ProfileTab from "./dataset/ProfileTab";
 import RcaTab from "./dataset/RcaTab";
 import RunsTab from "./dataset/RunsTab";
 
-const TABS = ["profile", "checks", "runs", "exceptions", "knowledge", "rca"] as const;
+const TABS = ["profile", "checks", "runs", "exceptions", "dashboards", "knowledge", "rca"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function DatasetDetailPage() {
@@ -58,14 +59,17 @@ export default function DatasetDetailPage() {
             {dataset.active_checks} active checks · {dataset.open_exceptions} open exceptions
           </div>
         </div>
-        {canEdit(user) && (
-          <div className="header-actions">
+        <div className="header-actions">
+          <Link to={`/workbench?dataset_id=${datasetId}`} className="btn">
+            <Icon name="search" size={13} /> Workbench
+          </Link>
+          {canEdit(user) && (
             <button onClick={() => runProfile.mutate()} disabled={runProfile.isPending}>
               {runProfile.isPending ? <span className="spinner" style={{ width: 13, height: 13 }} /> : <Icon name="refresh" size={14} />}
               {runProfile.isPending ? "Profiling…" : "Profile now"}
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
       <ErrorBox error={runProfile.error} />
 
@@ -89,6 +93,7 @@ export default function DatasetDetailPage() {
       {active === "checks" && <ChecksTab datasetId={datasetId} hasProfile={!!profileQuery.data} />}
       {active === "runs" && <RunsTab datasetId={datasetId} />}
       {active === "exceptions" && <ExceptionsTab datasetId={datasetId} />}
+      {active === "dashboards" && <DashboardsTab datasetId={datasetId} hasProfile={!!profileQuery.data} />}
       {active === "knowledge" && <KnowledgeTab datasetId={datasetId} />}
       {active === "rca" && <RcaTab datasetId={datasetId} />}
     </div>

@@ -12,6 +12,7 @@ import HomePage from "./pages/HomePage";
 import LoginPage from "./pages/LoginPage";
 import RunsPage from "./pages/RunsPage";
 import SettingsPage from "./pages/SettingsPage";
+import WorkbenchPage from "./pages/WorkbenchPage";
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -39,6 +40,7 @@ export default function App() {
         <Route path="/checks" element={<ChecksPage />} />
         <Route path="/runs" element={<RunsPage />} />
         <Route path="/exceptions" element={<ExceptionsPage />} />
+        <Route path="/workbench" element={<WorkbenchPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

@@ -9,6 +9,7 @@ const NAV = [
   { to: "/checks", label: "Checks", icon: "shield" },
   { to: "/runs", label: "Runs", icon: "play" },
   { to: "/exceptions", label: "Exceptions", icon: "alert" },
+  { to: "/workbench", label: "Workbench", icon: "search" },
 ];
 
 export default function Layout() {
