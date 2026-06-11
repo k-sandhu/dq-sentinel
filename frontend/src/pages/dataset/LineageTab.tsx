@@ -1,0 +1,60 @@
+// Dataset "Lineage" tab (issue #51): BFS neighborhood around this dataset's
+// node, with a 1/2/3 depth selector and a jump to the estate-wide map.
+import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { Link } from "react-router";
+import { api } from "../../api/client";
+import type { Dataset, LineageGraph as LineageGraphData } from "../../api/types";
+import LineageGraph from "../../components/LineageGraph";
+import { ErrorBox, Icon, Spinner } from "../../components/ui";
+
+const DEPTHS = [1, 2, 3];
+
+export default function LineageTab({ dataset }: { dataset: Dataset }) {
+  const [depth, setDepth] = useState(2);
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["lineage-dataset", dataset.id, depth],
+    queryFn: () => api.get<LineageGraphData>(`/datasets/${dataset.id}/lineage?depth=${depth}`),
+    staleTime: 30_000,
+    placeholderData: (prev) => prev, // keep the old graph while a new depth loads
+  });
+
+  // Matches the backend's node_id_for(): lowercased "schema.table" or "table".
+  const currentId = (
+    dataset.schema_name ? `${dataset.schema_name}.${dataset.table_name}` : dataset.table_name
+  ).toLowerCase();
+
+  return (
+    <div className="card card-pad">
+      <div className="toolbar">
+        <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--text-dark)" }}>Depth</span>
+        <div className="chip-row">
+          {DEPTHS.map((d) => (
+            <button
+              key={d}
+              className={`filter-chip${depth === d ? " on" : ""}`}
+              onClick={() => setDepth(d)}
+              title={`Show tables within ${d} hop${d === 1 ? "" : "s"}`}
+            >
+              {d}
+            </button>
+          ))}
+        </div>
+        <div className="right">
+          <Link className="btn small" to={`/lineage?connection=${dataset.connection_id}`}>
+            <Icon name="graph" size={12} /> Open estate lineage
+          </Link>
+        </div>
+      </div>
+      <ErrorBox error={error} />
+      {isLoading && <Spinner label="Tracing lineage…" />}
+      {data && (
+        <LineageGraph
+          graph={data}
+          currentId={currentId}
+          emptyHint="No parsed view definitions feed or read from this dataset."
+        />
+      )}
+    </div>
+  );
+}

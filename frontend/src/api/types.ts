@@ -36,6 +36,15 @@ export interface ConnectionTest {
   table_count: number | null;
 }
 
+export interface EngineInfo {
+  kind: string;
+  label: string;
+  dsn_example: string;
+  driver_installed: boolean;
+  install_extra: string | null;
+  notes: string | null;
+}
+
 export interface TableInfo {
   schema_name: string | null;
   table_name: string;
@@ -347,4 +356,37 @@ export interface AdhocDashboardMeta {
 
 export interface AdhocDashboard extends AdhocDashboardMeta {
   panels: Panel[];
+}
+
+// --- DDL & lineage (issue #51) ---
+export type LineageHealth = "pass" | "warn" | "fail" | "unknown";
+
+export interface LineageNode {
+  id: string; // lowercased "schema.table" when schema_name is set, else "table"
+  schema_name: string | null;
+  table_name: string;
+  kind: "table" | "view";
+  dataset_id: number | null; // null = external / unregistered node
+  health: LineageHealth;
+  failing_checks: number;
+  open_exceptions: number;
+}
+
+export interface LineageEdge {
+  source: string; // upstream node id — data flows source -> target
+  target: string; // the view selecting from source
+}
+
+export interface LineageGraph {
+  nodes: LineageNode[];
+  edges: LineageEdge[];
+  parse_errors: number; // view definitions that could not be parsed
+  truncated: boolean; // graph capped at 300 nodes
+}
+
+export interface DatasetDdl {
+  dataset_id: number;
+  ddl: string;
+  source: "database" | "synthesized";
+  kind: "table" | "view";
 }

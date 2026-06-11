@@ -6,14 +6,16 @@ import { canEdit, useAuth } from "../auth";
 import { ErrorBox, Icon, Pill, Spinner } from "../components/ui";
 import { fmtNum, timeAgo } from "../lib/format";
 import ChecksTab from "./dataset/ChecksTab";
+import CodeTab from "./dataset/CodeTab";
 import DashboardsTab from "./dataset/DashboardsTab";
 import ExceptionsTab from "./dataset/ExceptionsTab";
 import KnowledgeTab from "./dataset/KnowledgeTab";
+import LineageTab from "./dataset/LineageTab";
 import ProfileTab from "./dataset/ProfileTab";
 import RcaTab from "./dataset/RcaTab";
 import RunsTab from "./dataset/RunsTab";
 
-const TABS = ["profile", "checks", "runs", "exceptions", "dashboards", "knowledge", "rca"] as const;
+const TABS = ["profile", "code", "lineage", "checks", "runs", "exceptions", "dashboards", "knowledge", "rca"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function DatasetDetailPage() {
@@ -90,6 +92,8 @@ export default function DatasetDetailPage() {
           profiling={runProfile.isPending}
         />
       )}
+      {active === "code" && <CodeTab datasetId={datasetId} />}
+      {active === "lineage" && <LineageTab dataset={dataset} />}
       {active === "checks" && <ChecksTab datasetId={datasetId} hasProfile={!!profileQuery.data} />}
       {active === "runs" && <RunsTab datasetId={datasetId} />}
       {active === "exceptions" && <ExceptionsTab datasetId={datasetId} />}

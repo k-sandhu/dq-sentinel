@@ -48,6 +48,20 @@ export function Icon({ name, size = 16 }: { name: string; size?: number }) {
         <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
       </>
     ),
+    graph: (
+      <>
+        <circle cx="5" cy="12" r="2.6" />
+        <circle cx="18.5" cy="5.5" r="2.6" />
+        <circle cx="18.5" cy="18.5" r="2.6" />
+        <path d="M7.4 10.9 16.1 6.6M7.4 13.1l8.7 4.3" />
+      </>
+    ),
+    copy: (
+      <>
+        <rect x="9" y="9" width="11" height="11" rx="2" />
+        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+      </>
+    ),
   };
   return (
     <svg

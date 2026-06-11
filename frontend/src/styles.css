@@ -475,3 +475,36 @@ details.step .body { padding: 4px 12px 10px; }
   .domain-card .meta, .dense-item .meta { white-space: normal; }
   .domain-head { align-items: flex-start; }
 }
+
+/* --- lineage UI (issue #51) --- */
+.lineage-canvas { overflow: auto; max-height: 620px; border: 1px solid var(--border-light); border-radius: 6px; background: var(--card2); }
+.lineage-canvas svg { display: block; }
+.lineage-edge { fill: none; stroke: var(--border-light); stroke-width: 1.5; transition: stroke 0.12s ease, opacity 0.12s ease; }
+.lineage-edge.on { stroke: var(--brand); stroke-width: 2; }
+.lineage-edge.dim { opacity: 0.35; }
+.lineage-node { transition: opacity 0.12s ease; }
+.lineage-node.link { cursor: pointer; }
+.lineage-node.dim { opacity: 0.45; }
+.lineage-box { fill: var(--card); stroke: var(--border); stroke-width: 1.3; transition: stroke-width 0.12s ease; }
+.lineage-box.pass { stroke: var(--ok); }
+.lineage-box.warn { stroke: var(--warn-strong); }
+.lineage-box.fail { stroke: var(--danger); }
+.lineage-node.link:hover .lineage-box { stroke-width: 2; }
+.lineage-node.current .lineage-box { stroke: var(--brand); stroke-width: 2; }
+.lineage-glow { fill: none; stroke: var(--brand-light); stroke-width: 5; opacity: 0.8; }
+.lineage-title { fill: var(--text-dark); font-size: 12.5px; font-weight: 700; }
+.lineage-meta { fill: var(--text-light); font-size: 11px; }
+.lineage-badge { fill: var(--brand-light); }
+.lineage-badge-text { fill: var(--brand-dark); font-size: 9px; font-weight: 700; letter-spacing: 0.4px; }
+.lineage-note { font-size: 11.5px; color: var(--text-light); margin-top: 6px; }
+.legend-row .swatch.ok { background: var(--ok); }
+.legend-row .swatch.warn { background: var(--warn-strong); }
+.legend-row .swatch.fail { background: var(--danger); }
+.legend-row .swatch.ext { background: var(--border); }
+
+/* table/view definition block (dataset Code tab) */
+.code-block {
+  margin: 0; background: var(--card2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 14px 16px; font-family: var(--mono); font-size: 12.5px; line-height: 1.55;
+  color: var(--text-dark); white-space: pre; overflow-x: auto;
+}

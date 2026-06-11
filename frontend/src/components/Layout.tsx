@@ -26,7 +26,13 @@ const NAV_GROUPS: {
       { to: "/exceptions", label: "Exceptions", icon: "alert" },
     ],
   },
-  { label: "Explore", items: [{ to: "/workbench", label: "Workbench", icon: "search" }] },
+  {
+    label: "Explore",
+    items: [
+      { to: "/workbench", label: "Workbench", icon: "search" },
+      { to: "/lineage", label: "Lineage", icon: "graph" },
+    ],
+  },
 ];
 
 /** Fleet-health pill: polls GET /connections/health once a minute (shares the
