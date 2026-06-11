@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.api import api_router
+from app.api.lineage import router as lineage_router
 from app.config import get_settings
 from app.db import init_db
 from app.observability import RequestContextMiddleware, configure_logging, metrics_endpoint
@@ -38,6 +39,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(api_router, prefix="/api/v1")
+    app.include_router(lineage_router, prefix="/api/v1")  # declares full /datasets + /connections paths
 
     @app.get("/api/v1/health", tags=["meta"])
     def health():
