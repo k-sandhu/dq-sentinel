@@ -46,9 +46,9 @@ def test_full_flow(client, admin_headers, source_db):
     resp = client.post(f"/api/v1/connections/{conn['id']}/test", headers=h)
     assert resp.json()["ok"] is True
 
-    # bad scheme rejected
+    # bad scheme rejected (mysql is a supported kind since issue #29, so use mongodb)
     resp = client.post(
-        "/api/v1/connections", json={"name": "bad", "dsn": "mysql://root@x/db"}, headers=h
+        "/api/v1/connections", json={"name": "bad", "dsn": "mongodb://root@x/db"}, headers=h
     )
     assert resp.status_code == 400
 

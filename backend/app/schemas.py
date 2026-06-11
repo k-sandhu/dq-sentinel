@@ -72,6 +72,17 @@ class ConnectionTestOut(BaseModel):
     table_count: int | None = None
 
 
+class EngineInfo(BaseModel):
+    """A supported source-engine kind + driver availability (GET /connections/engines)."""
+
+    kind: str
+    label: str
+    dsn_example: str
+    driver_installed: bool
+    install_extra: str | None = None
+    notes: str | None = None
+
+
 class TableInfo(BaseModel):
     schema_name: str | None = None
     table_name: str
@@ -448,3 +459,40 @@ class DashboardOut(BaseModel):
     trend: list[TrendPoint]
     recent_runs: list[RunOut]
     worst_datasets: list[DatasetOut]
+
+
+# --- DDL & lineage (issue #51) ---
+class DatasetDdlOut(BaseModel):
+    """Source definition of a dataset's table/view.
+
+    (Named DatasetDdlOut because the workbench already uses DdlOut for
+    GET /connections/{id}/ddl with a different shape.)
+    """
+
+    dataset_id: int
+    ddl: str
+    source: Literal["database", "synthesized"]
+    kind: Literal["table", "view"] = "table"
+
+
+class LineageNode(BaseModel):
+    id: str  # "schema.table" when schema_name is set, else "table" (lowercased)
+    schema_name: str | None = None
+    table_name: str
+    kind: Literal["table", "view"] = "table"
+    dataset_id: int | None = None  # null for unregistered/external tables
+    health: Literal["pass", "warn", "fail", "unknown"] = "unknown"
+    failing_checks: int = 0
+    open_exceptions: int = 0
+
+
+class LineageEdge(BaseModel):
+    source: str  # upstream node id — data flows source -> target
+    target: str  # the view selecting from source
+
+
+class LineageGraph(BaseModel):
+    nodes: list[LineageNode] = []
+    edges: list[LineageEdge] = []
+    parse_errors: int = 0  # view definitions sqlglot could not parse
+    truncated: bool = False  # graph exceeded the node cap and was cut off

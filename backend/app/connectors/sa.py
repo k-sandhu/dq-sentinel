@@ -1,7 +1,11 @@
-"""SQLAlchemy-based source connectors (SQLite, DuckDB, PostgreSQL).
+"""SQLAlchemy-based source connectors.
 
+Supported engines are declared in app/connectors/dialects.py (sqlite, duckdb,
+postgresql, mysql/mariadb, mssql, snowflake, bigquery, trino, clickhouse).
 Engines are opened read-only where the driver supports it and cached per
 connection id. All ad-hoc SQL goes through guard_sql() + enforce_limit().
+Drivers beyond the bundled sqlite/duckdb are optional extras: engine creation
+raises DriverNotInstalled with install instructions when one is missing.
 """
 
 import threading
@@ -11,48 +15,64 @@ from typing import Any
 
 import pandas as pd
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.engine import Engine, make_url
+from sqlalchemy.engine import URL, Engine, make_url
+from sqlalchemy.exc import NoSuchModuleError
 
+from app.connectors.dialects import (
+    REGISTRY,
+    SPEC_BY_SCHEME,
+    DialectSpec,
+    DriverNotInstalled,
+    missing_driver_message,
+)
 from app.connectors.safety import SqlNotAllowed, enforce_limit, guard_sql
 from app.models import Connection
 from app.observability import SOURCE_QUERIES, SOURCE_QUERY_SECONDS
 
-ALLOWED_SCHEMES = {"sqlite", "duckdb", "postgresql", "postgresql+psycopg", "postgresql+psycopg2"}
+ALLOWED_SCHEMES = frozenset(SPEC_BY_SCHEME)
 
 _engines: dict[int, Engine] = {}
 _lock = threading.Lock()
 
 
-def kind_from_dsn(dsn: str) -> str:
+def _spec_from_dsn(dsn: str) -> DialectSpec:
     scheme = make_url(dsn).drivername
-    if scheme not in ALLOWED_SCHEMES:
+    spec = SPEC_BY_SCHEME.get(scheme)
+    if spec is None:
         raise SqlNotAllowed(
-            f"Unsupported DSN scheme '{scheme}'. Allowed: sqlite, duckdb, postgresql"
+            f"Unsupported DSN scheme '{scheme}'. Supported kinds: {', '.join(sorted(REGISTRY))}"
         )
-    return scheme.split("+")[0]
+    return spec
+
+
+def kind_from_dsn(dsn: str) -> str:
+    return _spec_from_dsn(dsn).kind
+
+
+def _create_engine(spec: DialectSpec, url: str | URL, kwargs: dict[str, Any]) -> Engine:
+    """create_engine() with missing optional drivers translated to DriverNotInstalled."""
+    try:
+        return create_engine(url, **kwargs)
+    except (ImportError, NoSuchModuleError) as exc:  # ModuleNotFoundError subclasses ImportError
+        if spec.install_extra is None:  # bundled driver — a missing module is a real bug
+            raise
+        raise DriverNotInstalled(missing_driver_message(spec)) from exc
 
 
 def _readonly_engine(dsn: str) -> Engine:
     url = make_url(dsn)
-    kind = kind_from_dsn(dsn)
-    if kind == "sqlite":
+    spec = _spec_from_dsn(dsn)
+    kwargs = spec.engine_options(url)
+    if spec.kind == "sqlite":
         # Reopen via URI with mode=ro so writes fail at the driver level.
         db_path = (url.database or "").replace("\\", "/")
         if db_path and db_path != ":memory:":
             uri = f"file:{db_path}?mode=ro&uri=true"
-            return create_engine("sqlite:///" + uri, connect_args={"check_same_thread": False})
-        return create_engine(dsn, connect_args={"check_same_thread": False})
-    if kind == "duckdb":
-        return create_engine(dsn, connect_args={"read_only": True})
-    # postgresql: read-only transactions + a statement timeout so ad-hoc
-    # workbench/agent queries can't camp on the source (issue #40)
-    return create_engine(
-        dsn,
-        pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=5,
-        connect_args={"options": "-c default_transaction_read_only=on -c statement_timeout=30000"},
-    )
+            return _create_engine(spec, "sqlite:///" + uri, kwargs)
+        return _create_engine(spec, dsn, kwargs)
+    if spec.default_driver and "+" not in url.drivername:
+        url = url.set(drivername=f"{url.drivername}+{spec.default_driver}")
+    return _create_engine(spec, url, kwargs)
 
 
 def dispose_connection(connection_id: int) -> None:
@@ -71,7 +91,8 @@ class QueryResult:
 class Connector:
     def __init__(self, dsn: str, connection_id: int | None = None):
         self.dsn = dsn
-        self.kind = kind_from_dsn(dsn)
+        self.spec = _spec_from_dsn(dsn)
+        self.kind = self.spec.kind
         if connection_id is not None:
             with _lock:
                 eng = _engines.get(connection_id)
@@ -94,11 +115,12 @@ class Connector:
     # ---- introspection ----
     def list_tables(self) -> list[dict[str, Any]]:
         insp = inspect(self.engine)
-        out: list[dict[str, Any]] = []
-        if self.kind == "postgresql":
-            schemas = [s for s in insp.get_schema_names() if s not in ("information_schema", "pg_catalog")]
+        if self.spec.multi_schema:
+            excluded = {s.lower() for s in self.spec.system_schemas}
+            schemas = [s for s in insp.get_schema_names() if s.lower() not in excluded]
         else:
             schemas = [None]
+        out: list[dict[str, Any]] = []
         for schema in schemas:
             for name in insp.get_table_names(schema=schema):
                 out.append({"schema_name": schema, "table_name": name, "kind": "table"})
@@ -155,6 +177,13 @@ class Connector:
                 )
                 if ddl:
                     return f"CREATE VIEW {table} AS\n{ddl}", "database"
+            elif self.spec.ddl_queries is not None:
+                # Registry-driven catalog lookups: each attempt is a single
+                # SELECT that goes through guard_sql() inside self.scalar().
+                for sql, params in self.spec.ddl_queries(table, schema, self.quote):
+                    ddl = self.scalar(sql, params)
+                    if ddl:
+                        return str(ddl), "database"
         except Exception:  # noqa: BLE001 - fall through to synthesized DDL
             pass
 

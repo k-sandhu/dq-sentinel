@@ -26,10 +26,26 @@ dependencies = [
     "openai>=1.60",
     "httpx>=0.27",
     "prometheus-client>=0.21",
+    "sqlglot>=26.0",
 ]
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.2"]
+mysql = ["pymysql>=1.1"]
+mssql = ["pyodbc>=5.1"]
+snowflake = ["snowflake-sqlalchemy>=1.6"]
+bigquery = ["sqlalchemy-bigquery>=1.11"]
+trino = ["trino[sqlalchemy]>=0.330"]
+clickhouse = ["clickhouse-sqlalchemy>=0.3"]
+all-connectors = [
+    "psycopg[binary]>=3.2",
+    "pymysql>=1.1",
+    "pyodbc>=5.1",
+    "snowflake-sqlalchemy>=1.6",
+    "sqlalchemy-bigquery>=1.11",
+    "trino[sqlalchemy]>=0.330",
+    "clickhouse-sqlalchemy>=0.3",
+]
 dev = ["pytest>=8.2", "ruff>=0.6"]
 
 [tool.setuptools.packages.find]

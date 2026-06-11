@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.api.serialize import connection_out
+from app.connectors.dialects import REGISTRY, DriverNotInstalled, driver_installed
 from app.connectors.sa import Connector, SqlNotAllowed, connector_for, dispose_connection, kind_from_dsn
 from app.db import get_db
 from app.security import get_current_user, require_role
@@ -73,10 +74,32 @@ def test_dsn(body: schemas.ConnectionIn, _: models.User = Depends(require_role("
     """Test a DSN before saving it."""
     try:
         connector = Connector(body.dsn)
+    except DriverNotInstalled as exc:
+        return schemas.ConnectionTestOut(ok=False, message=str(exc))  # verbatim, incl. pip hint
     except Exception as exc:  # noqa: BLE001
         return schemas.ConnectionTestOut(ok=False, message=f"Invalid DSN: {exc}")
     ok, message, table_count = connector.test()
     return schemas.ConnectionTestOut(ok=ok, message=message, table_count=table_count)
+
+
+@router.get("/engines", response_model=list[schemas.EngineInfo])
+def list_engines(_: models.User = Depends(get_current_user)):
+    """Supported engine kinds + driver availability — for the new-connection form.
+
+    Declared before the /{connection_id} routes so the literal path wins.
+    """
+    infos = [
+        schemas.EngineInfo(
+            kind=spec.kind,
+            label=spec.label,
+            dsn_example=spec.dsn_example,
+            driver_installed=driver_installed(spec),
+            install_extra=spec.install_extra,
+            notes=spec.notes,
+        )
+        for spec in REGISTRY.values()
+    ]
+    return sorted(infos, key=lambda e: e.label)
 
 
 @router.post("/{connection_id}/test", response_model=schemas.ConnectionTestOut)
@@ -88,7 +111,10 @@ def test_connection(
     conn = db.get(models.Connection, connection_id)
     if conn is None:
         raise HTTPException(404, "Connection not found")
-    ok, message, table_count = connector_for(conn).test()
+    try:
+        ok, message, table_count = connector_for(conn).test()
+    except DriverNotInstalled as exc:
+        return schemas.ConnectionTestOut(ok=False, message=str(exc))  # verbatim, incl. pip hint
     return schemas.ConnectionTestOut(ok=ok, message=message, table_count=table_count)
 
 
