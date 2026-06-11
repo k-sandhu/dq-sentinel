@@ -28,8 +28,8 @@ def get_dataset_ddl(
     dataset_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_user)
 ):
     ds = _get_dataset(db, dataset_id)
-    connector = connector_for(ds.connection)
     try:
+        connector = connector_for(ds.connection)
         ddl, source = connector.get_ddl(ds.table_name, ds.schema_name)
         tables = connector.list_tables()
     except Exception as exc:  # noqa: BLE001 - surface driver errors
