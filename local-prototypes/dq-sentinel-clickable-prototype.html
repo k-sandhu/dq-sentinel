@@ -1,0 +1,2871 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DQ Sentinel Clickable Prototype</title>
+  <style>
+    :root {
+      --brand: #509ee3;
+      --brand-dark: #2f72ab;
+      --brand-light: #cbe2f7;
+      --bg: #f9fbfc;
+      --card: #ffffff;
+      --border: #e3e7e9;
+      --border-light: #eef0f2;
+      --text: #4c5773;
+      --text-dark: #2e353b;
+      --text-light: #949aab;
+      --ok: #84bb4c;
+      --warn: #f2a86f;
+      --warn-strong: #e8a541;
+      --danger: #ed6e6e;
+      --danger-dark: #d14e4e;
+      --purple: #a989c5;
+      --shadow: 0 1px 3px rgba(46, 53, 59, 0.06), 0 2px 8px rgba(46, 53, 59, 0.04);
+      --radius: 8px;
+      --mono: ui-monospace, "Cascadia Code", "Segoe UI Mono", Menlo, monospace;
+      --card2: #fbfcfd;
+      --hover: #f5f9fd;
+      --hover-soft: #f7fbff;
+      --input-bg: #ffffff;
+      --inverse-bg: #2e353b;
+      --topbar-bg: rgba(249, 251, 252, 0.94);
+    }
+
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --brand: #5ba3e8;
+      --brand-dark: #84bdf0;
+      --brand-light: #1f3a52;
+      --bg: #14181d;
+      --card: #1c2229;
+      --card2: #181e24;
+      --border: #2b333d;
+      --border-light: #242b33;
+      --text: #aeb8c4;
+      --text-dark: #e9edf2;
+      --text-light: #717c8a;
+      --hover: #202a34;
+      --hover-soft: #1e2832;
+      --input-bg: #161b21;
+      --inverse-bg: #0d1115;
+      --topbar-bg: rgba(20, 24, 29, 0.92);
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.3);
+    }
+    html[data-theme="dark"] .pill.pass, html[data-theme="dark"] .pill.resolved, html[data-theme="dark"] .pill.active, html[data-theme="dark"] .pill.complete, html[data-theme="dark"] .pill.approved { background: rgba(132, 187, 76, 0.16); color: #a3d573; }
+    html[data-theme="dark"] .pill.warn, html[data-theme="dark"] .pill.acknowledged, html[data-theme="dark"] .pill.sev2 { background: rgba(242, 168, 111, 0.16); color: #ecb277; }
+    html[data-theme="dark"] .pill.fail, html[data-theme="dark"] .pill.error, html[data-theme="dark"] .pill.open, html[data-theme="dark"] .pill.failed, html[data-theme="dark"] .pill.sev1 { background: rgba(237, 110, 110, 0.16); color: #f09090; }
+    html[data-theme="dark"] .pill.expected, html[data-theme="dark"] .pill.running, html[data-theme="dark"] .pill.sev3, html[data-theme="dark"] .pill.monitoring { background: rgba(80, 158, 227, 0.18); color: #8ec3ee; }
+    html[data-theme="dark"] .pill.proposed, html[data-theme="dark"] .pill.review { background: rgba(169, 137, 197, 0.2); color: #c5abdf; }
+    html[data-theme="dark"] .pill.unknown, html[data-theme="dark"] .pill.muted, html[data-theme="dark"] .pill.disabled, html[data-theme="dark"] .pill.archived, html[data-theme="dark"] .pill.dismissed { background: rgba(255, 255, 255, 0.07); color: var(--text-light); }
+    html[data-theme="dark"] .badge.ai { background: #2a2138; border-color: #473560; color: #c5abdf; }
+    html[data-theme="dark"] .heat-cell.ok { background: rgba(132, 187, 76, 0.14); color: #a3d573; }
+    html[data-theme="dark"] .heat-cell.warn { background: rgba(242, 168, 111, 0.14); color: #ecb277; }
+    html[data-theme="dark"] .heat-cell.fail { background: rgba(237, 110, 110, 0.14); color: #f09090; }
+    html[data-theme="dark"] .info-box { background: #152638; border-color: #234763; color: #8ec3ee; }
+    html[data-theme="dark"] .error-box { background: #331c1c; border-color: #5a2e2e; color: #f09090; }
+    html[data-theme="dark"] .map-node.fail { border-color: #5a2e2e; background: #241a1a; }
+    html[data-theme="dark"] .map-node.warn { border-color: #5a4527; background: #241f17; }
+    html[data-theme="dark"] .step.on { background: #1a2733; }
+    html[data-theme="dark"] .step.done { border-color: #3a5230; background: #1c2418; color: #a3d573; }
+    html[data-theme="dark"] .score-chip { background: rgba(237, 110, 110, 0.16); color: #f09090; }
+    html[data-theme="dark"] .env-dot { box-shadow: 0 0 0 3px rgba(132, 187, 76, 0.15); }
+    html[data-theme="dark"] .dense-item.clickable:hover { border-color: #2c4a66; }
+    html[data-theme="dark"] .timeline-item.fail .timeline-dot { box-shadow: 0 0 0 1px #5a2e2e; }
+    html[data-theme="dark"] .timeline-item.warn .timeline-dot { box-shadow: 0 0 0 1px #5a4527; }
+
+    * { box-sizing: border-box; }
+    html, body, #app { height: 100%; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", -apple-system, "Helvetica Neue", Arial, sans-serif;
+      font-size: 14px;
+      color: var(--text);
+      background: var(--bg);
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--brand); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    h1, h2, h3, h4 { color: var(--text-dark); margin: 0; font-weight: 700; }
+    code, pre { font-family: var(--mono); font-size: 12.5px; }
+
+    .app { display: flex; height: 100vh; overflow: hidden; }
+    .sidebar {
+      width: 220px;
+      flex: none;
+      background: var(--card);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      padding: 14px 10px;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 6px 10px 16px;
+      font-size: 17px;
+      font-weight: 800;
+      color: var(--text-dark);
+    }
+    .logo-mark {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      background: var(--brand);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      flex: none;
+    }
+    .nav-section {
+      margin-top: 14px;
+      padding: 0 10px 6px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.7px;
+      color: var(--text-light);
+      text-transform: uppercase;
+    }
+    .nav-group { margin-top: 10px; }
+    .nav-group:first-of-type { margin-top: 0; }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      color: var(--text);
+      font-weight: 600;
+      cursor: pointer;
+      margin-bottom: 2px;
+    }
+    .nav-item:hover { background: var(--bg); text-decoration: none; }
+    .nav-item.active { background: var(--brand); color: #fff; }
+    .nav-item.active svg { stroke: #fff; }
+    .nav-item svg { stroke: var(--text-light); flex: none; }
+    .sidebar .spacer { flex: 1; }
+    .user-box {
+      border-top: 1px solid var(--border-light);
+      padding: 10px 10px 2px;
+      font-size: 12.5px;
+    }
+    .user-box .email {
+      color: var(--text-dark);
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .main { flex: 1; overflow-y: auto; }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 15;
+      height: 56px;
+      background: var(--topbar-bg);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border-light);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 32px;
+    }
+    .environment-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--text-dark);
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .env-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 99px;
+      background: var(--ok);
+      box-shadow: 0 0 0 3px #eaf4df;
+    }
+    .global-search {
+      flex: 1;
+      max-width: 620px;
+      position: relative;
+    }
+    .global-search input {
+      margin-top: 0;
+      padding-left: 34px;
+      background: var(--input-bg);
+    }
+    .global-search svg {
+      position: absolute;
+      left: 10px;
+      top: 8px;
+      color: var(--text-light);
+    }
+    .topbar-actions {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .notification-dot {
+      min-width: 18px;
+      height: 18px;
+      border-radius: 99px;
+      background: var(--danger);
+      color: #fff;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-weight: 800;
+      padding: 0 5px;
+    }
+    .page { padding: 26px 32px 60px; max-width: 1280px; margin: 0 auto; }
+    .page.wide { max-width: 1500px; }
+    .page-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+    .page-header h1 { font-size: 22px; }
+    .page-header .sub { color: var(--text-light); margin-top: 4px; font-size: 13px; }
+    .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      min-width: 0;
+    }
+    .card-pad { padding: 18px 20px; }
+    .card h3 { font-size: 14px; margin-bottom: 12px; }
+    .grid { display: grid; gap: 16px; }
+    .grid > *, .split > * { min-width: 0; }
+    .grid.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.cols-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    .grid.cols-6 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+    @media (max-width: 1100px) {
+      .grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid.cols-5, .grid.cols-6 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid.cols-3, .grid.cols-2 { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 820px) {
+      .app { display: block; height: auto; min-height: 100%; overflow: visible; }
+      .sidebar { width: 100%; position: sticky; top: 0; z-index: 20; border-bottom: 1px solid var(--border); border-right: 0; }
+      .sidebar nav { display: flex; overflow-x: auto; gap: 3px; }
+      .sidebar .spacer, .user-box, .nav-section { display: none; }
+      .nav-item { white-space: nowrap; }
+      .topbar { position: relative; height: auto; padding: 10px 14px; flex-wrap: wrap; }
+      .global-search { order: 3; flex-basis: 100%; max-width: none; }
+      .page { padding: 18px 14px 40px; }
+    }
+
+    .stat-card { padding: 16px 18px; }
+    .stat-card .label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-light);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .stat-card .value {
+      font-size: 28px;
+      font-weight: 800;
+      color: var(--text-dark);
+      margin-top: 6px;
+    }
+    .stat-card .value.danger { color: var(--danger-dark); }
+    .stat-card .value.ok { color: var(--ok); }
+    .stat-card .hint { font-size: 12px; color: var(--text-light); margin-top: 2px; }
+    .metric-row { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+    .metric-row .big {
+      color: var(--text-dark);
+      font-weight: 800;
+      font-size: 24px;
+      font-variant-numeric: tabular-nums;
+    }
+    .metric-row .delta { font-size: 12px; font-weight: 700; }
+    .delta.good { color: var(--ok); }
+    .delta.bad { color: var(--danger-dark); }
+    .section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin: 22px 0 12px;
+    }
+    .section-title h2 {
+      font-size: 16px;
+      color: var(--text-dark);
+    }
+    .split {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .split.even { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    @media (max-width: 1050px) { .split, .split.even { grid-template-columns: 1fr; } }
+    .dense-list { display: grid; gap: 8px; }
+    .dense-item {
+      border: 1px solid var(--border-light);
+      border-radius: 6px;
+      padding: 10px 12px;
+      background: var(--card);
+    }
+    .dense-item.clickable { cursor: pointer; }
+    .dense-item.clickable:hover { border-color: var(--brand-light); background: var(--hover-soft); }
+    .dense-item .title { font-weight: 700; color: var(--text-dark); }
+    .dense-item .meta { color: var(--text-light); font-size: 12px; margin-top: 2px; }
+    .dense-item .meta, .domain-card .meta, .map-node .meta, .contract-item .meta { overflow-wrap: anywhere; }
+    .heatmap {
+      display: grid;
+      grid-template-columns: 140px repeat(5, minmax(58px, 1fr));
+      gap: 6px;
+      align-items: stretch;
+      font-size: 12px;
+    }
+    .heatmap .head {
+      color: var(--text-light);
+      font-weight: 700;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      padding: 6px 4px;
+    }
+    .heatmap .row-label {
+      color: var(--text-dark);
+      font-weight: 700;
+      padding: 8px 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .heat-cell {
+      border-radius: 5px;
+      padding: 7px 8px;
+      text-align: center;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+      border: 1px solid transparent;
+    }
+    .heat-cell.ok { background: #eaf4df; color: #5d9230; }
+    .heat-cell.warn { background: #fdf0e3; color: #c07f2b; }
+    .heat-cell.fail { background: #fde9e9; color: #c4403f; }
+    .heat-cell.neutral { background: var(--bg); color: var(--text-light); border-color: var(--border-light); }
+    .timeline { display: grid; gap: 0; }
+    .timeline-item {
+      position: relative;
+      padding: 0 0 14px 22px;
+      border-left: 2px solid var(--border-light);
+      margin-left: 6px;
+    }
+    .timeline-item:last-child { border-left-color: transparent; padding-bottom: 0; }
+    .timeline-dot {
+      position: absolute;
+      left: -6px;
+      top: 2px;
+      width: 10px;
+      height: 10px;
+      border-radius: 99px;
+      background: var(--brand);
+      border: 2px solid var(--card);
+      box-shadow: 0 0 0 1px var(--brand-light);
+    }
+    .timeline-item.fail .timeline-dot { background: var(--danger); box-shadow: 0 0 0 1px #f5c6c6; }
+    .timeline-item.warn .timeline-dot { background: var(--warn-strong); box-shadow: 0 0 0 1px #f7d6ad; }
+    .score-ring {
+      width: 86px;
+      height: 86px;
+      border-radius: 50%;
+      display: inline-grid;
+      place-items: center;
+      background: conic-gradient(var(--ok) calc(var(--score) * 1%), var(--border-light) 0);
+      position: relative;
+      flex: none;
+    }
+    .score-ring::after {
+      content: "";
+      position: absolute;
+      inset: 9px;
+      border-radius: 50%;
+      background: var(--card);
+    }
+    .score-ring strong {
+      position: relative;
+      z-index: 1;
+      color: var(--text-dark);
+      font-size: 20px;
+    }
+    .domain-card {
+      display: grid;
+      gap: 10px;
+      padding: 14px;
+    }
+    .domain-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .domain-title { color: var(--text-dark); font-weight: 800; }
+    .progress-line {
+      height: 7px;
+      border-radius: 99px;
+      background: var(--border-light);
+      overflow: hidden;
+    }
+    .progress-line > div {
+      height: 100%;
+      border-radius: inherit;
+      background: var(--brand);
+    }
+    .progress-line.fail > div { background: var(--danger); }
+    .progress-line.warn > div { background: var(--warn-strong); }
+    .quality-map {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 10px;
+    }
+    .map-node {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: var(--card);
+      min-height: 78px;
+    }
+    .map-node .name { font-weight: 800; color: var(--text-dark); }
+    .map-node .meta { color: var(--text-light); font-size: 11.5px; margin-top: 3px; }
+    .map-node.fail { border-color: #f5c6c6; background: #fff8f8; }
+    .map-node.warn { border-color: #f7d6ad; background: #fffaf4; }
+    .stepper {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .step {
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 9px 10px;
+      background: var(--card);
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-light);
+    }
+    .step.on { border-color: var(--brand); color: var(--brand-dark); background: #f4f9fd; }
+    .step.done { border-color: #cfe4bd; color: #5d9230; background: #f8fcf4; }
+    .contract-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .contract-item {
+      border: 1px solid var(--border-light);
+      border-radius: 8px;
+      padding: 12px;
+      background: var(--card);
+    }
+    .contract-item strong { color: var(--text-dark); }
+    .contract-item .label { color: var(--text-light); font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.4px; }
+    @media (max-width: 820px) {
+      .heatmap { grid-template-columns: 110px repeat(5, minmax(46px, 1fr)); overflow-x: auto; }
+      .quality-map, .contract-grid { grid-template-columns: 1fr; }
+      .stepper { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 520px) {
+      .grid.cols-4, .grid.cols-5, .grid.cols-6 { grid-template-columns: 1fr; }
+      .domain-head { align-items: flex-start; }
+      .chart-bars, .panel-bars { overflow-x: auto; padding-bottom: 4px; }
+      .day-bar { min-width: 28px; }
+    }
+
+    .table-wrap { overflow-x: auto; }
+    table.data { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table.data th {
+      text-align: left;
+      padding: 10px 12px;
+      color: var(--text-light);
+      font-size: 11.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+      background: var(--card2);
+    }
+    table.data td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border-light);
+      vertical-align: middle;
+    }
+    table.data tr:last-child td { border-bottom: none; }
+    table.data tr.clickable { cursor: pointer; }
+    table.data tr.clickable:hover td { background: var(--hover); }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    td.mono, .mono { font-family: var(--mono); font-size: 12px; }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2.5px 9px;
+      border-radius: 99px;
+      font-size: 11.5px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .pill.pass { background: #eaf4df; color: #5d9230; }
+    .pill.warn { background: #fdf0e3; color: #c07f2b; }
+    .pill.fail { background: #fde9e9; color: #c4403f; }
+    .pill.error { background: #f7dcdc; color: #a33; }
+    .pill.unknown, .pill.muted { background: #f0f2f4; color: var(--text-light); }
+    .pill.open { background: #fde9e9; color: #c4403f; }
+    .pill.acknowledged { background: #fdf0e3; color: #c07f2b; }
+    .pill.expected { background: #e9f0fb; color: var(--brand-dark); }
+    .pill.resolved { background: #eaf4df; color: #5d9230; }
+    .pill.proposed { background: #f1eaf8; color: #7d5da3; }
+    .pill.active { background: #eaf4df; color: #5d9230; }
+    .pill.disabled, .pill.archived { background: #f0f2f4; color: var(--text-light); }
+    .pill.running { background: #e9f0fb; color: var(--brand-dark); }
+    .pill.complete { background: #eaf4df; color: #5d9230; }
+    .pill.failed { background: #fde9e9; color: #c4403f; }
+    .pill.sev1 { background: #fde9e9; color: #c4403f; }
+    .pill.sev2 { background: #fdf0e3; color: #c07f2b; }
+    .pill.sev3 { background: #e9f0fb; color: var(--brand-dark); }
+    .pill.monitoring { background: #e9f0fb; color: var(--brand-dark); }
+    .pill.review { background: #f1eaf8; color: #7d5da3; }
+    .pill.approved { background: #eaf4df; color: #5d9230; }
+    .pill.dismissed { background: #f0f2f4; color: var(--text-light); }
+    .badge {
+      display: inline-block;
+      padding: 1.5px 7px;
+      border-radius: 4px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .badge.ai { background: #f1eaf8; border-color: #e0d2ef; color: #7d5da3; }
+    .badge.kind { font-family: var(--mono); font-size: 10.5px; }
+    .sev {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 99px;
+      margin-right: 6px;
+    }
+    .sev.error { background: var(--danger); }
+    .sev.warn { background: var(--warn-strong); }
+    .sev.info { background: var(--brand); }
+
+    button, .btn {
+      font: inherit;
+      font-weight: 700;
+      font-size: 13px;
+      border-radius: 6px;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--text-dark);
+      padding: 7px 14px;
+      transition: background 0.12s, border-color 0.12s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 32px;
+    }
+    button:hover, .btn:hover { border-color: var(--brand); color: var(--brand-dark); text-decoration: none; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.primary, .btn.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+    button.primary:hover, .btn.primary:hover { background: var(--brand-dark); border-color: var(--brand-dark); color: #fff; }
+    button.danger { color: var(--danger-dark); }
+    button.danger:hover { border-color: var(--danger); }
+    button.small { padding: 4px 10px; font-size: 12px; min-height: 26px; }
+    button.ghost { border-color: transparent; background: transparent; }
+    button.ghost:hover { background: var(--bg); }
+    button.icon-only { width: 30px; padding: 0; justify-content: center; }
+
+    label.field {
+      display: block;
+      margin-bottom: 12px;
+      font-size: 12.5px;
+      font-weight: 700;
+      color: var(--text-dark);
+    }
+    label.field span.req { color: var(--danger); }
+    input[type="text"], input[type="password"], input[type="email"], input[type="number"], textarea, select {
+      font: inherit;
+      width: 100%;
+      margin-top: 5px;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-dark);
+      background: var(--input-bg);
+      outline: none;
+    }
+    input:focus, textarea:focus, select:focus { border-color: var(--brand); box-shadow: 0 0 0 2px var(--brand-light); }
+    input[type="checkbox"] { width: auto; margin: 0; }
+    textarea { resize: vertical; min-height: 70px; }
+    fieldset { border: none; padding: 0; margin: 0; }
+    .field-hint { font-weight: 400; color: var(--text-light); font-size: 12px; margin-top: 3px; }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    @media (max-width: 760px) { .form-row { grid-template-columns: 1fr; } }
+
+    .empty { padding: 40px; text-align: center; color: var(--text-light); }
+    .empty .big { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+    .spinner {
+      width: 18px;
+      height: 18px;
+      border: 2.5px solid var(--border);
+      border-top-color: var(--brand);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      display: inline-block;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .center { display: flex; align-items: center; justify-content: center; padding: 40px; gap: 10px; color: var(--text-light); }
+    .error-box {
+      background: #fde9e9;
+      border: 1px solid #f5c6c6;
+      color: #a33;
+      border-radius: 6px;
+      padding: 10px 14px;
+      margin: 10px 0;
+      font-size: 13px;
+    }
+    .info-box {
+      background: #e9f0fb;
+      border: 1px solid var(--brand-light);
+      color: var(--brand-dark);
+      border-radius: 6px;
+      padding: 10px 14px;
+      margin: 10px 0;
+      font-size: 13px;
+    }
+    .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
+    .toolbar .right { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .chip-row { display: flex; gap: 6px; flex-wrap: wrap; }
+    .filter-chip {
+      padding: 4px 12px;
+      border-radius: 99px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+      min-height: 28px;
+    }
+    .filter-chip.on { background: var(--brand); border-color: var(--brand); color: #fff; }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(46, 53, 59, 0.45);
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 60px 16px;
+      z-index: 50;
+      overflow-y: auto;
+    }
+    .modal {
+      background: var(--card);
+      border-radius: 10px;
+      width: 560px;
+      max-width: 100%;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+    }
+    .modal.wide { width: 860px; }
+    .modal-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border-light);
+    }
+    .modal-head h3 { font-size: 15px; margin: 0; }
+    .modal-body { padding: 18px 20px; max-height: 70vh; overflow-y: auto; }
+    .modal-foot { padding: 14px 20px; border-top: 1px solid var(--border-light); display: flex; justify-content: flex-end; gap: 8px; }
+
+    .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 18px; flex-wrap: wrap; }
+    .tab {
+      padding: 9px 16px;
+      font-weight: 700;
+      font-size: 13.5px;
+      color: var(--text-light);
+      cursor: pointer;
+      border: none;
+      background: none;
+      border-bottom: 2.5px solid transparent;
+      border-radius: 0;
+      min-height: 38px;
+    }
+    .tab:hover { color: var(--brand-dark); border-color: transparent; }
+    .tab.on { color: var(--brand); border-bottom-color: var(--brand); }
+    .tab .count { background: var(--bg); border: 1px solid var(--border); border-radius: 99px; font-size: 11px; padding: 0 7px; margin-left: 6px; color: var(--text-light); }
+
+    .mini-bar { height: 6px; border-radius: 3px; background: var(--border-light); overflow: hidden; }
+    .mini-bar > div { height: 100%; background: var(--brand); border-radius: 3px; }
+    .top-value-row { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-top: 4px; }
+    .top-value-row .val { width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11.5px; }
+    .top-value-row .bar { flex: 1; }
+    .top-value-row .cnt { width: 60px; text-align: right; color: var(--text-light); font-variant-numeric: tabular-nums; }
+
+    pre.sql {
+      background: #2e353b;
+      color: #e8eaed;
+      padding: 12px 14px;
+      border-radius: 6px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin: 8px 0;
+    }
+    pre.result {
+      background: var(--bg);
+      border: 1px solid var(--border-light);
+      padding: 10px 12px;
+      border-radius: 6px;
+      overflow-x: auto;
+      margin: 8px 0;
+      max-height: 240px;
+      overflow-y: auto;
+    }
+    .markdown { line-height: 1.65; font-size: 13.5px; }
+    .markdown h3 { font-size: 14.5px; margin: 14px 0 6px; }
+    .markdown ul { margin-top: 6px; }
+    .rowdata {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--text);
+      max-width: 430px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .score-chip {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 4px;
+      background: #fde9e9;
+      color: #c4403f;
+    }
+    .insight {
+      border-left: 3px solid var(--brand);
+      padding: 8px 14px;
+      margin-bottom: 10px;
+      background: var(--bg);
+      border-radius: 0 6px 6px 0;
+    }
+    .insight .t { font-weight: 700; color: var(--text-dark); }
+    .risk-high { color: var(--danger-dark); }
+    .risk-medium { color: var(--warn-strong); }
+    .risk-low { color: var(--text-light); }
+    details.step { border: 1px solid var(--border-light); border-radius: 6px; margin-bottom: 8px; }
+    details.step summary { padding: 9px 12px; cursor: pointer; font-weight: 600; font-size: 12.5px; color: var(--text); }
+    details.step[open] summary { border-bottom: 1px solid var(--border-light); }
+    details.step .body { padding: 4px 12px 10px; }
+
+    .chart-bars { display: flex; align-items: flex-end; gap: 8px; height: 210px; padding: 8px 2px 0; }
+    .day-bar { flex: 1; display: flex; flex-direction: column; align-items: stretch; gap: 0; min-width: 22px; }
+    .stack { height: 168px; display: flex; flex-direction: column-reverse; border-radius: 3px 3px 0 0; overflow: hidden; background: var(--border-light); }
+    .seg.pass { background: var(--ok); }
+    .seg.warn { background: #f7c844; }
+    .seg.fail { background: var(--danger); }
+    .seg.error { background: #a33; }
+    .day-label { margin-top: 7px; font-size: 11px; color: var(--text-light); text-align: center; white-space: nowrap; }
+    .panel-bars { height: 210px; display: flex; align-items: flex-end; gap: 10px; padding-top: 14px; }
+    .panel-bar { flex: 1; background: var(--brand); border-radius: 4px 4px 0 0; min-width: 26px; position: relative; }
+    .panel-bar.warn { background: var(--warn-strong); }
+    .panel-bar.fail { background: var(--danger); }
+    .panel-label { font-size: 10.5px; color: var(--text-light); position: absolute; left: 50%; bottom: -20px; transform: translateX(-50%); white-space: nowrap; }
+    .number-panel { display: flex; align-items: baseline; gap: 8px; min-height: 60px; }
+    .number-panel strong { font-size: 28px; color: var(--text-dark); }
+    .line-chart {
+      height: 210px;
+      position: relative;
+      background:
+        linear-gradient(to top, var(--border-light) 1px, transparent 1px) 0 0 / 100% 25%,
+        var(--card);
+      border-bottom: 1px solid var(--border-light);
+    }
+    .line-chart svg { width: 100%; height: 100%; display: block; }
+    .workbench-layout { display: grid; grid-template-columns: 230px 1fr 320px; gap: 16px; align-items: start; }
+    .dashboard-layout { display: grid; grid-template-columns: 260px 1fr; gap: 16px; align-items: start; }
+    .dashboard-panels { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+    .dashboard-panels .span-2 { grid-column: span 2; }
+    @media (max-width: 1180px) {
+      .workbench-layout, .dashboard-layout { grid-template-columns: 1fr; }
+      .dashboard-panels { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .dashboard-panels .span-2 { grid-column: span 2; }
+    }
+    @media (max-width: 720px) {
+      .dashboard-panels, .dashboard-panels .span-2 { grid-template-columns: 1fr; grid-column: span 1; }
+    }
+    .schema-table {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 4px;
+      padding: 5px 6px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+    .schema-table:hover { background: var(--bg); }
+    .schema-cols { padding-left: 18px; color: var(--text-light); }
+    .schema-col {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 2px 4px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11.5px;
+      font-family: var(--mono);
+    }
+    .schema-col:hover { background: var(--hover); color: var(--text-dark); }
+    .toast {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 60;
+      background: var(--inverse-bg);
+      color: #fff;
+      border-radius: 8px;
+      padding: 11px 14px;
+      box-shadow: 0 10px 30px rgba(46, 53, 59, 0.18);
+      font-size: 13px;
+      display: none;
+      max-width: 360px;
+    }
+    .toast.show { display: block; }
+
+    .copilot-panel {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 392px;
+      max-width: 100vw;
+      background: var(--card);
+      border-left: 1px solid var(--border);
+      box-shadow: -12px 0 32px rgba(46, 53, 59, 0.12);
+      z-index: 45;
+      display: flex;
+      flex-direction: column;
+    }
+    .copilot-head {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 13px 16px;
+      border-bottom: 1px solid var(--border-light);
+    }
+    .copilot-head h3 { font-size: 14px; flex: 1; }
+    .copilot-mark {
+      width: 26px;
+      height: 26px;
+      border-radius: 7px;
+      background: var(--purple);
+      color: #fff;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: none;
+    }
+    .copilot-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .copilot-msg {
+      max-width: 94%;
+      border-radius: 10px;
+      padding: 9px 12px;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .copilot-msg.user {
+      align-self: flex-end;
+      background: var(--brand);
+      color: #fff;
+      border-bottom-right-radius: 3px;
+    }
+    .copilot-msg.assistant {
+      align-self: flex-start;
+      background: var(--bg);
+      border: 1px solid var(--border-light);
+      border-bottom-left-radius: 3px;
+    }
+    .copilot-msg .evidence, .copilot-msg .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 9px; }
+    .copilot-msg .evidence .badge { cursor: pointer; background: var(--card2); }
+    .copilot-msg .evidence .badge:hover { border-color: var(--brand); color: var(--brand-dark); }
+    .copilot-foot { border-top: 1px solid var(--border-light); padding: 10px 12px; }
+    .copilot-quick { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 9px; }
+    .copilot-input-row { display: flex; gap: 8px; }
+    .copilot-input-row input { margin-top: 0; }
+    .typing-dots { display: inline-flex; gap: 4px; align-items: center; padding: 4px 2px; }
+    .typing-dots span {
+      width: 6px;
+      height: 6px;
+      border-radius: 99px;
+      background: var(--text-light);
+      animation: blink 1.2s infinite;
+    }
+    .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes blink { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
+    @media (max-width: 600px) { .copilot-panel { width: 100%; } }
+
+    .tour-card {
+      position: fixed;
+      left: 50%;
+      transform: translateX(-50%);
+      bottom: 22px;
+      z-index: 70;
+      width: min(640px, calc(100vw - 28px));
+      background: var(--inverse-bg);
+      color: #fff;
+      border-radius: 12px;
+      padding: 16px 18px 14px;
+      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+    }
+    .tour-card h3 { color: #fff; font-size: 15px; margin: 3px 0 5px; }
+    .tour-card p { margin: 0 0 13px; font-size: 13px; color: #cfd5db; line-height: 1.55; }
+    .tour-step-label {
+      font-size: 10.5px;
+      font-weight: 800;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      color: #9fb8d8;
+    }
+    .tour-foot { display: flex; align-items: center; gap: 8px; }
+    .tour-foot .spacer { flex: 1; }
+    .tour-card button { background: transparent; color: #fff; border-color: rgba(255, 255, 255, 0.35); }
+    .tour-card button:hover { border-color: #fff; color: #fff; }
+    .tour-card button.primary { background: var(--brand); border-color: var(--brand); }
+    .tour-card button.primary:hover { background: var(--brand-dark); border-color: var(--brand-dark); }
+
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 99px;
+      background: var(--ok);
+      display: inline-block;
+      animation: pulse 1.8s infinite;
+    }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(132, 187, 76, 0.45); }
+      70% { box-shadow: 0 0 0 7px rgba(132, 187, 76, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(132, 187, 76, 0); }
+    }
+    .legend-row { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11.5px; color: var(--text-light); margin-top: 10px; }
+    .legend-row .swatch { display: inline-block; width: 16px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }
+    .kbd {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      border: 1px solid var(--border);
+      border-bottom-width: 2px;
+      border-radius: 4px;
+      padding: 0 5px;
+      color: var(--text-light);
+      background: var(--card2);
+    }
+
+    @media (max-width: 520px) {
+      .grid.cols-4, .grid.cols-5, .grid.cols-6 { grid-template-columns: 1fr; }
+      .domain-card, .stat-card { min-width: 0; }
+      .domain-card .meta, .dense-item .meta { white-space: normal; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const svgPaths = {
+      home: '<path d="M3 9.5 12 3l9 6.5V21h-6v-7h-6v7H3z"/>',
+      db: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>',
+      table: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 10v10M15 10v10"/>',
+      shield: '<path d="M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6l8-3z"/>',
+      play: '<path d="M7 4.5v15l13-7.5L7 4.5z"/>',
+      alert: '<path d="M12 3 2.5 20h19L12 3z"/><path d="M12 10v4M12 17.2v.3"/>',
+      settings: '<circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.2-1.6l2-1.5-2-3.4-2.3 1a7 7 0 0 0-2.7-1.6L13.4 2h-2.8l-.4 2.9a7 7 0 0 0-2.7 1.6l-2.3-1-2 3.4 2 1.5A7 7 0 0 0 5 12c0 .5.1 1.1.2 1.6l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 2.7 1.6l.4 2.9h2.8l.4-2.9a7 7 0 0 0 2.7-1.6l2.3 1 2-3.4-2-1.5c.1-.5.2-1 .2-1.6z"/>',
+      bolt: '<path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/>',
+      search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
+      check: '<path d="m4 12.5 5 5L20 6.5"/>',
+      book: '<path d="M4 5a2 2 0 0 1 2-2h14v18H6a2 2 0 0 0-2 2V5zM20 17H6a2 2 0 0 0-2 2"/>',
+      x: '<path d="M5 5l14 14M19 5 5 19"/>',
+      plus: '<path d="M12 5v14M5 12h14"/>',
+      refresh: '<path d="M20 11A8 8 0 1 0 18.9 15M20 4v7h-7"/>',
+      moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4 6.5 6.5 0 0 0 20 14.5z"/>',
+      sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'
+    };
+
+    function icon(name, size = 16) {
+      return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${svgPaths[name] || '<circle cx="12" cy="12" r="8"/>'}</svg>`;
+    }
+    function pill(value) {
+      return `<span class="pill ${escapeHtml(value || "unknown")}">${escapeHtml(value || "-")}</span>`;
+    }
+    function badge(text, cls = "") {
+      return `<span class="badge ${cls}">${escapeHtml(text)}</span>`;
+    }
+    function sev(value) {
+      return `<span><span class="sev ${escapeHtml(value)}"></span>${escapeHtml(value)}</span>`;
+    }
+    function fmt(n) {
+      return new Intl.NumberFormat("en-US").format(n);
+    }
+    function pct(n, digits = 1) {
+      return `${(n * 100).toFixed(digits)}%`;
+    }
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+    function money(n) {
+      return `$${Number(n).toFixed(2)}`;
+    }
+    function routeTo(path) {
+      window.location.hash = path;
+    }
+    function currentRoute() {
+      return location.hash.replace(/^#/, "") || "/";
+    }
+    function toast(message) {
+      const el = document.getElementById("toast");
+      el.textContent = message;
+      el.classList.add("show");
+      clearTimeout(toast.timer);
+      toast.timer = setTimeout(() => el.classList.remove("show"), 2400);
+    }
+
+    const state = {
+      llm: true,
+      fleetChecked: false,
+      datasetFilter: "all",
+      datasetSearch: "",
+      browseFilter: "",
+      selectedTables: new Set(),
+      showPreview: false,
+      generatedBanner: "",
+      exceptionFilter: "open",
+      selectedExceptions: new Set(),
+      triageNote: "",
+      selectedDashboardId: 1,
+      chartMode: "table",
+      schemaOpen: new Set(["orders"]),
+      workbenchSql: "SELECT status, COUNT(*) AS orders, SUM(total_amount) AS revenue\nFROM orders\nGROUP BY 1\nORDER BY orders DESC",
+      workbenchLimit: 200,
+      workbenchRan: false,
+      workbenchChart: false,
+      openModal: null,
+      modalData: null,
+      savedKnowledge: false,
+      rcaQuestion: "",
+      rcaRunning: false,
+      globalSearch: "",
+      incidentFilter: "active",
+      selectedDomain: "Commerce",
+      governanceTab: "controls",
+      aiQueueFilter: "review",
+      copilotOpen: false,
+      copilotInput: "",
+      copilotThinking: false,
+      copilotFocus: false,
+      copilotMessages: [
+        { role: "assistant", html: "I'm wired into your incidents, lineage, checks, and audit log. Ask me why something broke, what's at risk, or what to do next — every answer cites the queries behind it." }
+      ],
+      tourStep: null,
+      digestGenerating: false,
+      demoRunning: false,
+      theme: (() => { try { return localStorage.getItem("dq-theme") || "light"; } catch { return "light"; } })()
+    };
+    document.documentElement.dataset.theme = state.theme;
+
+    const data = {
+      connections: [
+        { id: 1, name: "Shop database", kind: "sqlite", status: "up", latency: 14, dsn: "sqlite:////data/samples/shopdb.sqlite", datasets: 4, created: "Jun 9, 2026 9:41 AM" },
+        { id: 2, name: "Warehouse mart", kind: "duckdb", status: "up", latency: 31, dsn: "duckdb:////data/samples/nyc_taxi.duckdb", datasets: 2, created: "Jun 8, 2026 4:18 PM" },
+        { id: 3, name: "Billing replica", kind: "postgres", status: "down", latency: null, dsn: "postgresql+psycopg://dq_user:***@db.internal:5432/billing", datasets: 1, created: "Jun 7, 2026 2:02 PM" }
+      ],
+      tables: [
+        { schema: "main", name: "orders", kind: "table", rows: 48219, registered: 1 },
+        { schema: "main", name: "customers", kind: "table", rows: 18422, registered: 2 },
+        { schema: "main", name: "products", kind: "table", rows: 1380, registered: 3 },
+        { schema: "main", name: "payments", kind: "table", rows: 49103, registered: 4 },
+        { schema: "main", name: "shipments", kind: "table", rows: 42131, registered: null },
+        { schema: "analytics", name: "daily_order_summary", kind: "view", rows: 1240, registered: null }
+      ],
+      datasets: [
+        { id: 1, name: "orders", schema: "main", connection: "Shop database", connectionId: 1, health: "fail", owner: "commerce-data@company.com", importance: "critical", rows: 48219, active: 9, open: 128, lastProfiled: "18 minutes ago" },
+        { id: 2, name: "customers", schema: "main", connection: "Shop database", connectionId: 1, health: "warn", owner: "growth-data@company.com", importance: "high", rows: 18422, active: 7, open: 31, lastProfiled: "42 minutes ago" },
+        { id: 3, name: "products", schema: "main", connection: "Shop database", connectionId: 1, health: "pass", owner: "catalog@company.com", importance: "medium", rows: 1380, active: 6, open: 0, lastProfiled: "2 hours ago" },
+        { id: 4, name: "payments", schema: "main", connection: "Shop database", connectionId: 1, health: "fail", owner: "finance-data@company.com", importance: "critical", rows: 49103, active: 11, open: 84, lastProfiled: "24 minutes ago" },
+        { id: 5, name: "taxi_trips", schema: "public", connection: "Warehouse mart", connectionId: 2, health: "warn", owner: "mobility-analytics@company.com", importance: "medium", rows: 751209, active: 8, open: 17, lastProfiled: "1 hour ago" }
+      ],
+      columns: [
+        { name: "order_id", dtype: "INTEGER", kind: "numeric", nullPct: 0, distinct: 48219, min: 100001, max: 148219, top: [["100001", 1], ["100002", 1], ["100003", 1]], patterns: ["pk"] },
+        { name: "customer_id", dtype: "INTEGER", kind: "numeric", nullPct: 0.001, distinct: 18104, min: 1, max: 18422, top: [["184", 8], ["9301", 7], ["220", 7]], patterns: ["fk"] },
+        { name: "status", dtype: "TEXT", kind: "categorical", nullPct: 0, distinct: 6, top: [["delivered", 31942], ["paid", 8201], ["shipped", 6518], ["cancelled", 1199], ["returned", 359]], patterns: [] },
+        { name: "total_amount", dtype: "REAL", kind: "numeric", nullPct: 0.012, distinct: 9134, min: -42.75, max: 3918.4, top: [["19.99", 432], ["29.99", 408], ["0", 113]], patterns: ["money"] },
+        { name: "email", dtype: "TEXT", kind: "categorical", nullPct: 0.083, distinct: 17780, top: [["redacted", 1511], ["guest@example.com", 22]], patterns: ["pii"] },
+        { name: "created_at", dtype: "TIMESTAMP", kind: "temporal", nullPct: 0, distinct: 47720, min: "2025-11-01", max: "2026-06-10", top: [["2026-06-10", 206], ["2026-06-09", 228]], patterns: ["freshness"] }
+      ],
+      checks: [
+        { id: 101, datasetId: 1, dataset: "orders", name: "order_id is never null", type: "not_null", column: "order_id", severity: "error", status: "active", origin: "heuristic", last: "pass", schedule: "every 60 min", rationale: "Primary key candidate should be fully populated.", params: {} },
+        { id: 102, datasetId: 1, dataset: "orders", name: "total_amount must be non-negative", type: "range", column: "total_amount", severity: "error", status: "active", origin: "llm", last: "fail", schedule: "every 30 min", rationale: "Negative order totals usually indicate refund records leaking into orders.", params: { min: 0, tolerance: 0 } },
+        { id: 103, datasetId: 1, dataset: "orders", name: "created_at freshness within SLA", type: "freshness", column: "created_at", severity: "warn", status: "active", origin: "heuristic", last: "pass", schedule: "every 120 min", rationale: "Recent orders should arrive within the two-hour SLA.", params: { max_age_hours: 2 } },
+        { id: 104, datasetId: 1, dataset: "orders", name: "status has expected values", type: "accepted_values", column: "status", severity: "warn", status: "active", origin: "llm", last: "warn", schedule: "every 60 min", rationale: "Status drift breaks downstream dashboards.", params: { values: ["paid", "shipped", "delivered", "cancelled", "returned"] } },
+        { id: 105, datasetId: 1, dataset: "orders", name: "email format is valid when populated", type: "regex", column: "email", severity: "warn", status: "proposed", origin: "llm", last: null, schedule: "daily at 6:00", rationale: "Email is optional for guest checkout, but populated values should match the customer contact format.", params: { pattern: "^[^@]+@[^@]+\\.[^@]+$" } },
+        { id: 106, datasetId: 1, dataset: "orders", name: "total_amount outlier scan", type: "ml_outlier", column: null, severity: "info", status: "proposed", origin: "heuristic", last: null, schedule: "daily at 6:30", rationale: "IsolationForest can flag unusual high-value combinations for analyst review.", params: { columns: ["total_amount", "item_count", "discount_amount"] } },
+        { id: 201, datasetId: 2, dataset: "customers", name: "email is unique", type: "unique", column: "email", severity: "warn", status: "active", origin: "heuristic", last: "warn", schedule: "daily at 7:00", rationale: "Customer matching expects unique email addresses.", params: {} },
+        { id: 401, datasetId: 4, dataset: "payments", name: "payment amount matches order total", type: "custom_sql", column: null, severity: "error", status: "active", origin: "llm", last: "fail", schedule: "every 30 min", rationale: "Finance close relies on matched payments.", params: { tolerance: 1 } }
+      ],
+      runs: [
+        { id: 9007, datasetId: 1, dataset: "orders", checkId: 102, check: "total_amount must be non-negative", status: "failed", violations: 128, started: "Jun 10, 2026 10:12 AM", duration: 842, severity: "error" },
+        { id: 9006, datasetId: 1, dataset: "orders", checkId: 104, check: "status has expected values", status: "complete", violations: 9, started: "Jun 10, 2026 10:03 AM", duration: 511, severity: "warn" },
+        { id: 9005, datasetId: 4, dataset: "payments", checkId: 401, check: "payment amount matches order total", status: "failed", violations: 84, started: "Jun 10, 2026 9:57 AM", duration: 1298, severity: "error" },
+        { id: 9004, datasetId: 1, dataset: "orders", checkId: 101, check: "order_id is never null", status: "complete", violations: 0, started: "Jun 10, 2026 9:45 AM", duration: 221, severity: "error" },
+        { id: 9003, datasetId: 2, dataset: "customers", checkId: 201, check: "email is unique", status: "complete", violations: 31, started: "Jun 10, 2026 9:22 AM", duration: 438, severity: "warn" }
+      ],
+      exceptions: [
+        { id: 7001, datasetId: 1, dataset: "orders", runId: 9007, check: "total_amount must be non-negative", status: "open", reason: "total_amount below minimum 0", score: null, column: "total_amount", seen: "Jun 10, 2026 10:12 AM", note: "", row: { order_id: 148102, customer_id: 9301, status: "paid", total_amount: -42.75, discount_amount: 0, created_at: "2026-06-10 09:58:01" } },
+        { id: 7002, datasetId: 1, dataset: "orders", runId: 9007, check: "total_amount must be non-negative", status: "open", reason: "total_amount below minimum 0", score: null, column: "total_amount", seen: "Jun 10, 2026 10:12 AM", note: "", row: { order_id: 148091, customer_id: 553, status: "delivered", total_amount: -9.99, discount_amount: 9.99, created_at: "2026-06-10 09:47:32" } },
+        { id: 7003, datasetId: 1, dataset: "orders", runId: 9006, check: "status has expected values", status: "acknowledged", reason: "unexpected status 'chargeback_pending'", score: null, column: "status", seen: "Jun 10, 2026 10:03 AM", note: "Payments team is validating source mapping", row: { order_id: 148012, customer_id: 1201, status: "chargeback_pending", total_amount: 82.13, created_at: "2026-06-10 08:29:10" } },
+        { id: 7004, datasetId: 1, dataset: "orders", runId: 9007, check: "total_amount outlier scan", status: "expected", reason: "unusual high value order", score: -0.82, column: null, seen: "Jun 10, 2026 9:44 AM", note: "B2B wholesale order", row: { order_id: 147920, customer_id: 188, status: "paid", total_amount: 3918.40, item_count: 204, created_at: "2026-06-10 07:50:40" } },
+        { id: 8001, datasetId: 4, dataset: "payments", runId: 9005, check: "payment amount matches order total", status: "open", reason: "payment/order delta exceeds $1", score: null, column: "amount", seen: "Jun 10, 2026 9:57 AM", note: "", row: { payment_id: "pay_99201", order_id: 147881, amount: 19.99, order_total: 119.99, method: "card", captured_at: "2026-06-10 09:19:01" } }
+      ],
+      dashboards: [
+        { id: 1, title: "Order quality pulse", origin: "AI", focus: "negative totals and status drift", created: "Jun 10, 2026 10:16 AM" },
+        { id: 2, title: "Freshness and volume", origin: "auto", focus: "", created: "Jun 10, 2026 9:03 AM" }
+      ],
+      domains: [
+        { name: "Commerce", owner: "commerce-data@company.com", datasets: 18, critical: 7, score: 82, open: 159, coverage: 91, sla: 88, tier: "Tier 1" },
+        { name: "Finance", owner: "finance-data@company.com", datasets: 11, critical: 6, score: 74, open: 84, coverage: 96, sla: 71, tier: "Tier 1" },
+        { name: "Customer", owner: "growth-data@company.com", datasets: 14, critical: 4, score: 89, open: 31, coverage: 86, sla: 93, tier: "Tier 2" },
+        { name: "Mobility", owner: "mobility-analytics@company.com", datasets: 9, critical: 2, score: 86, open: 17, coverage: 78, sla: 90, tier: "Tier 3" }
+      ],
+      incidents: [
+        { id: "DQ-1042", title: "Negative order totals from payments_v2 mapping", status: "active", severity: "sev1", owner: "commerce-data", domain: "Commerce", started: "Jun 10, 2026 10:12 AM", age: "38m", datasetId: 1, dataset: "orders", exceptions: 128, impact: "Finance close and daily GMV dashboards", next: "Backfill orders from batch_20260610_0930", progress: 64 },
+        { id: "DQ-1041", title: "Payment/order amount mismatch", status: "active", severity: "sev1", owner: "finance-data", domain: "Finance", started: "Jun 10, 2026 9:57 AM", age: "53m", datasetId: 4, dataset: "payments", exceptions: 84, impact: "Revenue recognition reconciliation", next: "Confirm gateway capture replay status", progress: 42 },
+        { id: "DQ-1038", title: "Customer email duplicates above threshold", status: "monitoring", severity: "sev2", owner: "growth-data", domain: "Customer", started: "Jun 10, 2026 9:22 AM", age: "1h 28m", datasetId: 2, dataset: "customers", exceptions: 31, impact: "CRM dedupe and lifecycle campaigns", next: "Wait for identity merge repair job", progress: 81 },
+        { id: "DQ-1034", title: "Taxi trip fare outliers elevated", status: "resolved", severity: "sev3", owner: "mobility-analytics", domain: "Mobility", started: "Jun 9, 2026 4:08 PM", age: "18h", datasetId: 5, dataset: "taxi_trips", exceptions: 17, impact: "Analyst exploration only", next: "No action", progress: 100 }
+      ],
+      policies: [
+        { id: "POL-01", name: "Critical dataset freshness", scope: "Tier 1 datasets", rule: "freshness check within declared SLA", compliance: 92, drift: -3, status: "warn" },
+        { id: "POL-02", name: "PII prompt redaction", scope: "All LLM workflows", rule: "redact listed PII columns before prompts", compliance: 100, drift: 0, status: "pass" },
+        { id: "POL-03", name: "Owner assignment", scope: "Registered datasets", rule: "owner and importance required", compliance: 87, drift: 4, status: "warn" },
+        { id: "POL-04", name: "Check coverage", scope: "Tier 1 datasets", rule: "at least 6 active checks and 1 freshness check", compliance: 76, drift: -8, status: "fail" }
+      ],
+      audit: [
+        { time: "Jun 10, 2026 10:26 AM", actor: "admin@example.com", action: "Marked exception 7001 expected", target: "orders.total_amount", outcome: "success" },
+        { time: "Jun 10, 2026 10:18 AM", actor: "rca-agent", action: "Executed guarded SELECT", target: "Shop database.orders", outcome: "success" },
+        { time: "Jun 10, 2026 10:16 AM", actor: "analyst@example.com", action: "Generated dashboard", target: "orders", outcome: "success" },
+        { time: "Jun 10, 2026 10:12 AM", actor: "worker", action: "Created incident DQ-1042", target: "orders", outcome: "success" },
+        { time: "Jun 10, 2026 9:57 AM", actor: "worker", action: "Check failed", target: "payments reconciliation", outcome: "success" }
+      ],
+      lineage: [
+        { from: "payments_raw", to: "orders", kind: "merge", health: "fail", note: "refund_adjustment rows entered latest batch" },
+        { from: "orders", to: "daily_order_summary", kind: "aggregate", health: "fail", note: "GMV impacted by negative totals" },
+        { from: "orders", to: "finance_close_mart", kind: "fact load", health: "warn", note: "close workflow blocked until backfill" },
+        { from: "customers", to: "crm_segments", kind: "identity", health: "warn", note: "duplicate emails above threshold" },
+        { from: "products", to: "catalog_health", kind: "dimension", health: "pass", note: "healthy" },
+        { from: "taxi_trips", to: "mobility_dashboard", kind: "dashboard", health: "warn", note: "fare outliers under monitoring" }
+      ],
+      recommendations: [
+        { id: "AI-77", status: "review", confidence: 0.91, datasetId: 1, dataset: "orders", title: "Block refund adjustments from order fact", type: "custom_sql", severity: "error", impact: "Would have prevented DQ-1042", rationale: "RCA found event_type refund_adjustment in all sampled negative totals." },
+        { id: "AI-76", status: "review", confidence: 0.84, datasetId: 4, dataset: "payments", title: "Add gateway replay duplicate detector", type: "unique", severity: "warn", impact: "Reduces payment/order mismatch noise", rationale: "Repeated capture_id values appear in the last two failure batches." },
+        { id: "AI-75", status: "approved", confidence: 0.79, datasetId: 2, dataset: "customers", title: "Treat guest checkout email nulls as expected", type: "knowledge", severity: "info", impact: "Improves AI prompt context", rationale: "Expected triage notes mention guest checkout exceptions." }
+      ],
+      contracts: [
+        { datasetId: 1, field: "Freshness", target: "2 hours", actual: "18 minutes", status: "pass" },
+        { datasetId: 1, field: "Allowed statuses", target: "paid, shipped, delivered, cancelled, returned", actual: "chargeback_pending detected", status: "warn" },
+        { datasetId: 1, field: "Monetary bounds", target: "total_amount >= 0", actual: "128 violations", status: "fail" },
+        { datasetId: 1, field: "PII handling", target: "email redacted in prompts", actual: "enforced", status: "pass" },
+        { datasetId: 4, field: "Reconciliation", target: "payment/order delta <= $1", actual: "84 violations", status: "fail" }
+      ],
+      rcaSessions: [
+        { id: 501, datasetId: 1, status: "complete", runId: 9007, created: "Jun 10, 2026 10:18 AM", model: "claude-sonnet-4-5", question: "Why are negative order totals appearing?", summary: "Refund adjustment rows from the payments feed are being loaded into orders after a Tuesday mapping change.", report: [
+          "The failed rows share `status = paid` and non-null `discount_amount`, but their `total_amount` equals the negated adjustment value.",
+          "The first spike appears in the 09:30 ingestion batch after `source_system = payments_v2` began sending refund adjustments.",
+          "Recommended fix: filter `event_type = refund_adjustment` before the order fact merge, then backfill affected rows from 2026-06-10 09:30 onward."
+        ] }
+      ],
+      agentEvents: [
+        ["RCA agent", "confirmed refund_adjustment root cause for DQ-1042 in 6 minutes", "38m ago", "/datasets/1/rca"],
+        ["Check synthesis", "proposed a created_at future-date guard for orders", "24m ago", "/datasets/1/checks"],
+        ["Profiling agent", "refreshed sample stats for orders after the failing run", "18m ago", "/datasets/1/profile"],
+        ["Dashboard agent", "published “Order quality pulse” focused on negative totals", "44m ago", "/datasets/1/dashboards"],
+        ["Triage agent", "auto-grouped 212 exceptions into 2 incidents", "1h ago", "/incidents"]
+      ],
+      knowledge: {
+        business: "Orders is the primary ecommerce fact table used by operations, finance, and growth dashboards.",
+        issues: "Refund adjustments can arrive late from the payments feed. Guest checkout may not have email.",
+        importance: "critical",
+        owner: "commerce-data@company.com",
+        sla: 2,
+        pii: "email",
+        notes: "Expected statuses are paid, shipped, delivered, cancelled, returned."
+      }
+    };
+
+    function appShell(content, active) {
+      const navGroups = [
+        { label: "Command", items: [["/", "Control Center", "home"], ["/incidents", "Incidents", "alert"]] },
+        { label: "Data Estate", items: [["/connections", "Connections", "db"], ["/datasets", "Datasets", "table"], ["/lineage", "Lineage", "book"]] },
+        { label: "Quality Ops", items: [["/checks", "Checks", "shield"], ["/runs", "Runs", "play"], ["/exceptions", "Exceptions", "alert"]] },
+        { label: "Intelligence", items: [["/workbench", "Workbench", "search"], ["/ai-review", "AI Review", "bolt"], ["/digest", "Digest", "book"], ["/governance", "Governance", "check"]] }
+      ];
+      const activeIncidents = data.incidents.filter(i => i.status !== "resolved").length;
+      return `
+        <div class="app">
+          <aside class="sidebar">
+            <div class="logo"><span class="logo-mark">${icon("shield", 16)}</span> DQ Sentinel</div>
+            ${navGroups.map(group => `<div class="nav-group"><div class="nav-section">${group.label}</div><nav>${group.items.map(([path, label, ic]) => `<a class="nav-item ${active === path ? "active" : ""}" href="#${path}">${icon(ic)}${label}${path === "/incidents" && activeIncidents ? `<span class="notification-dot" style="margin-left:auto">${activeIncidents}</span>` : ""}</a>`).join("")}</nav></div>`).join("")}
+            <div class="spacer"></div>
+            <nav><a class="nav-item ${active === "/settings" ? "active" : ""}" href="#/settings">${icon("settings")}Settings</a></nav>
+            <div class="user-box">
+              <div class="email" title="admin@example.com">Admin User</div>
+              <div style="color: var(--text-light)">admin</div>
+              <button class="small ghost" data-action="toast" data-message="Prototype sign-out clicked">Sign out</button>
+            </div>
+          </aside>
+          <main class="main">
+            <div class="topbar">
+              <div class="environment-pill"><span class="env-dot"></span> Prod mirror</div>
+              <div class="global-search">
+                ${icon("search", 15)}
+                <input type="text" data-bind="globalSearch" placeholder="Search datasets, incidents, checks, owners..." value="${escapeHtml(state.globalSearch)}">
+              </div>
+              <div class="topbar-actions">
+                <button class="small" data-modal="command" title="Ctrl+K">${icon("bolt", 12)} Command <span class="kbd">Ctrl K</span></button>
+                <button class="small" data-route="/incidents">${icon("alert", 12)} Alerts <span class="notification-dot">${activeIncidents}</span></button>
+                <button class="small icon-only" data-action="toggle-theme" title="${state.theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}">${icon(state.theme === "dark" ? "sun" : "moon", 14)}</button>
+                <button class="small primary" data-action="open-copilot">${icon("bolt", 12)} Copilot</button>
+              </div>
+            </div>
+            ${state.globalSearch ? renderSearchResults() : ""}
+            ${content}
+          </main>
+        </div>
+        ${renderModal()}
+        ${state.copilotOpen ? renderCopilot() : ""}
+        ${state.tourStep != null ? renderTour() : ""}
+      `;
+    }
+
+    function renderSearchResults() {
+      const q = state.globalSearch.toLowerCase().trim();
+      if (!q) return "";
+      const datasetHits = data.datasets
+        .filter(d => `${d.name} ${d.schema} ${d.owner} ${d.connection}`.toLowerCase().includes(q))
+        .slice(0, 4)
+        .map(d => ({ title: `${d.schema}.${d.name}`, meta: `${d.connection} - ${d.owner}`, route: `/datasets/${d.id}/profile`, kind: "dataset" }));
+      const incidentHits = data.incidents
+        .filter(i => `${i.id} ${i.title} ${i.owner} ${i.domain}`.toLowerCase().includes(q))
+        .slice(0, 4)
+        .map(i => ({ title: `${i.id} ${i.title}`, meta: `${i.status} - ${i.owner} - ${i.exceptions} exceptions`, route: `/incidents`, kind: "incident", id: i.id }));
+      const checkHits = data.checks
+        .filter(c => `${c.name} ${c.dataset} ${c.type}`.toLowerCase().includes(q))
+        .slice(0, 4)
+        .map(c => ({ title: c.name, meta: `${c.dataset} - ${c.status} - ${c.severity}`, route: `/datasets/${c.datasetId}/checks`, kind: "check" }));
+      const hits = [...incidentHits, ...datasetHits, ...checkHits].slice(0, 8);
+      return `<div class="page" style="padding-bottom:0">
+        <div class="card card-pad" style="margin-bottom:0">
+          <div class="section-title" style="margin:0 0 10px"><h2>Search results for "${escapeHtml(state.globalSearch)}"</h2><button class="small" data-action="clear-search">Clear</button></div>
+          ${hits.length ? `<div class="dense-list">${hits.map(h => `<div class="dense-item clickable" data-route="${h.route}" ${h.id ? `data-incident-id="${h.id}"` : ""}><div class="title">${badge(h.kind)} ${escapeHtml(h.title)}</div><div class="meta">${escapeHtml(h.meta)}</div></div>`).join("")}</div>` : empty("No matching records", "Try a dataset name, owner, incident id, or check type.")}
+        </div>
+      </div>`;
+    }
+
+    function stat(label, value, hint = "", tone = "") {
+      return `<div class="card stat-card"><div class="label">${label}</div><div class="value ${tone}">${value}</div>${hint ? `<div class="hint">${hint}</div>` : ""}</div>`;
+    }
+    function pageHeader(title, sub, actions = "") {
+      return `<div class="page-header"><div><h1>${title}</h1>${sub ? `<div class="sub">${sub}</div>` : ""}</div>${actions ? `<div class="header-actions">${actions}</div>` : ""}</div>`;
+    }
+    function empty(title, hint = "", action = "") {
+      return `<div class="empty"><div class="big">${title}</div>${hint ? `<div>${hint}</div>` : ""}${action ? `<div style="margin-top:14px">${action}</div>` : ""}</div>`;
+    }
+
+    function renderHome() {
+      const activeChecks = data.checks.filter(c => c.status === "active").length;
+      const failing = data.checks.filter(c => c.last === "fail").length;
+      const open = data.exceptions.filter(e => e.status === "open").length;
+      const enterpriseScore = Math.round(data.domains.reduce((sum, d) => sum + d.score, 0) / data.domains.length);
+      const trend = [
+        ["05-28", 31, 1, 0, 0], ["05-29", 33, 2, 0, 0], ["05-30", 32, 1, 1, 0], ["05-31", 34, 2, 1, 0],
+        ["06-01", 37, 1, 0, 0], ["06-02", 35, 2, 0, 0], ["06-03", 34, 3, 1, 0], ["06-04", 35, 2, 1, 0],
+        ["06-05", 36, 3, 1, 0], ["06-06", 34, 2, 2, 0], ["06-07", 35, 4, 1, 0], ["06-08", 36, 3, 1, 0],
+        ["06-09", 37, 2, 2, 0], ["06-10", 29, 4, 3, 0]
+      ];
+      return appShell(`
+        <div class="page">
+          ${pageHeader(
+            "Enterprise data quality control center",
+            `${state.llm ? badge("AI operations enabled", "ai") : badge("LLM disabled - heuristic mode")} ${badge("Prod mirror")} ${badge("4 domains")} ${badge("24h window")}`,
+            `<button class="primary" data-action="start-tour">${icon("play", 14)} Play the product tour</button><button data-action="start-demo">${icon("bolt", 14)} Simulate live incident</button><button data-route="/incidents">${icon("alert", 14)} Review incidents</button>`
+          )}
+          ${state.demoRunning ? `<div class="info-box" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 14px"><span class="live-dot"></span><strong>Live incident demo running</strong><span style="opacity:.85">watch the queue, stats, and agent feed react in real time</span><button class="small" data-action="stop-demo" style="margin-left:auto">Stop demo</button></div>` : ""}
+          <div class="grid cols-6" style="margin-bottom:16px">
+            ${stat("Quality score", `${enterpriseScore}`, "weighted across critical domains", enterpriseScore < 85 ? "danger" : "ok")}
+            ${stat("Value at risk", "$412K", "modeled GMV + close exposure", "danger")}
+            ${stat("Active checks", fmt(activeChecks), "3 AI proposals awaiting approval")}
+            ${stat("Failing checks", fmt(failing), "SLA impact in Commerce and Finance", failing ? "danger" : "ok")}
+            ${stat("Open exceptions", fmt(open), "new exceptions auto-grouped", open ? "danger" : "ok")}
+            ${stat("Incidents", fmt(data.incidents.filter(i => i.status !== "resolved").length), "2 active, 1 monitoring", "danger")}
+          </div>
+
+          <div class="split" style="margin-bottom:16px">
+            <div class="card card-pad">
+              <div class="section-title" style="margin:0 0 12px"><h2>Run results - last 14 days</h2><button class="small" data-route="/runs">${icon("play", 12)} Runs</button></div>
+              <div class="chart-bars">
+                ${trend.map(([day, passed, warned, failed, errored]) => {
+                  const total = passed + warned + failed + errored;
+                  return `<div class="day-bar" title="${day}: ${passed} passed, ${warned} warned, ${failed} failed">
+                    <div class="stack">
+                      <div class="seg pass" style="height:${passed / total * 100}%"></div>
+                      <div class="seg warn" style="height:${warned / total * 100}%"></div>
+                      <div class="seg fail" style="height:${failed / total * 100}%"></div>
+                      <div class="seg error" style="height:${errored / total * 100}%"></div>
+                    </div>
+                    <div class="day-label">${day.slice(3)}</div>
+                  </div>`;
+                }).join("")}
+              </div>
+            </div>
+            <div class="card card-pad">
+              <div class="section-title" style="margin:0 0 12px"><h2>Action queue</h2><button class="small" data-route="/ai-review">${icon("bolt", 12)} AI review</button></div>
+              <div class="dense-list">
+                ${data.incidents.filter(i => i.status !== "resolved").map(i => `
+                  <div class="dense-item clickable" data-modal="incident" data-id="${i.id}">
+                    <div class="title">${pill(i.severity)} ${escapeHtml(i.title)}</div>
+                    <div class="meta">${i.id} - ${i.owner} - ${i.age} - ${fmt(i.exceptions)} exceptions</div>
+                    <div class="progress-line ${i.severity === "sev1" ? "fail" : "warn"}" style="margin-top:8px"><div style="width:${i.progress}%"></div></div>
+                  </div>`).join("")}
+              </div>
+            </div>
+          </div>
+
+          <div class="split even" style="margin-bottom:16px">
+            <div class="card card-pad">
+              <div class="section-title" style="margin:0 0 12px"><h2>Quality forecast</h2><span class="badge ai">AI projection</span></div>
+              ${forecastChart()}
+            </div>
+            <div class="card card-pad">
+              <div class="section-title" style="margin:0 0 12px"><h2>Autonomous agent activity</h2><span style="display:inline-flex;align-items:center;gap:7px;font-size:11.5px;font-weight:700;color:var(--ok)"><span class="live-dot"></span> live</span></div>
+              ${agentFeed()}
+            </div>
+          </div>
+
+          <div class="section-title"><h2>Domain health</h2><button class="small" data-route="/governance">View control coverage</button></div>
+          <div class="grid cols-4" style="margin-bottom:16px">${data.domains.map(domainCard).join("")}</div>
+
+          <div class="split even" style="margin-bottom:16px">
+            <div class="card card-pad">
+              <div class="section-title" style="margin:0 0 12px"><h2>Risk heatmap</h2><span class="badge">exception pressure by domain</span></div>
+              ${riskHeatmap()}
+            </div>
+            <div class="card card-pad">
+              <div class="section-title" style="margin:0 0 12px"><h2>Quality map</h2><button class="small" data-route="/lineage">${icon("book", 12)} Lineage</button></div>
+              ${qualityMap()}
+            </div>
+          </div>
+
+          <div class="split" style="margin-bottom:16px">
+            <div class="card card-pad">
+              <div class="section-title" style="margin:0 0 12px"><h2>Datasets needing attention</h2><button class="small" data-route="/datasets">All datasets</button></div>
+              <div class="dense-list">
+                ${data.datasets.filter(d => d.open > 0).sort((a,b) => b.open - a.open).slice(0, 5).map(d => `
+                  <div class="dense-item clickable" data-route="/datasets/${d.id}/exceptions">
+                    <div style="display:flex;justify-content:space-between;gap:10px"><div><div class="title">${d.schema}.${d.name}</div><div class="meta">${d.connection} - ${d.owner}</div></div>${pill(d.health)}</div>
+                    <div class="metric-row" style="margin-top:8px"><span class="big">${fmt(d.open)}</span><span class="delta bad">open exceptions</span><span class="meta">${d.active} active checks</span></div>
+                  </div>`).join("")}
+              </div>
+            </div>
+            <div class="card card-pad">
+              <div class="section-title" style="margin:0 0 12px"><h2>Operating timeline</h2><button class="small" data-route="/incidents">Incident board</button></div>
+              ${timeline([
+                ["fail", "DQ-1042 created", "orders negative totals breached sev1 policy", "10:12 AM"],
+                ["", "RCA report completed", "agent identified payments_v2 refund adjustment source", "10:18 AM"],
+                ["warn", "AI recommendation queued", "block refund_adjustment rows before fact merge", "10:21 AM"],
+                ["", "Knowledge updated", "guest checkout email nulls marked expected", "10:26 AM"]
+              ])}
+            </div>
+          </div>
+        </div>
+      `, "/");
+    }
+
+    function domainCard(d) {
+      const tone = d.score < 80 ? "fail" : d.score < 88 ? "warn" : "";
+      return `<div class="card domain-card clickable" data-route="/governance">
+        <div class="domain-head"><div><div class="domain-title">${d.name}</div><div class="meta">${d.tier} - ${d.owner}</div></div><div class="score-ring" style="--score:${d.score}"><strong>${d.score}</strong></div></div>
+        <div class="metric-row"><span class="big">${fmt(d.open)}</span><span class="delta ${d.open ? "bad" : "good"}">open exceptions</span></div>
+        <div class="progress-line ${tone}"><div style="width:${d.coverage}%"></div></div>
+        <div class="meta">${d.datasets} datasets - ${d.critical} critical - ${d.coverage}% check coverage - ${d.sla}% SLA</div>
+      </div>`;
+    }
+
+    function riskHeatmap() {
+      const columns = ["Fresh", "Nulls", "Range", "Unique", "Custom"];
+      const values = {
+        Commerce: [["ok", 2], ["warn", 9], ["fail", 128], ["ok", 1], ["warn", 9]],
+        Finance: [["warn", 7], ["ok", 0], ["fail", 84], ["warn", 12], ["fail", 84]],
+        Customer: [["ok", 0], ["warn", 18], ["ok", 2], ["warn", 31], ["neutral", 0]],
+        Mobility: [["warn", 17], ["ok", 0], ["warn", 17], ["ok", 0], ["neutral", 0]]
+      };
+      return `<div class="heatmap"><div></div>${columns.map(c => `<div class="head">${c}</div>`).join("")}${Object.entries(values).map(([domain, cells]) => `<div class="row-label">${domain}</div>${cells.map(([tone, n]) => `<div class="heat-cell ${tone}">${n}</div>`).join("")}`).join("")}</div>`;
+    }
+
+    function qualityMap() {
+      const nodes = ["payments_raw", "orders", "daily_order_summary", "finance_close_mart", "customers", "crm_segments", "products", "catalog_health", "taxi_trips"];
+      return `<div class="quality-map">${nodes.map(name => {
+        const edge = data.lineage.find(l => l.to === name || l.from === name);
+        const health = name === "orders" || name === "payments_raw" || name === "daily_order_summary" ? "fail" : name === "customers" || name === "crm_segments" || name === "taxi_trips" ? "warn" : "";
+        return `<div class="map-node ${health}"><div class="name">${name}</div><div class="meta">${edge ? edge.kind : "source"} - ${health || "pass"}</div></div>`;
+      }).join("")}</div>`;
+    }
+
+    function timeline(items) {
+      return `<div class="timeline">${items.map(([tone, title, body, time]) => `<div class="timeline-item ${tone}"><span class="timeline-dot"></span><div class="title">${title}</div><div class="meta">${body}</div><div style="font-size:11px;color:var(--text-light);margin-top:3px">${time}</div></div>`).join("")}</div>`;
+    }
+
+    function forecastChart() {
+      return `
+        <div class="line-chart">
+          <svg viewBox="0 0 400 210" preserveAspectRatio="none">
+            <polygon fill="rgba(80,158,227,.10)" stroke="none" points="260,108 300,112 340,118 380,124 400,127 400,170 380,163 340,151 300,139 260,128"/>
+            <line x1="0" y1="157" x2="400" y2="157" stroke="#ed6e6e" stroke-opacity="0.45" stroke-width="1.5" stroke-dasharray="5 5"/>
+            <polyline fill="none" stroke="#509ee3" stroke-width="3" points="0,53 20,66 40,53 60,79 80,66 100,79 120,92 140,79 160,92 180,105 200,92 220,105 240,114 260,118"/>
+            <polyline fill="none" stroke="#509ee3" stroke-width="2.5" stroke-dasharray="6 5" points="260,118 300,126 340,135 380,144 400,149"/>
+            <circle cx="352" cy="138" r="5" fill="#ed6e6e"/>
+          </svg>
+        </div>
+        <div class="legend-row">
+          <span><span class="swatch" style="background:var(--brand)"></span>observed score</span>
+          <span><span class="swatch" style="background:var(--brand);opacity:.45"></span>projected</span>
+          <span><span class="swatch" style="background:#ed6e6e;height:8px;width:8px;border-radius:99px"></span>policy floor (80)</span>
+        </div>
+        <div style="font-size:12.5px;margin-top:10px;line-height:1.5">If the orders backfill slips past <strong>Thursday</strong>, POL-01 freshness compliance crosses the Tier-1 floor. <span class="badge ai">confidence 0.78</span></div>
+        <div style="margin-top:10px"><button class="small" data-action="copilot-ask" data-q="What's the plan to avoid Thursday's forecast breach?">${icon("bolt", 12)} Ask Copilot for the plan</button></div>
+      `;
+    }
+
+    function agentFeed() {
+      return `<div class="dense-list">${data.agentEvents.slice(0, 6).map(([agent, what, when, route]) => `
+        <div class="dense-item clickable" data-route="${route}">
+          <div class="title">${badge(agent, "ai")} <span style="font-weight:600">${what}</span></div>
+          <div class="meta">${when} - logged to audit trail</div>
+        </div>`).join("")}</div>`;
+    }
+
+    function copilotChip(label, route) {
+      return `<span class="badge" data-route="${route}">${label}</span>`;
+    }
+    function copilotAnswer(q) {
+      const text = q.toLowerCase();
+      if (/gmv|negative|drop|total|revenue/.test(text)) {
+        return `GMV is down because <strong>128 orders landed with negative totals</strong> this morning. The RCA agent traced it to refund_adjustment rows from the payments_v2 feed entering the order fact in the 09:30 batch. Finance close and the daily GMV dashboards are affected; modeled exposure is about $312K.
+          <div class="evidence">${copilotChip("Incident DQ-1042", "/incidents")}${copilotChip("RCA report", "/datasets/1/rca")}${copilotChip("128 exceptions", "/datasets/1/exceptions")}</div>
+          <div class="actions"><button class="primary small" data-action="approve-ai" data-id="AI-77">${icon("check", 12)} Approve blocking guard</button><button class="small" data-route="/datasets/1/rca">Open RCA</button></div>`;
+      }
+      if (/payment|reconcil|mismatch|capture/.test(text)) {
+        return `<strong>84 payments</strong> no longer match their order totals (delta over $1). The repeating capture_id values in the last two failure batches point to gateway capture replays. Revenue recognition reconciliation is blocked until the replay status is confirmed.
+          <div class="evidence">${copilotChip("Incident DQ-1041", "/incidents")}${copilotChip("payments exceptions", "/datasets/4/exceptions")}</div>
+          <div class="actions"><button class="primary small" data-action="approve-ai" data-id="AI-76">${icon("check", 12)} Queue duplicate detector</button></div>`;
+      }
+      if (/risk|worst|attention|fragile/.test(text) && !/thursday|forecast|breach|plan/.test(text)) {
+        return `<strong>main.orders</strong> is the riskiest dataset right now: critical importance, 128 open exceptions, a failing range check, and three downstream consumers in the blast radius (daily GMV summary, finance close mart). <strong>payments</strong> is second with the reconciliation failure.
+          <div class="evidence">${copilotChip("orders profile", "/datasets/1/profile")}${copilotChip("blast radius", "/lineage")}</div>`;
+      }
+      if (/plan|breach|thursday|forecast|predict/.test(text)) {
+        return `Three steps keep you above the policy floor: <strong>1)</strong> finish the orders backfill from batch_20260610_0930 — commerce-data owns it, 64% complete. <strong>2)</strong> Activate the proposed refund_adjustment guard so the feed cannot regress. <strong>3)</strong> Re-run the failed range check before Thursday's close to verify.
+          <div class="evidence">${copilotChip("DQ-1042 progress", "/incidents")}${copilotChip("proposed guard", "/datasets/1/checks")}</div>
+          <div class="actions"><button class="primary small" data-action="approve-ai" data-id="AI-77">${icon("check", 12)} Activate the guard</button></div>`;
+      }
+      if (/digest|weekly|summary|report|leadership|exec/.test(text)) {
+        return `Drafted. The digest leads with the score drop (86 → 83), the two sev1 incidents and their dollar exposure, then the autonomy stats — 78% of exceptions were auto-triaged this week. It is scheduled to send Monday 8:00 AM.
+          <div class="actions"><button class="primary small" data-route="/digest">Open the digest</button></div>`;
+      }
+      if (/coverage|polic|governance|owner|unowned|audit/.test(text)) {
+        return `<strong>POL-04 check coverage</strong> is the failing control: Tier-1 datasets sit at 76% against the six-check floor, trending down 8 points. The fastest fix is the 7 unowned datasets — ownership unblocks generated checks for all of them.
+          <div class="evidence">${copilotChip("governance posture", "/governance")}</div>`;
+      }
+      if (/customer|email|duplicate/.test(text)) {
+        return `Customer email duplicates (31) are above threshold but already in <strong>monitoring</strong> — the identity merge repair job is 81% through. No action needed unless tonight's run regresses.
+          <div class="evidence">${copilotChip("Incident DQ-1038", "/incidents")}${copilotChip("customers exceptions", "/datasets/2/exceptions")}</div>`;
+      }
+      return `In the product I answer this by running guarded read-only SQL against your registered sources and citing every query. In this prototype, try one of these:
+        <div class="actions">
+          <button class="small" data-action="copilot-ask" data-q="Why did GMV drop this morning?">Why did GMV drop?</button>
+          <button class="small" data-action="copilot-ask" data-q="What's our riskiest dataset right now?">Riskiest dataset?</button>
+          <button class="small" data-action="copilot-ask" data-q="Which policies are failing?">Failing policies?</button>
+        </div>`;
+    }
+    function sendCopilot(question) {
+      const q = (question != null ? question : state.copilotInput).trim();
+      if (!q || state.copilotThinking) return;
+      state.copilotOpen = true;
+      state.copilotMessages.push({ role: "user", html: escapeHtml(q) });
+      state.copilotInput = "";
+      state.copilotThinking = true;
+      state.copilotFocus = true;
+      render();
+      setTimeout(() => {
+        state.copilotThinking = false;
+        state.copilotMessages.push({ role: "assistant", html: copilotAnswer(q) });
+        state.copilotFocus = true;
+        render();
+      }, 950);
+    }
+    function renderCopilot() {
+      const quick = [
+        ["Why did GMV drop?", "Why did GMV drop this morning?"],
+        ["Riskiest dataset?", "What's our riskiest dataset right now?"],
+        ["Thursday's risk", "What's the plan to avoid Thursday's forecast breach?"],
+        ["Draft the digest", "Draft the weekly digest for leadership"]
+      ];
+      return `<aside class="copilot-panel">
+        <div class="copilot-head">
+          <span class="copilot-mark">${icon("bolt", 14)}</span>
+          <h3>Sentinel Copilot <span class="badge ai">answers cite their queries</span></h3>
+          <button class="ghost small icon-only" data-action="close-copilot" aria-label="Close copilot">${icon("x", 14)}</button>
+        </div>
+        <div class="copilot-body">
+          ${state.copilotMessages.map(m => `<div class="copilot-msg ${m.role}">${m.html}</div>`).join("")}
+          ${state.copilotThinking ? `<div class="copilot-msg assistant"><span class="typing-dots"><span></span><span></span><span></span></span></div>` : ""}
+        </div>
+        <div class="copilot-foot">
+          <div class="copilot-quick">${quick.map(([label, q]) => `<button class="filter-chip" data-action="copilot-ask" data-q="${escapeHtml(q)}">${label}</button>`).join("")}</div>
+          <div class="copilot-input-row">
+            <input type="text" data-bind="copilotInput" placeholder="Ask about incidents, risk, lineage..." value="${escapeHtml(state.copilotInput)}">
+            <button class="primary" data-action="copilot-send" ${state.copilotThinking ? "disabled" : ""}>Send</button>
+          </div>
+        </div>
+      </aside>`;
+    }
+
+    const tourStops = [
+      { route: "/", title: "Run quality like an operation, not a report", body: "The control center opens on what matters: a weighted quality score, dollars at risk, and the incidents moving them — not a wall of charts." },
+      { route: "/connections", title: "Day 0: minutes to first signal", body: "Onboarding is paste-a-DSN, pick tables, done. Profiling, knowledge capture, and the first AI-proposed checks land in the same sitting — no rule-writing workshop, no quarter-long rollout." },
+      { route: "/incidents", title: "Failures become incidents, not noise", body: "Failed checks and exception spikes auto-group into owned incidents with severity, blast radius, and a lifecycle: detect, triage, investigate, repair, verify." },
+      { route: "/datasets/1/profile", title: "The system already knows your data", body: "Registering a table triggers profiling and AI exploration. Sentinel learns shapes, keys, PII, and freshness — and surfaces risks before you write a single rule." },
+      { route: "/datasets/1/checks", title: "Checks write themselves", body: "AI proposes guards with rationale and parameters; heuristics keep working with no API key. Humans approve. Nothing enforces itself silently." },
+      { route: "/datasets/1/rca", title: "Root cause in minutes, with receipts", body: "The RCA agent investigates failures with guarded read-only SQL, redacts PII, and returns an evidence-backed report — every query it ran is in the transcript." },
+      { route: "/workbench", title: "A workbench with guardrails", body: "Analysts get suggested queries tied to live failures on a read-only SQL surface. Speed without write access." },
+      { route: "/ai-review", title: "Human-in-the-loop by design", body: "Every AI artifact — checks, knowledge updates, recommendations — lands in one approval queue with confidence and impact. You decide what runs." },
+      { route: "/governance", title: "Trust is a feature", body: "Policies, audit trails, PII prompt redaction, and release gates make the platform safe for Tier-1 data — and provable to auditors." },
+      { route: "/digest", title: "The story writes itself", body: "Each week Sentinel drafts the leadership digest: what broke, what the agents handled autonomously, and where to focus next. Quality becomes a narrative, not a spreadsheet." },
+      { route: "/", copilot: true, title: "And you can just ask", body: "Sentinel Copilot rides along on every page. Ask why GMV dropped — it answers with evidence, links, and the next action. This is the product: quality that explains itself." }
+    ];
+    function goToTourStop(index) {
+      const stop = tourStops[index];
+      if (!stop) { state.tourStep = null; render(); return; }
+      state.tourStep = index;
+      if (stop.copilot) state.copilotOpen = true;
+      if (currentRoute() !== stop.route) routeTo(stop.route);
+      else render();
+    }
+    function renderTour() {
+      const i = state.tourStep;
+      const stop = tourStops[i];
+      const last = i === tourStops.length - 1;
+      return `<div class="tour-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+          <span class="tour-step-label">Product vision - stop ${i + 1} of ${tourStops.length}</span>
+          <button class="ghost small icon-only" data-action="tour-exit" aria-label="Exit tour">${icon("x", 13)}</button>
+        </div>
+        <h3>${stop.title}</h3>
+        <p>${stop.body}</p>
+        <div class="tour-foot">
+          <button class="small" data-action="tour-back" ${i === 0 ? "disabled" : ""}>Back</button>
+          <span class="spacer"></span>
+          <button class="primary small" data-action="${last ? "tour-exit" : "tour-next"}">${last ? "Finish tour" : "Next"}</button>
+        </div>
+      </div>`;
+    }
+
+    let demoTimers = [];
+    const demoSteps = [
+      { wait: 1400, apply() {
+        data.runs.unshift({ id: Math.max(...data.runs.map(r => r.id)) + 1, datasetId: 4, dataset: "payments", checkId: 0, check: "payments captures freshness", status: "failed", violations: 1, started: "just now", duration: 412, severity: "error" });
+        data.agentEvents.unshift(["Scheduler", "freshness check failed - no new payment captures for 2.1 hours", "just now", "/runs"]);
+        toast("Demo - freshness check failed on payments");
+      } },
+      { wait: 2600, apply() {
+        const ds = data.datasets.find(d => d.id === 4);
+        ds.open += 77;
+        ds.health = "fail";
+        data.exceptions.unshift({ id: 8101, datasetId: 4, dataset: "payments", runId: 9011, check: "payments captures freshness", status: "open", reason: "no captures since 08:32 (SLA 60 min)", score: null, column: "captured_at", seen: "just now", note: "", row: { source: "gateway_webhook", last_capture: "2026-06-10 08:32:11", lag_minutes: 126, queue_depth: 4810 } });
+        data.agentEvents.unshift(["Triage agent", "grouped 77 new payment exceptions by source signature", "just now", "/exceptions"]);
+        toast("Demo - triage agent grouped 77 new exceptions");
+      } },
+      { wait: 2600, apply() {
+        data.incidents.unshift({ id: "DQ-1043", title: "Payments capture feed stalled", status: "active", severity: "sev1", owner: "finance-data", domain: "Finance", started: "just now", age: "0m", datasetId: 4, dataset: "payments", exceptions: 77, impact: "Order fulfillment release and revenue dashboards", next: "Confirm gateway webhook consumer health", progress: 12 });
+        toast("Demo - incident DQ-1043 opened (sev1)");
+      } },
+      { wait: 2400, apply() {
+        data.agentEvents.unshift(["RCA agent", "investigating DQ-1043 with read-only SQL (3 queries so far)", "just now", "/datasets/4/rca"]);
+        toast("Demo - RCA agent investigating");
+      } },
+      { wait: 3000, apply() {
+        data.rcaSessions.unshift({ id: 502, datasetId: 4, status: "complete", runId: null, created: "just now", model: "claude-sonnet-4-5", question: "Why did payment captures stop?", summary: "The gateway webhook consumer is stalled on a poison message since 08:32; captures are queuing upstream, not lost.", report: [
+          "Queue depth grows linearly from 08:32 - consistent with a stuck consumer, not a gateway outage.",
+          "The last processed message has a malformed capture payload introduced by the 08:30 deploy.",
+          "Parking the poison message and restarting the consumer should clear the backlog in about 20 minutes."
+        ] });
+        const inc = data.incidents.find(i => i.id === "DQ-1043");
+        if (inc) { inc.progress = 55; inc.next = "Park poison message and restart consumer"; }
+        data.agentEvents.unshift(["RCA agent", "confirmed stalled webhook consumer (poison message) for DQ-1043", "just now", "/datasets/4/rca"]);
+        toast("Demo - root cause confirmed in 9 seconds");
+      } },
+      { wait: 2600, apply() {
+        data.recommendations.unshift({ id: "AI-78", status: "review", confidence: 0.88, datasetId: 4, dataset: "payments", title: "Alert on capture lag before SLA breach", type: "freshness", severity: "warn", impact: "Catches stalled consumers ~45 minutes earlier", rationale: "Capture lag trended up for 40 minutes before the freshness check fired." });
+        data.agentEvents.unshift(["Check synthesis", "proposed an early-warning capture lag monitor", "just now", "/ai-review"]);
+        state.demoRunning = false;
+        toast("Demo complete - DQ-1043 ready for triage in AI review");
+      } }
+    ];
+    function startDemo() {
+      if (state.demoRunning) return;
+      if (data.incidents.some(i => i.id === "DQ-1043")) { toast("Demo already played - reload the page to run it again"); return; }
+      state.demoRunning = true;
+      state.openModal = null;
+      if (currentRoute() !== "/") routeTo("/");
+      toast("Live demo - a sev1 is about to unfold");
+      let at = 0;
+      demoTimers = demoSteps.map(step => {
+        at += step.wait;
+        return setTimeout(() => { step.apply(); render(); }, at);
+      });
+      render();
+    }
+    function stopDemo() {
+      demoTimers.forEach(clearTimeout);
+      demoTimers = [];
+      state.demoRunning = false;
+      toast("Demo stopped");
+      render();
+    }
+
+    function renderDigest() {
+      return appShell(`
+        <div class="page">
+          ${pageHeader(
+            "Executive quality digest",
+            `Auto-generated narrative for data leadership - week of Jun 8, 2026 ${badge("scheduled Mondays 8:00 AM")} ${badge("AI", "ai")}`,
+            `<button data-action="regenerate-digest">${state.digestGenerating ? `<span class="spinner" style="width:13px;height:13px"></span>` : icon("refresh", 13)} Regenerate</button><button class="primary" data-action="toast" data-message="Digest sent to 2 recipients and #data-quality">${icon("bolt", 13)} Send now</button>`
+          )}
+          <div class="split">
+            <div class="card card-pad markdown">
+              <h3 style="margin-top:0">The headline</h3>
+              <p>The enterprise quality score slipped <strong>86 → 83</strong> this week, driven by two sev1 incidents in Commerce and Finance. Modeled exposure peaked at <strong>$412K</strong>. Both incidents have confirmed root causes and owners; recovery is on track for Thursday's close.</p>
+              <h3>What broke</h3>
+              <ul>
+                <li><strong>DQ-1042</strong> - refund adjustments from payments_v2 leaked into the order fact: 128 negative totals, GMV dashboards and finance close affected.</li>
+                <li><strong>DQ-1041</strong> - 84 payments no longer reconcile to order totals; gateway capture replays suspected.</li>
+                <li><strong>DQ-1038</strong> - customer email duplicates above threshold; identity repair job at 81%, monitoring.</li>
+              </ul>
+              <h3>What the platform did on its own</h3>
+              <ul>
+                <li>Auto-triaged <strong>78%</strong> of new exceptions into incidents.</li>
+                <li>Proposed <strong>4 checks</strong> (2 approved), including the guard that would have prevented DQ-1042.</li>
+                <li>Completed <strong>1 RCA</strong> with confirmed root cause in 6 minutes, evidence attached.</li>
+                <li>Published <strong>2 dashboards</strong> focused on the active failures.</li>
+              </ul>
+              <h3>Where to focus next week</h3>
+              <ul>
+                <li>Close the POL-04 coverage gap - Tier-1 datasets at 76% against the six-check floor.</li>
+                <li>Assign owners to the 7 unowned datasets blocking generated checks.</li>
+                <li>Approve the pending refund_adjustment guard before the next payments release.</li>
+              </ul>
+            </div>
+            <div>
+              <div class="grid cols-2" style="margin-bottom:16px">
+                ${stat("MTTR", "41m", "target 90m", "ok")}
+                ${stat("Resolved", "1", "this week")}
+                ${stat("Checks added", "3", "2 AI, 1 manual")}
+                ${stat("Auto-triage", "78%", "of new exceptions")}
+              </div>
+              <div class="card card-pad" style="margin-bottom:16px">
+                <h3>Delivery</h3>
+                <div class="dense-list">
+                  <div class="dense-item"><div class="title">Recipients</div><div class="meta">cdo@company.com, vp-data@company.com, #data-quality (Slack)</div></div>
+                  <div class="dense-item"><div class="title">Cadence</div><div class="meta">Mondays 8:00 AM, plus on sev1 resolution</div></div>
+                  <div class="dense-item"><div class="title">Generated by</div><div class="meta">claude-sonnet-4-5 from incidents, runs, and the audit log - no raw row data leaves the platform</div></div>
+                </div>
+              </div>
+              <div class="card card-pad">
+                <h3>Score trend</h3>
+                ${forecastChart()}
+              </div>
+            </div>
+          </div>
+        </div>
+      `, "/digest");
+    }
+
+    function renderConnections() {
+      const okCount = data.connections.filter(c => c.status === "up").length;
+      return appShell(`
+        <div class="page">
+          ${pageHeader(
+            "Connections",
+            `Databases DQ Sentinel can profile and monitor (opened read-only)${state.fleetChecked ? ` - fleet: <strong style="color:${okCount === data.connections.length ? "var(--ok)" : "var(--danger-dark)"}">${okCount}/${data.connections.length} reachable</strong>` : ""}`,
+            `<button data-action="fleet">${icon("bolt", 13)} Check fleet health</button><button class="primary" data-modal="connection">${icon("plus", 14)} Add connection</button>`
+          )}
+          <div class="card table-wrap">
+            <table class="data">
+              <thead><tr><th>Name</th><th>Status</th><th>Engine</th><th>DSN</th><th class="num">Datasets</th><th>Added</th><th></th></tr></thead>
+              <tbody>
+                ${data.connections.map(c => `
+                  <tr>
+                    <td style="font-weight:700;color:var(--text-dark)">${c.name}</td>
+                    <td>${state.fleetChecked ? `<span class="pill ${c.status === "up" ? "pass" : "fail"}">${c.status === "up" ? `up - ${c.latency}ms` : "down"}</span>` : pill(null)}</td>
+                    <td>${badge(c.kind, "kind")}</td>
+                    <td class="mono" style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(c.dsn)}</td>
+                    <td class="num">${c.datasets}</td>
+                    <td style="color:var(--text-light)">${c.created}</td>
+                    <td style="text-align:right;white-space:nowrap">
+                      <button class="small" data-route="/connections/${c.id}/browse">${icon("search", 12)} Browse tables</button>
+                      <button class="small danger" data-action="toast" data-message="Delete is disabled in the prototype">Delete</button>
+                    </td>
+                  </tr>`).join("")}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `, "/connections");
+    }
+
+    function renderBrowse(connectionId) {
+      const q = state.browseFilter.toLowerCase();
+      const rows = data.tables.filter(t => t.name.toLowerCase().includes(q) || t.schema.toLowerCase().includes(q));
+      return appShell(`
+        <div class="page">
+          ${pageHeader(
+            "Browse tables",
+            `<a href="#/connections">Connections</a> - pick tables/views to register as monitored datasets`,
+            `<button class="primary" data-action="register-tables" ${state.selectedTables.size ? "" : "disabled"}>${icon("plus", 14)} Register ${state.selectedTables.size || ""} dataset${state.selectedTables.size === 1 ? "" : "s"}</button>`
+          )}
+          <div class="toolbar">
+            <input type="text" data-bind="browseFilter" placeholder="Filter tables..." value="${escapeHtml(state.browseFilter)}" style="max-width:280px;margin-top:0">
+          </div>
+          <div class="card table-wrap">
+            <table class="data">
+              <thead><tr><th style="width:30px"></th><th>Table</th><th>Schema</th><th>Kind</th><th class="num">Rows</th><th>Status</th></tr></thead>
+              <tbody>
+                ${rows.map(t => {
+                  const key = `${t.schema}.${t.name}`;
+                  const checked = state.selectedTables.has(key);
+                  return `<tr class="${t.registered ? "" : "clickable"}" data-action="${t.registered ? "" : "toggle-table"}" data-key="${key}">
+                    <td><input type="checkbox" ${t.registered ? "disabled" : ""} ${checked ? "checked" : ""} data-action="toggle-table" data-key="${key}"></td>
+                    <td style="font-weight:600;color:var(--text-dark)">${t.name}</td>
+                    <td style="color:var(--text-light)">${t.schema}</td>
+                    <td>${badge(t.kind, "kind")}</td>
+                    <td class="num">${fmt(t.rows)}</td>
+                    <td>${t.registered ? `<a href="#/datasets/${t.registered}/profile">already registered</a>` : `<span style="color:var(--text-light)">not monitored</span>`}</td>
+                  </tr>`;
+                }).join("")}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `, "/connections");
+    }
+
+    function renderDatasets() {
+      const q = state.datasetSearch.toLowerCase();
+      let rows = data.datasets.filter(d =>
+        d.name.toLowerCase().includes(q) ||
+        d.connection.toLowerCase().includes(q) ||
+        d.owner.toLowerCase().includes(q)
+      );
+      if (state.datasetFilter !== "all") rows = rows.filter(d => d.health === state.datasetFilter);
+      rows.sort((a, b) => b.open - a.open);
+      return appShell(`
+        <div class="page">
+          ${pageHeader("Datasets", `Tables and views under data-quality monitoring - ${rows.length} of ${data.datasets.length} shown`, `<button data-route="/connections">${icon("search", 13)} Browse sources</button>`)}
+          <div class="toolbar">
+            <input type="text" data-bind="datasetSearch" placeholder="Search by table, connection or owner..." value="${escapeHtml(state.datasetSearch)}" style="max-width:300px;margin-top:0">
+            <div class="chip-row">
+              ${["all", "fail", "warn", "pass", "unknown"].map(f => `<button class="filter-chip ${state.datasetFilter === f ? "on" : ""}" data-action="dataset-filter" data-value="${f}">${f}</button>`).join("")}
+            </div>
+          </div>
+          <div class="card table-wrap">
+            <table class="data">
+              <thead><tr><th>Health</th><th>Dataset</th><th>Connection</th><th>Owner</th><th>Importance</th><th class="num">Rows</th><th class="num">Active checks</th><th class="num">Open exceptions</th><th>Last profiled</th></tr></thead>
+              <tbody>
+                ${rows.map(d => `
+                  <tr class="clickable" data-route="/datasets/${d.id}/profile">
+                    <td>${pill(d.health)}</td>
+                    <td style="font-weight:700;color:var(--text-dark)">${d.schema}.${d.name}</td>
+                    <td style="color:var(--text-light)">${d.connection}</td>
+                    <td style="color:var(--text-light);font-size:12px">${d.owner}</td>
+                    <td>${badge(d.importance, d.importance === "critical" || d.importance === "high" ? "" : "")}</td>
+                    <td class="num">${fmt(d.rows)}</td>
+                    <td class="num">${d.active}</td>
+                    <td class="num" style="${d.open ? "color:var(--danger-dark);font-weight:700" : ""}">${fmt(d.open)}</td>
+                    <td style="color:var(--text-light)">${d.lastProfiled}</td>
+                  </tr>`).join("")}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `, "/datasets");
+    }
+
+    function datasetById(id) {
+      return data.datasets.find(d => d.id === Number(id)) || data.datasets[0];
+    }
+    function datasetHeader(dataset, tab) {
+      const tabs = [
+        ["profile", "Profile"], ["checks", "Checks"], ["runs", "Runs"], ["exceptions", "Exceptions"],
+        ["dashboards", "Dashboards"], ["contract", "Contract"], ["lineage", "Lineage"], ["knowledge", "Knowledge"], ["rca", "Root cause"]
+      ];
+      return `
+        ${pageHeader(
+          `${dataset.schema}.${dataset.name} ${pill(dataset.health)}`,
+          `${dataset.connection} - ${fmt(dataset.rows)} rows - profiled ${dataset.lastProfiled} - ${dataset.active} active checks - ${dataset.open} open exceptions`,
+          `<button data-route="/workbench?dataset=${dataset.id}">${icon("search", 13)} Workbench</button><button data-action="profile-now">${icon("refresh", 14)} Profile now</button>`
+        )}
+        <div class="tabs">
+          ${tabs.map(([key, label]) => `<button class="tab ${tab === key ? "on" : ""}" data-route="/datasets/${dataset.id}/${key}">${label}${key === "exceptions" ? `<span class="count">${dataset.open}</span>` : ""}</button>`).join("")}
+        </div>`;
+    }
+
+    function renderDataset(id, tab = "profile") {
+      const dataset = datasetById(id);
+      let body = "";
+      if (tab === "profile") body = renderProfileTab(dataset);
+      if (tab === "checks") body = renderChecksTab(dataset);
+      if (tab === "runs") body = `<div class="card">${runsTable(data.runs.filter(r => r.datasetId === dataset.id), false)}</div>`;
+      if (tab === "exceptions") body = renderExceptionsTriage(dataset.id);
+      if (tab === "dashboards") body = renderDashboardsTab(dataset);
+      if (tab === "contract") body = renderContractTab(dataset);
+      if (tab === "lineage") body = renderDatasetLineageTab(dataset);
+      if (tab === "knowledge") body = renderKnowledgeTab();
+      if (tab === "rca") body = renderRcaTab(dataset);
+      return appShell(`<div class="page">${datasetHeader(dataset, tab)}${body}</div>`, "/datasets");
+    }
+
+    function renderProfileTab(dataset) {
+      const facts = `<span class="badge">rows ${fmt(dataset.rows)}</span><span class="badge">stats from 10,000-row sample</span><span class="badge">pk order_id</span><span class="badge">freshness created_at</span>`;
+      return `
+        <div class="toolbar">${facts}<div class="right"><button class="small" data-action="toggle-preview">${state.showPreview ? "Hide preview" : "Preview rows"}</button></div></div>
+        <div class="card card-pad" style="margin-bottom:16px">
+          <h3>${badge("AI", "ai")} Exploration insights <span style="font-weight:400;color:var(--text-light);font-size:12px">(4 queries run)</span></h3>
+          <div class="insight"><div class="t">Refund adjustments are entering orders <span class="risk-high">(high risk)</span></div><div style="font-size:12.5px">Negative totals are concentrated in the latest payments_v2 ingestion batch.</div></div>
+          <div class="insight"><div class="t">Status drift detected <span class="risk-medium">(medium risk)</span></div><div style="font-size:12.5px">The value chargeback_pending appeared after the latest payments release.</div></div>
+        </div>
+        ${state.showPreview ? previewTable() : ""}
+        <div class="grid cols-3">
+          ${data.columns.map(c => columnCard(c, dataset.rows)).join("")}
+        </div>
+      `;
+    }
+    function columnCard(col, rowCount) {
+      const max = Math.max(...col.top.map(v => v[1]));
+      return `<div class="card card-pad">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+          <h3 style="margin-bottom:2px">${col.name} ${col.patterns.map(p => badge(p, p === "pii" ? "ai" : "")).join(" ")}</h3>
+          ${badge(col.dtype, "kind")}
+        </div>
+        <div style="display:flex;gap:18px;font-size:12.5px;margin:8px 0 10px;flex-wrap:wrap">
+          <span><strong style="color:${col.nullPct > 0.05 ? "var(--danger-dark)" : "var(--text-dark)"}">${pct(col.nullPct, 2)}</strong> null</span>
+          <span><strong>${fmt(col.distinct)}</strong> distinct</span>
+          ${col.min !== undefined ? `<span><strong>${escapeHtml(col.min)}</strong> to <strong>${escapeHtml(col.max)}</strong></span>` : ""}
+        </div>
+        <div class="mini-bar" title="${pct(1 - col.nullPct, 2)} populated"><div style="width:${Math.max(2, (1 - col.nullPct) * 100)}%;background:${col.nullPct > 0.05 ? "var(--warn-strong)" : "var(--brand)"}"></div></div>
+        <div style="margin-top:10px">
+          ${col.top.slice(0, 5).map(([value, count]) => `<div class="top-value-row">
+            <span class="val" title="${escapeHtml(value)}">${escapeHtml(value)}</span>
+            <span class="bar mini-bar"><div style="width:${count / max * 100}%"></div></span>
+            <span class="cnt">${pct(count / rowCount)}</span>
+          </div>`).join("")}
+        </div>
+      </div>`;
+    }
+    function previewTable() {
+      const rows = [
+        [148102, 9301, "paid", -42.75, "guest@example.com", "2026-06-10 09:58:01"],
+        [148101, 184, "delivered", 119.99, "redacted", "2026-06-10 09:56:13"],
+        [148100, 1220, "chargeback_pending", 82.13, "redacted", "2026-06-10 09:55:21"],
+        [148099, 509, "shipped", 29.99, "alex@example.com", "2026-06-10 09:52:44"]
+      ];
+      return `<div class="card table-wrap" style="margin-bottom:16px">
+        <table class="data"><thead><tr>${["order_id", "customer_id", "status", "total_amount", "email", "created_at"].map(h => `<th>${h}</th>`).join("")}</tr></thead>
+        <tbody>${rows.map(r => `<tr>${r.map(v => `<td class="mono">${escapeHtml(typeof v === "number" && !Number.isInteger(v) ? money(v) : v)}</td>`).join("")}</tr>`).join("")}</tbody></table>
+      </div>`;
+    }
+
+    function renderChecksTab(dataset) {
+      const checks = data.checks.filter(c => c.datasetId === dataset.id);
+      const proposed = checks.filter(c => c.status === "proposed");
+      const rest = checks.filter(c => c.status !== "proposed");
+      return `
+        <div class="toolbar">
+          <button class="primary" data-action="generate-checks">${icon("bolt", 14)} ${state.llm ? "Generate checks (AI)" : "Generate checks"}</button>
+          ${state.llm ? `<label style="display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600"><input type="checkbox" checked> Explore data first</label>` : badge("heuristic mode")}
+          <div class="right"><button data-modal="new-check">${icon("plus", 13)} New check</button></div>
+        </div>
+        ${state.generatedBanner ? `<div class="info-box">${state.generatedBanner}</div>` : ""}
+        ${proposed.length ? `<div class="card" style="margin-bottom:16px;border-color:#e0d2ef">
+          <div class="card-pad" style="padding-bottom:8px"><h3><span style="color:var(--purple)">proposed</span> checks (${proposed.length}) - review and activate</h3></div>
+          <div class="table-wrap"><table class="data"><tbody>${proposed.map(c => proposedRow(c)).join("")}</tbody></table></div>
+        </div>` : ""}
+        <div class="card"><div class="table-wrap"><table class="data">
+          <thead><tr><th>Check</th><th>Severity</th><th>Schedule</th><th>Status</th><th>Last result</th><th style="text-align:right">Actions</th></tr></thead>
+          <tbody>${rest.map(c => activeCheckRow(c, false)).join("")}</tbody>
+        </table></div></div>
+      `;
+    }
+    function proposedRow(c) {
+      return `<tr>
+        <td style="width:24px">${badge(c.origin === "llm" ? "AI" : "auto", c.origin === "llm" ? "ai" : "")}</td>
+        <td>
+          <div style="font-weight:700;color:var(--text-dark)">${checkLabel(c.type)}${c.column ? ` on <code>${c.column}</code>` : ""}</div>
+          <div style="font-size:12px;color:var(--text-light);margin-top:2px">${c.rationale}</div>
+          <div class="rowdata" style="margin-top:2px">${escapeHtml(paramsSummary(c.params))}</div>
+        </td>
+        <td style="white-space:nowrap">${sev(c.severity)}</td>
+        <td style="white-space:nowrap;color:var(--text-light);font-size:12px">${c.schedule}</td>
+        <td style="white-space:nowrap;text-align:right">
+          <button class="primary small" data-action="activate-check" data-id="${c.id}">${icon("check", 13)} Activate</button>
+          <button class="small" data-modal="edit-check" data-id="${c.id}">Edit</button>
+          <button class="small danger" data-action="dismiss-check" data-id="${c.id}">Dismiss</button>
+        </td>
+      </tr>`;
+    }
+    function activeCheckRow(c, includeDataset = true) {
+      return `<tr>
+        <td>
+          <div style="font-weight:600;color:var(--text-dark)">${c.name}</div>
+          <div style="font-size:11.5px;color:var(--text-light)">${checkLabel(c.type)}${c.column ? ` - ${c.column}` : ""} - ${badge(c.origin === "llm" ? "AI" : "auto", c.origin === "llm" ? "ai" : "")}</div>
+        </td>
+        ${includeDataset ? `<td><a href="#/datasets/${c.datasetId}/checks">${c.dataset}</a></td>` : ""}
+        <td>${sev(c.severity)}</td>
+        <td style="font-size:12px;color:var(--text-light)">${c.schedule}</td>
+        <td>${pill(c.status)}</td>
+        <td>${c.last ? `${pill(c.last === "fail" ? "failed" : c.last === "warn" ? "warn" : "complete")} <span style="font-size:11.5px;color:var(--text-light)">18 min ago</span>` : `<span style="color:var(--text-light)">never ran</span>`}</td>
+        <td style="white-space:nowrap;text-align:right">
+          <button class="small" data-action="run-check" data-id="${c.id}">${icon("play", 12)} Run</button>
+          <button class="small" data-action="toggle-check" data-id="${c.id}">${c.status === "active" ? "Pause" : "Resume"}</button>
+          <button class="small" data-modal="edit-check" data-id="${c.id}">Edit</button>
+          <button class="small danger" data-action="archive-check" data-id="${c.id}">Archive</button>
+        </td>
+      </tr>`;
+    }
+    function checkLabel(type) {
+      return ({
+        not_null: "Not null",
+        range: "Numeric range",
+        freshness: "Freshness",
+        accepted_values: "Accepted values",
+        regex: "Regex pattern",
+        ml_outlier: "ML outlier",
+        unique: "Unique",
+        custom_sql: "Custom SQL"
+      })[type] || type;
+    }
+    function paramsSummary(params) {
+      return Object.entries(params || {}).map(([k, v]) => `${k}=${Array.isArray(v) ? v.join("|") : String(v)}`).join(", ");
+    }
+
+    function runsTable(runs, showDataset) {
+      return `<div class="table-wrap"><table class="data">
+        <thead><tr><th>Status</th><th>Check</th>${showDataset ? "<th>Dataset</th>" : ""}<th>Severity</th><th class="num">Violations</th><th>Started</th><th class="num">Duration</th><th></th></tr></thead>
+        <tbody>${runs.map(r => `<tr>
+          <td>${pill(r.status)}</td>
+          <td style="font-weight:600;color:var(--text-dark)">${r.check}<div style="font-size:11.5px;color:var(--text-light)">run #${r.id}</div></td>
+          ${showDataset ? `<td><a href="#/datasets/${r.datasetId}/runs">${r.dataset}</a></td>` : ""}
+          <td>${sev(r.severity)}</td>
+          <td class="num" style="${r.violations ? "color:var(--danger-dark);font-weight:700" : ""}">${fmt(r.violations)}</td>
+          <td style="color:var(--text-light);white-space:nowrap">${r.started}</td>
+          <td class="num">${r.duration} ms</td>
+          <td style="text-align:right;white-space:nowrap">
+            ${r.violations ? `<button class="small" data-route="/datasets/${r.datasetId}/exceptions">Exceptions</button>` : ""}
+            ${r.status === "failed" ? `<button class="small" data-route="/datasets/${r.datasetId}/rca">${icon("bolt", 12)} RCA</button>` : ""}
+          </td>
+        </tr>`).join("")}</tbody></table></div>`;
+    }
+
+    function renderChecksPage() {
+      return appShell(`
+        <div class="page">
+          ${pageHeader("Checks", "Rules that monitor active datasets", `<button class="primary" data-route="/datasets/1/checks">${icon("bolt", 14)} Generate for orders</button>`)}
+          <div class="toolbar"><div class="chip-row">${["all", "active", "proposed", "disabled"].map(s => `<button class="filter-chip ${s === "all" ? "on" : ""}" data-action="toast" data-message="Status filter clicked: ${s}">${s}</button>`).join("")}</div></div>
+          <div class="card"><div class="table-wrap"><table class="data">
+            <thead><tr><th>Check</th><th>Dataset</th><th>Severity</th><th>Schedule</th><th>Status</th><th>Last result</th><th style="text-align:right">Actions</th></tr></thead>
+            <tbody>${data.checks.filter(c => c.status !== "proposed").map(c => activeCheckRow(c, true)).join("")}</tbody>
+          </table></div></div>
+        </div>
+      `, "/checks");
+    }
+
+    function renderIncidentsPage() {
+      const rows = data.incidents.filter(i => state.incidentFilter === "all" || (state.incidentFilter === "active" ? i.status !== "resolved" : i.status === state.incidentFilter));
+      return appShell(`
+        <div class="page">
+          ${pageHeader("Incident command", "Data-quality incidents grouped from failed checks, exception spikes, and RCA signals", `<button class="primary" data-modal="incident-create">${icon("plus", 14)} Create incident</button><button data-route="/exceptions">Triage queue</button>`)}
+          <div class="grid cols-4" style="margin-bottom:16px">
+            ${stat("Active incidents", data.incidents.filter(i => i.status === "active").length, "sev1 incidents require owner updates", "danger")}
+            ${stat("Monitoring", data.incidents.filter(i => i.status === "monitoring").length, "waiting for repair verification")}
+            ${stat("Median age", "53m", "target under 90m")}
+            ${stat("Auto-group rate", "78%", "exceptions attached to incidents")}
+          </div>
+          <div class="toolbar">
+            <div class="chip-row">${["active", "monitoring", "resolved", "all"].map(f => `<button class="filter-chip ${state.incidentFilter === f ? "on" : ""}" data-action="incident-filter" data-value="${f}">${f}</button>`).join("")}</div>
+          </div>
+          <div class="split">
+            <div class="card table-wrap">
+              <table class="data">
+                <thead><tr><th>Incident</th><th>Status</th><th>Severity</th><th>Owner</th><th>Domain</th><th class="num">Exceptions</th><th>Age</th><th></th></tr></thead>
+                <tbody>${rows.map(i => `<tr class="clickable" data-modal="incident" data-id="${i.id}">
+                  <td><div style="font-weight:800;color:var(--text-dark)">${i.id}</div><div style="font-size:12px">${i.title}</div><div class="meta">${i.impact}</div></td>
+                  <td>${pill(i.status)}</td><td>${pill(i.severity)}</td><td>${i.owner}</td><td>${i.domain}</td><td class="num" style="font-weight:700;color:var(--danger-dark)">${fmt(i.exceptions)}</td><td>${i.age}</td>
+                  <td style="text-align:right"><button class="small" data-route="/datasets/${i.datasetId}/rca">RCA</button></td>
+                </tr>`).join("")}</tbody>
+              </table>
+            </div>
+            <div class="card card-pad">
+              <h3>Incident lifecycle</h3>
+              ${timeline([
+                ["fail", "Detect", "failed checks and exception spikes group into an incident", "auto"],
+                ["warn", "Triage", "owner confirms impact, expected rows, and severity", "analyst"],
+                ["", "Investigate", "RCA agent runs read-only SQL and attaches evidence", "AI"],
+                ["", "Repair", "data backfill or source mapping change is tracked", "owner"],
+                ["", "Verify", "checks rerun and incident enters monitoring", "worker"]
+              ])}
+            </div>
+          </div>
+        </div>
+      `, "/incidents");
+    }
+
+    function renderLineagePage() {
+      return appShell(`
+        <div class="page wide">
+          ${pageHeader("Estate lineage", "Operational view of impacted sources, datasets, marts, and dashboards", `<button data-action="toast" data-message="Lineage refreshed from catalog metadata">${icon("refresh", 13)} Refresh graph</button>`)}
+          <div class="split">
+            <div class="card card-pad">
+              <div class="section-title" style="margin:0 0 12px"><h2>Impact map</h2><span class="badge">click nodes in the real app to inspect consumers</span></div>
+              ${qualityMap()}
+            </div>
+            <div class="card card-pad">
+              <h3>Current blast radius</h3>
+              <div class="dense-list">
+                ${data.lineage.filter(l => l.health !== "pass").map(l => `<div class="dense-item"><div class="title">${l.from} -> ${l.to} ${pill(l.health)}</div><div class="meta">${l.kind} - ${l.note}</div></div>`).join("")}
+              </div>
+            </div>
+          </div>
+          <div class="card table-wrap" style="margin-top:16px">
+            <table class="data">
+              <thead><tr><th>Source</th><th>Consumer</th><th>Relationship</th><th>Health</th><th>Evidence</th><th>Action</th></tr></thead>
+              <tbody>${data.lineage.map(l => `<tr><td class="mono">${l.from}</td><td class="mono">${l.to}</td><td>${badge(l.kind, "kind")}</td><td>${pill(l.health)}</td><td>${l.note}</td><td><button class="small" data-route="/workbench">${icon("search", 12)} Query</button></td></tr>`).join("")}</tbody>
+            </table>
+          </div>
+        </div>
+      `, "/lineage");
+    }
+
+    function renderGovernancePage() {
+      return appShell(`
+        <div class="page wide">
+          ${pageHeader("Governance posture", "Controls for data-quality ownership, LLM privacy, auditability, and release gates", `<button class="primary" data-action="toast" data-message="Policy evaluation queued">${icon("check", 14)} Run controls</button>`)}
+          <div class="grid cols-4" style="margin-bottom:16px">
+            ${stat("Policy compliance", "89%", "weighted by Tier 1 coverage")}
+            ${stat("PII prompt escapes", "0", "last 30 days", "ok")}
+            ${stat("Unowned datasets", "7", "POL-03 exceptions", "danger")}
+            ${stat("Audit events", fmt(data.audit.length), "latest 24h")}
+          </div>
+          <div class="tabs">
+            ${["controls", "domains", "audit", "access"].map(t => `<button class="tab ${state.governanceTab === t ? "on" : ""}" data-action="governance-tab" data-value="${t}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("")}
+          </div>
+          ${state.governanceTab === "controls" ? governanceControls() : ""}
+          ${state.governanceTab === "domains" ? `<div class="grid cols-4">${data.domains.map(domainCard).join("")}</div>` : ""}
+          ${state.governanceTab === "audit" ? governanceAudit() : ""}
+          ${state.governanceTab === "access" ? governanceAccess() : ""}
+        </div>
+      `, "/governance");
+    }
+
+    function governanceControls() {
+      return `<div class="card table-wrap"><table class="data"><thead><tr><th>Policy</th><th>Scope</th><th>Rule</th><th class="num">Compliance</th><th>Trend</th><th>Status</th><th></th></tr></thead><tbody>${data.policies.map(p => `<tr><td><strong style="color:var(--text-dark)">${p.id}</strong><div>${p.name}</div></td><td>${p.scope}</td><td>${p.rule}</td><td class="num">${p.compliance}%</td><td><span class="delta ${p.drift < 0 ? "bad" : "good"}">${p.drift > 0 ? "+" : ""}${p.drift}%</span></td><td>${pill(p.status)}</td><td style="text-align:right"><button class="small" data-modal="policy" data-id="${p.id}">Inspect</button></td></tr>`).join("")}</tbody></table></div>`;
+    }
+    function governanceAudit() {
+      return `<div class="card table-wrap"><table class="data"><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Outcome</th></tr></thead><tbody>${data.audit.map(a => `<tr><td style="color:var(--text-light)">${a.time}</td><td>${a.actor}</td><td>${a.action}</td><td class="mono">${a.target}</td><td>${pill(a.outcome === "success" ? "pass" : "fail")}</td></tr>`).join("")}</tbody></table></div>`;
+    }
+    function governanceAccess() {
+      return `<div class="grid cols-3">
+        ${[
+          ["Admin", "Full system configuration, connection management, user access", "3 users"],
+          ["Editor", "Create checks, triage exceptions, run RCA and workbench queries", "14 users"],
+          ["Viewer", "Read dashboards, runs, exceptions, and reports", "41 users"]
+        ].map(([role, desc, users]) => `<div class="card card-pad"><h3>${role}</h3><p style="font-size:12.5px;color:var(--text-light)">${desc}</p><div class="metric-row"><span class="big">${users.split(" ")[0]}</span><span class="meta">${users.split(" ")[1]}</span></div><button class="small" data-action="toast" data-message="Role editor opened">Manage</button></div>`).join("")}
+      </div>`;
+    }
+
+    function renderAiReviewPage() {
+      const rows = data.recommendations.filter(r => state.aiQueueFilter === "all" || r.status === state.aiQueueFilter);
+      return appShell(`
+        <div class="page">
+          ${pageHeader("AI review queue", "Human approval surface for generated checks, knowledge updates, dashboards, and RCA recommendations", `<button class="primary" data-action="generate-checks">${icon("bolt", 14)} Generate from incidents</button>`)}
+          <div class="toolbar"><div class="chip-row">${["review", "approved", "all"].map(f => `<button class="filter-chip ${state.aiQueueFilter === f ? "on" : ""}" data-action="ai-filter" data-value="${f}">${f}</button>`).join("")}</div></div>
+          <div class="grid cols-3">
+            ${rows.map(r => `<div class="card card-pad">
+              <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div><h3>${r.title}</h3><div class="sub">${r.id} - ${r.dataset} - ${checkLabel(r.type)}</div></div>${badge(`${Math.round(r.confidence * 100)}%`, "ai")}</div>
+              <div class="info-box">${r.impact}</div>
+              <p style="font-size:12.5px;color:var(--text-light)">${r.rationale}</p>
+              <div class="toolbar" style="margin-bottom:0"><button class="primary small" data-action="approve-ai" data-id="${r.id}">${icon("check", 12)} Approve</button><button class="small" data-route="/datasets/${r.datasetId}/checks">Inspect checks</button><button class="small danger" data-action="dismiss-ai" data-id="${r.id}">Dismiss</button></div>
+            </div>`).join("")}
+          </div>
+        </div>
+      `, "/ai-review");
+    }
+
+    function renderRunsPage() {
+      return appShell(`
+        <div class="page">
+          ${pageHeader("Runs", "Recent scheduled and manual check executions", `<button data-action="toast" data-message="Refresh clicked">${icon("refresh", 13)} Refresh</button>`)}
+          <div class="card">${runsTable(data.runs, true)}</div>
+        </div>
+      `, "/runs");
+    }
+
+    function renderExceptionsPage() {
+      return appShell(`<div class="page">${pageHeader("Exceptions", "Violating rows waiting for triage")}${renderExceptionsTriage(null)}</div>`, "/exceptions");
+    }
+
+    function renderExceptionsTriage(datasetId) {
+      const rows = data.exceptions.filter(e => (!datasetId || e.datasetId === datasetId) && (state.exceptionFilter === "all" || e.status === state.exceptionFilter));
+      const allSelected = rows.length > 0 && rows.every(e => state.selectedExceptions.has(e.id));
+      return `
+        <div class="toolbar"><div class="chip-row">
+          ${["all", "open", "acknowledged", "expected", "resolved", "muted"].map(s => `<button class="filter-chip ${state.exceptionFilter === s ? "on" : ""}" data-action="exception-filter" data-value="${s}">${s}</button>`).join("")}
+        </div></div>
+        ${state.selectedExceptions.size ? `<div class="card card-pad" style="margin-bottom:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <strong>${state.selectedExceptions.size} selected</strong>
+          <input type="text" data-bind="triageNote" placeholder="Optional note" value="${escapeHtml(state.triageNote)}" style="flex:1;min-width:220px;margin-top:0">
+          ${[
+            ["acknowledged", "Acknowledge"], ["expected", "Mark expected"], ["resolved", "Resolve"], ["muted", "Mute"], ["open", "Reopen"]
+          ].map(([status, label]) => `<button class="small" data-action="triage" data-status="${status}">${label}</button>`).join("")}
+        </div>` : ""}
+        ${rows.length ? `<div class="card table-wrap"><table class="data">
+          <thead><tr><th style="width:30px"><input type="checkbox" ${allSelected ? "checked" : ""} data-action="toggle-all-exceptions"></th><th>Status</th><th>Reason</th><th>Row data</th><th class="num">Score</th><th>Check</th>${datasetId ? "" : "<th>Dataset</th>"}<th>Seen</th></tr></thead>
+          <tbody>${rows.map(e => `<tr class="clickable" data-modal="exception" data-id="${e.id}">
+            <td><input type="checkbox" ${state.selectedExceptions.has(e.id) ? "checked" : ""} data-action="toggle-exception" data-id="${e.id}"></td>
+            <td>${pill(e.status)}</td>
+            <td style="max-width:280px;font-weight:600;color:var(--text-dark)">${e.reason}${e.note ? `<div style="font-weight:400;font-size:11.5px;color:var(--text-light)">${e.note}</div>` : ""}</td>
+            <td><div class="rowdata">${Object.entries(e.row).slice(0, 5).map(([k, v]) => `${k}=${v}`).join("  ")}</div></td>
+            <td class="num">${e.score != null ? `<span class="score-chip">${e.score}</span>` : ""}</td>
+            <td style="font-size:12px">${e.check}</td>
+            ${datasetId ? "" : `<td style="font-size:12px"><a href="#/datasets/${e.datasetId}/exceptions">${e.dataset}</a></td>`}
+            <td style="white-space:nowrap;font-size:12px;color:var(--text-light)">${e.seen}</td>
+          </tr>`).join("")}</tbody></table></div>` : `<div class="card">${empty(state.exceptionFilter === "open" ? "No open exceptions" : "Nothing here", state.exceptionFilter === "open" ? "All clear for this filter." : "")}</div>`}
+      `;
+    }
+
+    function renderDashboardsTab(dataset) {
+      const current = data.dashboards.find(d => d.id === state.selectedDashboardId);
+      return `
+        <div class="card card-pad" style="margin-bottom:16px">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input type="text" placeholder='Optional focus, e.g. "why are totals drifting this week?"' style="margin-top:0;flex:1;min-width:240px">
+            <button class="primary" data-action="generate-dashboard">${icon("bolt", 14)} Generate dashboard (AI)</button>
+          </div>
+        </div>
+        <div class="dashboard-layout">
+          <div class="card card-pad">
+            <h3>Dashboards</h3>
+            ${data.dashboards.map(d => `<div class="clickable" data-action="select-dashboard" data-id="${d.id}" style="padding:8px 10px;border-radius:6px;cursor:pointer;background:${state.selectedDashboardId === d.id ? "var(--brand-light)" : "transparent"};margin-bottom:4px">
+              <div style="font-weight:700;font-size:12.5px;color:var(--text-dark)">${d.title}</div>
+              <div style="font-size:11px;color:var(--text-light)">${badge(d.origin, d.origin === "AI" ? "ai" : "")} 4 panels - ${d.created}</div>
+            </div>`).join("")}
+          </div>
+          <div>
+            <div class="toolbar"><h3 style="font-size:15px">${current.title}</h3>${current.focus ? badge(`focus: ${current.focus}`) : ""}<div class="right"><button class="small" data-action="toast" data-message="Panels refreshed">${icon("refresh", 12)} Refresh</button><button class="small danger" data-action="toast" data-message="Delete is disabled in the prototype">Delete</button></div></div>
+            <div class="dashboard-panels">
+              ${numberPanel("Open exceptions", "128", "up 46 from yesterday")}
+              ${numberPanel("Failing checks", "2", "total_amount and payments")}
+              ${barPanel("Failures by hour", [["06", 4], ["07", 9], ["08", 18], ["09", 51], ["10", 128]], true)}
+              ${barPanel("Status distribution", [["paid", 8201], ["shipped", 6518], ["delivered", 31942], ["other", 9]], false)}
+              ${linePanel("Order volume trend")}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+    function renderContractTab(dataset) {
+      const rows = data.contracts.filter(c => c.datasetId === dataset.id);
+      return `<div class="split">
+        <div>
+          <div class="card card-pad" style="margin-bottom:16px">
+            <div class="section-title" style="margin:0 0 12px"><h2>Data contract</h2><button class="primary small" data-modal="contract">${icon("plus", 12)} Add assertion</button></div>
+            <div class="contract-grid">
+              ${rows.map(c => `<div class="contract-item"><div class="label">${c.field}</div><strong>${escapeHtml(c.target)}</strong><div class="meta" style="margin-top:5px">${escapeHtml(c.actual)}</div><div style="margin-top:9px">${pill(c.status)}</div></div>`).join("") || `<div class="empty">No contract assertions for this dataset yet.</div>`}
+            </div>
+          </div>
+          <div class="card table-wrap">
+            <table class="data">
+              <thead><tr><th>Assertion</th><th>Target</th><th>Observed</th><th>Status</th><th>Owner</th><th>Last checked</th></tr></thead>
+              <tbody>${rows.map(c => `<tr><td style="font-weight:700;color:var(--text-dark)">${c.field}</td><td>${escapeHtml(c.target)}</td><td>${escapeHtml(c.actual)}</td><td>${pill(c.status)}</td><td>${dataset.owner}</td><td style="color:var(--text-light)">18 minutes ago</td></tr>`).join("")}</tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card card-pad">
+          <h3>Release gate posture</h3>
+          <div class="dense-list">
+            <div class="dense-item"><div class="title">CI data contract check</div><div class="meta">Blocks warehouse deploys if critical assertions fail.</div>${pill(rows.some(r => r.status === "fail") ? "failed" : "pass")}</div>
+            <div class="dense-item"><div class="title">Consumer notification</div><div class="meta">Finance and operations subscribers are notified on sev1 changes.</div>${pill("active")}</div>
+            <div class="dense-item"><div class="title">Exception retention</div><div class="meta">Violating rows retained for 30 days with PII redaction metadata.</div>${pill("active")}</div>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    function renderDatasetLineageTab(dataset) {
+      const edges = data.lineage.filter(l => l.from === dataset.name || l.to === dataset.name || l.note.toLowerCase().includes(dataset.name));
+      const related = new Set();
+      edges.forEach(e => { related.add(e.from); related.add(e.to); });
+      if (!related.size) related.add(dataset.name);
+      return `<div class="split">
+        <div class="card card-pad">
+          <div class="section-title" style="margin:0 0 12px"><h2>Lineage graph</h2><button class="small" data-route="/lineage">Open estate lineage</button></div>
+          <div class="quality-map">
+            ${Array.from(related).map(name => {
+              const health = name === "orders" || name === "payments_raw" || name === "daily_order_summary" ? "fail" : name === "customers" || name === "crm_segments" || name === "taxi_trips" ? "warn" : "";
+              return `<div class="map-node ${health}"><div class="name">${name}</div><div class="meta">${name === dataset.name ? "current dataset" : "related asset"} - ${health || "pass"}</div></div>`;
+            }).join("")}
+          </div>
+        </div>
+        <div class="card table-wrap">
+          <table class="data">
+            <thead><tr><th>From</th><th>To</th><th>Kind</th><th>Health</th><th>Note</th></tr></thead>
+            <tbody>${edges.map(e => `<tr><td class="mono">${e.from}</td><td class="mono">${e.to}</td><td>${badge(e.kind, "kind")}</td><td>${pill(e.health)}</td><td>${e.note}</td></tr>`).join("") || `<tr><td colspan="5" class="empty">No lineage captured for this prototype dataset.</td></tr>`}</tbody>
+          </table>
+        </div>
+      </div>`;
+    }
+    function numberPanel(title, value, hint) {
+      return `<div class="card card-pad"><div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><h3>${title}</h3><button class="ghost small icon-only" title="Show SQL" data-action="toast" data-message="SQL opened in the real app">${icon("book", 12)}</button></div><div class="number-panel"><strong>${value}</strong><span style="color:var(--text-light)">${hint}</span></div><div style="font-size:10.5px;color:var(--text-light);margin-top:4px">91 ms</div></div>`;
+    }
+    function barPanel(title, rows, warn) {
+      const max = Math.max(...rows.map(r => r[1]));
+      return `<div class="card card-pad span-2"><div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><h3>${title}</h3><button class="ghost small icon-only" title="Show SQL" data-action="toast" data-message="SQL opened in the real app">${icon("book", 12)}</button></div><div class="panel-bars">${rows.map(([label, value], i) => `<div class="panel-bar ${warn && i > 2 ? "fail" : ""}" style="height:${Math.max(12, value / max * 180)}px"><span class="panel-label">${label}</span></div>`).join("")}</div><div style="font-size:10.5px;color:var(--text-light);margin-top:24px">134 ms</div></div>`;
+    }
+    function linePanel(title) {
+      return `<div class="card card-pad span-2"><div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><h3>${title}</h3><button class="ghost small icon-only" title="Show SQL" data-action="toast" data-message="SQL opened in the real app">${icon("book", 12)}</button></div><div class="line-chart"><svg viewBox="0 0 400 210" preserveAspectRatio="none"><polyline fill="none" stroke="#509ee3" stroke-width="3" points="0,160 45,132 90,140 135,98 180,112 225,72 270,86 315,64 360,54 400,42"/><polyline fill="rgba(80,158,227,.12)" stroke="none" points="0,210 0,160 45,132 90,140 135,98 180,112 225,72 270,86 315,64 360,54 400,42 400,210"/></svg></div><div style="font-size:10.5px;color:var(--text-light);margin-top:4px">88 ms</div></div>`;
+    }
+
+    function renderKnowledgeTab() {
+      return `<div class="grid cols-2" style="align-items:start">
+        <div class="card card-pad">
+          <h3>Table knowledge</h3>
+          ${state.savedKnowledge ? `<div class="info-box">Saved.</div>` : ""}
+          <fieldset>
+            <label class="field">Business context<textarea data-knowledge="business">${escapeHtml(data.knowledge.business)}</textarea></label>
+            <label class="field">Known issues<textarea data-knowledge="issues">${escapeHtml(data.knowledge.issues)}</textarea></label>
+            <div class="form-row">
+              <label class="field">Importance<select data-knowledge="importance">${["low", "medium", "high", "critical"].map(v => `<option value="${v}" ${data.knowledge.importance === v ? "selected" : ""}>${v}</option>`).join("")}</select></label>
+              <label class="field">Owner<input type="text" data-knowledge="owner" value="${escapeHtml(data.knowledge.owner)}"></label>
+            </div>
+            <div class="form-row">
+              <label class="field">Freshness SLA (hours)<input type="number" data-knowledge="sla" value="${data.knowledge.sla}"><div class="field-hint">Used as the threshold for generated freshness checks</div></label>
+              <label class="field">PII columns<input type="text" data-knowledge="pii" value="${escapeHtml(data.knowledge.pii)}"><div class="field-hint">Values are redacted before LLM prompts</div></label>
+            </div>
+            <label class="field">Other notes<textarea data-knowledge="notes">${escapeHtml(data.knowledge.notes)}</textarea></label>
+            <button class="primary" data-action="save-knowledge">Save knowledge</button>
+          </fieldset>
+        </div>
+        <div class="card card-pad" style="background:var(--card2)">
+          <h3>Knowledge usage</h3>
+          <ul style="font-size:13px;line-height:1.8;padding-left:18px;margin:0">
+            <li><strong>Known issues</strong> shape generated checks.</li>
+            <li><strong>Freshness SLA</strong> sets generated freshness thresholds.</li>
+            <li><strong>Importance</strong> influences severity.</li>
+            <li><strong>PII columns</strong> are redacted from LLM prompts and tool results.</li>
+            <li><strong>Triage notes</strong> build historical context for future investigations.</li>
+          </ul>
+        </div>
+      </div>`;
+    }
+
+    function renderRcaTab(dataset) {
+      const sessions = data.rcaSessions.filter(s => s.datasetId === dataset.id);
+      return `
+        <div class="card card-pad" style="margin-bottom:16px">
+          <h3>Start an investigation</h3>
+          <p style="font-size:12.5px;color:var(--text-light);margin-top:0">The agent investigates with read-only SQL, redacts PII, and returns an evidence-backed report.</p>
+          <div style="display:flex;gap:8px">
+            <input type="text" data-bind="rcaQuestion" placeholder='e.g. "Why are there negative totals in recent orders?"' value="${escapeHtml(state.rcaQuestion)}" style="margin-top:0;flex:1">
+            <button class="primary" data-action="start-rca" ${state.rcaQuestion.trim() ? "" : "disabled"}>${state.rcaRunning ? `<span class="spinner" style="width:13px;height:13px"></span>` : icon("bolt", 14)} Investigate</button>
+          </div>
+        </div>
+        ${state.rcaRunning ? `<div class="card card-pad"><h3>${pill("running")} Ad-hoc investigation</h3><div class="center"><span class="spinner"></span> Agent is investigating with read-only SQL...</div></div>` : ""}
+        ${sessions.map(s => `<div class="card card-pad" style="margin-bottom:16px">
+          <h3>${pill(s.status)} Run #${s.runId}<span style="font-weight:400;color:var(--text-light);font-size:12px;margin-left:8px">${s.created} - ${s.model}</span></h3>
+          <p style="font-size:12.5px;color:var(--text-light);margin:2px 0 8px">Q: ${s.question}</p>
+          <div class="info-box" style="font-weight:600">${s.summary}</div>
+          <div class="markdown"><h3>Findings</h3><ul>${s.report.map(item => `<li>${item}</li>`).join("")}</ul></div>
+          <details class="step" style="margin-top:14px"><summary>Investigation transcript (3 queries)</summary><div class="body">
+            <div style="font-size:12px;font-weight:700;margin-top:8px">Inspect failures by ingestion batch</div>
+            <pre class="sql">SELECT ingestion_batch_id, COUNT(*) AS failures
+FROM orders
+WHERE total_amount < 0
+GROUP BY 1
+ORDER BY failures DESC
+LIMIT 10;</pre>
+            <pre class="result">batch_20260610_0930 | 119
+batch_20260610_1000 | 9</pre>
+            <div style="font-size:12px;font-weight:700;margin-top:8px">Compare source systems</div>
+            <pre class="sql">SELECT source_system, event_type, COUNT(*) AS rows
+FROM orders
+WHERE created_at >= '2026-06-10 09:00:00'
+GROUP BY 1, 2;</pre>
+          </div></details>
+        </div>`).join("")}
+      `;
+    }
+
+    function renderWorkbench() {
+      return appShell(`
+        <div class="page wide">
+          ${pageHeader("Workbench", "Run read-only SQL against your sources", `<select style="margin-top:0;width:220px">${data.connections.map(c => `<option>${c.name} (${c.kind})</option>`).join("")}</select>`)}
+          <div class="workbench-layout">
+            <div class="card card-pad">
+              <h3>Schema</h3>
+              ${["orders", "customers", "payments"].map(table => schemaTree(table)).join("")}
+            </div>
+            <div>
+              <div class="card card-pad" style="margin-bottom:14px">
+                <textarea data-bind="workbenchSql" rows="7" spellcheck="false" style="font-family:var(--mono);font-size:13px;margin-top:0">${escapeHtml(state.workbenchSql)}</textarea>
+                <div class="toolbar" style="margin-bottom:0;margin-top:10px">
+                  <button class="primary" data-action="run-query">${icon("play", 13)} Run</button>
+                  <select data-bind="workbenchLimit" style="margin-top:0;width:120px">${[50, 200, 500, 1000, 2000].map(n => `<option value="${n}" ${state.workbenchLimit == n ? "selected" : ""}>limit ${n}</option>`).join("")}</select>
+                  <span style="font-size:11.5px;color:var(--text-light)">Read-only - single SELECT/WITH</span>
+                </div>
+              </div>
+              ${state.workbenchRan ? renderWorkbenchResults() : `<div class="card">${empty("Results appear here", "Write SQL, click a suggestion, or insert a table from the schema browser.")}</div>`}
+            </div>
+            <div class="card card-pad">
+              <h3>Suggested queries ${badge("AI", "ai")}</h3>
+              ${suggestions().map(s => `<div class="insight" style="border-color:var(--purple)">
+                <div class="t">${s.title}</div>
+                <div style="font-size:11.5px;color:var(--text-light);margin:2px 0 6px">${s.rationale}</div>
+                <pre class="result" style="max-height:110px;font-size:11px">${escapeHtml(s.sql)}</pre>
+                <div style="display:flex;gap:6px"><button class="primary small" data-action="suggest-run" data-sql="${escapeHtml(s.sql)}">Run</button><button class="small" data-action="suggest-edit" data-sql="${escapeHtml(s.sql)}">Edit</button></div>
+              </div>`).join("")}
+            </div>
+          </div>
+        </div>
+      `, "/workbench");
+    }
+    function schemaTree(table) {
+      const open = state.schemaOpen.has(table);
+      const cols = {
+        orders: [["order_id", "integer"], ["customer_id", "integer"], ["status", "text"], ["total_amount", "real"], ["created_at", "timestamp"]],
+        customers: [["customer_id", "integer"], ["email", "text"], ["country", "text"], ["created_at", "timestamp"]],
+        payments: [["payment_id", "text"], ["order_id", "integer"], ["amount", "real"], ["captured_at", "timestamp"]]
+      }[table];
+      return `<div>
+        <div class="schema-table" data-action="toggle-schema" data-table="${table}"><span>${open ? "v" : ">"} ${table}</span>${badge("table", "kind")}</div>
+        ${open ? `<div class="schema-cols">${cols.map(([name, type]) => `<div class="schema-col" data-action="insert-sql" data-text="${name}"><span>${name}</span><span>${type}</span></div>`).join("")}</div>` : ""}
+      </div>`;
+    }
+    function suggestions() {
+      return [
+        { title: "Inspect negative totals", rationale: "Matches the latest failing check context.", sql: "SELECT order_id, customer_id, status, total_amount, created_at\nFROM orders\nWHERE total_amount < 0\nORDER BY created_at DESC\nLIMIT 50" },
+        { title: "Failures by source batch", rationale: "Groups failures by ingestion batch to isolate the spike.", sql: "SELECT ingestion_batch_id, COUNT(*) AS failures\nFROM orders\nWHERE total_amount < 0\nGROUP BY 1\nORDER BY failures DESC" },
+        { title: "Status distribution", rationale: "Looks for newly introduced statuses.", sql: "SELECT status, COUNT(*) AS orders\nFROM orders\nGROUP BY 1\nORDER BY orders DESC" }
+      ];
+    }
+    function renderWorkbenchResults() {
+      const rows = [
+        ["delivered", 31942, 2190841.45],
+        ["paid", 8201, 612042.11],
+        ["shipped", 6518, 497522.62],
+        ["cancelled", 1199, 0],
+        ["returned", 359, -4931.18],
+        ["chargeback_pending", 9, -812.91]
+      ];
+      return `<div class="card">
+        <div class="card-pad" style="display:flex;gap:12px;align-items:center;padding-bottom:10px;flex-wrap:wrap">
+          <strong>${rows.length} rows</strong><span style="color:var(--text-light);font-size:12px">118 ms</span><span class="badge">truncated at limit</span>
+          <div class="right" style="margin-left:auto;display:flex;gap:8px"><button class="small" data-action="toggle-workbench-chart">${state.workbenchChart ? "Table" : "Chart"}</button></div>
+        </div>
+        ${state.workbenchChart ? `<div class="card-pad" style="padding-top:0">${inlineBars(rows.map(r => [r[0], r[1]]))}</div>` : `<div class="table-wrap" style="max-height:460px;overflow-y:auto"><table class="data"><thead><tr><th>status</th><th class="num">orders</th><th class="num">revenue</th></tr></thead><tbody>${rows.map(r => `<tr><td class="mono">${r[0]}</td><td class="num mono">${fmt(r[1])}</td><td class="num mono">${money(r[2])}</td></tr>`).join("")}</tbody></table></div>`}
+      </div>`;
+    }
+    function inlineBars(rows) {
+      const max = Math.max(...rows.map(r => r[1]));
+      return `<div class="panel-bars">${rows.map(([label, value]) => `<div class="panel-bar" style="height:${Math.max(12, value / max * 180)}px"><span class="panel-label">${label}</span></div>`).join("")}</div><div style="font-size:10.5px;color:var(--text-light);margin-top:24px">118 ms</div>`;
+    }
+
+    function renderSettings() {
+      return appShell(`
+        <div class="page">
+          ${pageHeader("Settings", "Local environment and access controls", `<button class="primary" data-action="toast" data-message="Settings saved">Save settings</button>`)}
+          <div class="grid cols-2" style="align-items:start">
+            <div class="card card-pad">
+              <h3>LLM provider</h3>
+              <label class="field">Provider<select><option>auto</option><option>anthropic</option><option>openrouter</option><option>openai-compatible</option></select></label>
+              <label class="field">Model<input type="text" value="claude-sonnet-4-5"></label>
+              <div class="info-box">Structured outputs and MCP connector are enabled on the Anthropic path. Heuristic generation stays available without an API key.</div>
+            </div>
+            <div class="card card-pad">
+              <h3>Users</h3>
+              <table class="data"><thead><tr><th>Email</th><th>Role</th><th>Status</th></tr></thead><tbody>
+                <tr><td>admin@example.com</td><td>${badge("admin")}</td><td>${pill("active")}</td></tr>
+                <tr><td>analyst@example.com</td><td>${badge("editor")}</td><td>${pill("active")}</td></tr>
+                <tr><td>viewer@example.com</td><td>${badge("viewer")}</td><td>${pill("disabled")}</td></tr>
+              </tbody></table>
+            </div>
+          </div>
+        </div>
+      `, "/settings");
+    }
+
+    function renderModal() {
+      if (!state.openModal) return "";
+      const close = `<button class="ghost small" data-action="close-modal" aria-label="Close">${icon("x")}</button>`;
+      const foot = (inner) => `<div class="modal-foot">${inner}</div>`;
+      let title = "";
+      let body = "";
+      let footer = "";
+      if (state.openModal === "command") {
+        title = "Command palette";
+        body = `<div class="dense-list">
+          <div class="dense-item clickable" data-action="open-copilot"><div class="title">${icon("bolt", 13)} Ask Sentinel Copilot</div><div class="meta">Get an evidence-backed answer about anything in the estate.</div></div>
+          <div class="dense-item clickable" data-action="start-tour"><div class="title">${icon("play", 13)} Play the product tour</div><div class="meta">Walk the eleven-stop vision narrative.</div></div>
+          <div class="dense-item clickable" data-action="start-demo"><div class="title">${icon("bolt", 13)} Simulate a live incident</div><div class="meta">Watch a sev1 unfold and resolve on the control center in 15 seconds.</div></div>
+          <div class="dense-item clickable" data-route="/incidents"><div class="title">${icon("alert", 13)} Open incident command</div><div class="meta">Review active incidents and owner updates.</div></div>
+          <div class="dense-item clickable" data-route="/ai-review"><div class="title">${icon("bolt", 13)} Review AI recommendations</div><div class="meta">Approve generated checks and knowledge updates.</div></div>
+          <div class="dense-item clickable" data-route="/workbench"><div class="title">${icon("search", 13)} Open guarded SQL workbench</div><div class="meta">Run read-only SQL against registered sources.</div></div>
+          <div class="dense-item clickable" data-route="/digest"><div class="title">${icon("book", 13)} Open the executive digest</div><div class="meta">This week's auto-generated leadership narrative.</div></div>
+          <div class="dense-item clickable" data-route="/governance"><div class="title">${icon("check", 13)} Run governance controls</div><div class="meta">Inspect privacy, ownership, and release gates.</div></div>
+        </div>`;
+      }
+      if (state.openModal === "connection") {
+        title = "Add a connection";
+        body = `<div class="stepper"><div class="step done">1. Connect</div><div class="step on">2. Validate</div><div class="step">3. Register</div><div class="step">4. Schedule</div></div><div id="test-result"></div>
+          <label class="field">Display name <span class="req">*</span><input type="text" value="Shop database clone"></label>
+          <label class="field">Connection string (SQLAlchemy DSN) <span class="req">*</span><input type="text" value="sqlite:///C:/data/shop.sqlite" style="font-family:var(--mono);font-size:12px"><div class="field-hint">Sources are opened read-only. Supported: SQLite, DuckDB, PostgreSQL.</div></label>
+          <div class="form-row"><label class="field">Owning domain<select><option>Commerce</option><option>Finance</option><option>Customer</option></select></label><label class="field">Default sensitivity<select><option>internal</option><option>confidential</option><option>restricted</option></select></label></div>`;
+        footer = foot(`<button data-action="test-connection">Test connection</button><button class="primary" data-action="save-connection">Save</button>`);
+      }
+      if (state.openModal === "new-check") {
+        title = "New check";
+        body = `<label class="field">Check type<select><option>Not null</option><option>Numeric range</option><option>Accepted values</option><option>Freshness</option><option>Custom SQL</option></select></label>
+          <label class="field">Column<select>${data.columns.map(c => `<option>${c.name} (${c.dtype})</option>`).join("")}</select></label>
+          <label class="field">Severity<select><option>info</option><option>warn</option><option selected>error</option></select></label>
+          <label class="field">Params (JSON)<textarea rows="5" style="font-family:var(--mono);font-size:12px">{"min": 0, "tolerance": 0}</textarea><div class="field-hint">Add {"tolerance": N} to allow up to N violations before the check fails.</div></label>`;
+        footer = foot(`<button data-action="close-modal">Cancel</button><button class="primary" data-action="create-check">Create & activate</button>`);
+      }
+      if (state.openModal === "edit-check") {
+        const c = data.checks.find(x => x.id === Number(state.modalData?.id)) || data.checks[0];
+        title = "Edit check";
+        body = `<label class="field">Name<input type="text" value="${escapeHtml(c.name)}"></label>
+          <div class="form-row"><label class="field">Severity<select>${["info", "warn", "error"].map(s => `<option ${c.severity === s ? "selected" : ""}>${s}</option>`).join("")}</select></label><label class="field">Schedule<input type="text" value="${escapeHtml(c.schedule)}"></label></div>
+          <label class="field">Params (JSON)<textarea rows="6" style="font-family:var(--mono);font-size:12px">${escapeHtml(JSON.stringify(c.params, null, 2))}</textarea></label>`;
+        footer = foot(`<button data-action="close-modal">Cancel</button><button class="primary" data-action="save-check" data-id="${c.id}">Save</button>`);
+      }
+      if (state.openModal === "exception") {
+        const e = data.exceptions.find(x => x.id === Number(state.modalData?.id));
+        title = `Exception #${e.id}`;
+        body = `<div style="margin-bottom:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">${pill(e.status)} <strong>${e.reason}</strong>${e.score != null ? `<span class="score-chip">score ${e.score}</span>` : ""}<button class="small" data-route="/workbench" style="margin-left:auto">Investigate in workbench</button></div>
+          <div style="font-size:12.5px;color:var(--text-light);margin-bottom:12px">${e.check} - ${e.dataset} - run #${e.runId} - ${e.seen}${e.note ? `<div style="margin-top:4px">Note: <em>${e.note}</em></div>` : ""}</div>
+          <div class="table-wrap card" style="box-shadow:none"><table class="data"><thead><tr><th>Column</th><th>Value</th></tr></thead><tbody>${Object.entries(e.row).map(([k, v]) => `<tr><td style="font-weight:600;width:180px">${k}</td><td class="mono" style="${e.column === k ? "color:var(--danger-dark);font-weight:700" : ""}">${escapeHtml(v)}</td></tr>`).join("")}</tbody></table></div>`;
+      }
+      if (state.openModal === "incident") {
+        const i = data.incidents.find(x => x.id === state.modalData?.id) || data.incidents[0];
+        title = `${i.id} - ${i.title}`;
+        body = `<div class="grid cols-4" style="margin-bottom:14px">
+          ${stat("Status", i.status)}
+          ${stat("Severity", i.severity)}
+          ${stat("Exceptions", fmt(i.exceptions), i.dataset)}
+          ${stat("Age", i.age, i.owner)}
+        </div>
+        <div class="info-box"><strong>Impact:</strong> ${i.impact}</div>
+        <div class="split even">
+          <div>
+            <h3>Resolution plan</h3>
+            <div class="dense-list">
+              <div class="dense-item"><div class="title">Next action</div><div class="meta">${i.next}</div></div>
+              <div class="dense-item"><div class="title">Dataset</div><div class="meta">${i.dataset} in ${i.domain}</div></div>
+              <div class="dense-item"><div class="title">Owner update</div><div class="meta">Last update 8 minutes ago by ${i.owner}</div></div>
+            </div>
+          </div>
+          <div>
+            <h3>Evidence</h3>
+            ${timeline([
+              ["fail", "Check failed", `${i.exceptions} violating rows captured`, i.started],
+              ["", "Exceptions grouped", `matched incident signature for ${i.dataset}`, "auto"],
+              ["warn", "RCA evidence attached", "read-only SQL transcript available", "agent"]
+            ])}
+          </div>
+        </div>`;
+        footer = foot(`<button data-route="/datasets/${i.datasetId}/exceptions">Open exceptions</button><button data-route="/datasets/${i.datasetId}/rca">RCA report</button><button class="primary" data-action="incident-resolve" data-id="${i.id}">Move to monitoring</button>`);
+      }
+      if (state.openModal === "incident-create") {
+        title = "Create incident";
+        body = `<label class="field">Title<input type="text" value="Manual review: delayed customer segments"></label><div class="form-row"><label class="field">Severity<select><option>sev1</option><option selected>sev2</option><option>sev3</option></select></label><label class="field">Owner<input type="text" value="growth-data"></label></div><label class="field">Impact<textarea>Lifecycle campaigns may use stale segment assignments.</textarea></label>`;
+        footer = foot(`<button data-action="close-modal">Cancel</button><button class="primary" data-action="create-incident">Create</button>`);
+      }
+      if (state.openModal === "policy") {
+        const p = data.policies.find(x => x.id === state.modalData?.id) || data.policies[0];
+        title = `${p.id} - ${p.name}`;
+        body = `<div class="info-box">${p.rule}</div><div class="contract-grid"><div class="contract-item"><div class="label">Scope</div><strong>${p.scope}</strong></div><div class="contract-item"><div class="label">Compliance</div><strong>${p.compliance}%</strong></div><div class="contract-item"><div class="label">Status</div>${pill(p.status)}</div></div><h3 style="margin-top:16px">Failing evidence</h3><div class="dense-list"><div class="dense-item"><div class="title">orders</div><div class="meta">Range check failing on total_amount. Incident DQ-1042 active.</div></div><div class="dense-item"><div class="title">payments</div><div class="meta">Reconciliation check failing. Incident DQ-1041 active.</div></div></div>`;
+        footer = foot(`<button data-route="/governance">Open control page</button><button class="primary" data-action="toast" data-message="Control re-run queued">Re-run policy</button>`);
+      }
+      if (state.openModal === "contract") {
+        title = "Add contract assertion";
+        body = `<label class="field">Assertion name<input type="text" value="Order total is non-negative"></label><div class="form-row"><label class="field">Column<select><option>total_amount</option><option>status</option><option>created_at</option></select></label><label class="field">Severity<select><option>warn</option><option selected>error</option></select></label></div><label class="field">Target<textarea>{"min": 0, "tolerance": 0}</textarea></label>`;
+        footer = foot(`<button data-action="close-modal">Cancel</button><button class="primary" data-action="add-contract">Add assertion</button>`);
+      }
+      const wide = ["exception", "incident", "policy", "command"].includes(state.openModal);
+      return `<div class="modal-backdrop" data-action="close-modal-bg"><div class="modal ${wide ? "wide" : ""}"><div class="modal-head"><h3>${title}</h3>${close}</div><div class="modal-body">${body}</div>${footer}</div></div>`;
+    }
+
+    function render() {
+      const route = currentRoute();
+      const parts = route.split("?")[0].split("/").filter(Boolean);
+      let html;
+      if (route === "/") html = renderHome();
+      else if (parts[0] === "connections" && parts[2] === "browse") html = renderBrowse(parts[1]);
+      else if (parts[0] === "connections") html = renderConnections();
+      else if (parts[0] === "incidents") html = renderIncidentsPage();
+      else if (parts[0] === "datasets" && parts[1]) html = renderDataset(parts[1], parts[2] || "profile");
+      else if (parts[0] === "datasets") html = renderDatasets();
+      else if (parts[0] === "lineage") html = renderLineagePage();
+      else if (parts[0] === "checks") html = renderChecksPage();
+      else if (parts[0] === "runs") html = renderRunsPage();
+      else if (parts[0] === "exceptions") html = renderExceptionsPage();
+      else if (parts[0] === "workbench") html = renderWorkbench();
+      else if (parts[0] === "ai-review") html = renderAiReviewPage();
+      else if (parts[0] === "digest") html = renderDigest();
+      else if (parts[0] === "governance") html = renderGovernancePage();
+      else if (parts[0] === "settings") html = renderSettings();
+      else html = renderHome();
+      document.getElementById("app").innerHTML = html;
+      bindInputs();
+      const copilotBody = document.querySelector(".copilot-body");
+      if (copilotBody) copilotBody.scrollTop = copilotBody.scrollHeight;
+      if (state.copilotFocus) {
+        state.copilotFocus = false;
+        const input = document.querySelector('[data-bind="copilotInput"]');
+        if (input) input.focus();
+      }
+    }
+
+    function bindInputs() {
+      document.querySelectorAll("[data-bind]").forEach(el => {
+        const key = el.dataset.bind;
+        const event = el.tagName === "SELECT" ? "change" : "input";
+        el.addEventListener(event, () => {
+          if (key === "workbenchLimit") state[key] = Number(el.value);
+          else state[key] = el.value;
+          if (["globalSearch", "datasetSearch", "browseFilter", "rcaQuestion"].includes(key)) {
+            const pos = el.selectionStart;
+            render();
+            const next = document.querySelector(`[data-bind="${key}"]`);
+            if (next) {
+              next.focus();
+              if (typeof next.setSelectionRange === "function") next.setSelectionRange(pos, pos);
+            }
+          }
+        });
+      });
+      document.querySelectorAll("[data-knowledge]").forEach(el => {
+        el.addEventListener("input", () => {
+          data.knowledge[el.dataset.knowledge] = el.value;
+        });
+        el.addEventListener("change", () => {
+          data.knowledge[el.dataset.knowledge] = el.value;
+        });
+      });
+    }
+
+    document.addEventListener("click", (event) => {
+      const target = event.target.closest("[data-route], [data-action], [data-modal]");
+      if (!target) return;
+      if (target.dataset.route) {
+        routeTo(target.dataset.route);
+        state.openModal = null;
+        return;
+      }
+      if (target.dataset.modal) {
+        state.openModal = target.dataset.modal;
+        state.modalData = { id: target.dataset.id };
+        render();
+        return;
+      }
+      const action = target.dataset.action;
+      if (action === "toast") toast(target.dataset.message || "Clicked");
+      if (action === "clear-search") { state.globalSearch = ""; render(); }
+      if (action === "fleet") { state.fleetChecked = true; toast("Fleet health checked"); render(); }
+      if (action === "close-modal" || action === "close-modal-bg") {
+        if (action === "close-modal-bg" && event.target !== target) return;
+        state.openModal = null; render();
+      }
+      if (action === "test-connection") {
+        const result = document.getElementById("test-result");
+        if (result) result.innerHTML = `<div class="info-box">Connected. Found 6 tables and 2 views.</div>`;
+      }
+      if (action === "save-connection") { state.openModal = null; toast("Connection saved"); render(); }
+      if (action === "toggle-table") {
+        event.stopPropagation();
+        const key = target.dataset.key;
+        if (!key) return;
+        if (state.selectedTables.has(key)) state.selectedTables.delete(key);
+        else state.selectedTables.add(key);
+        render();
+      }
+      if (action === "register-tables") {
+        const selected = Array.from(state.selectedTables);
+        selected.forEach(key => {
+          const [schema, name] = key.split(".");
+          const table = data.tables.find(t => t.schema === schema && t.name === name);
+          if (table && !table.registered) {
+            const id = data.datasets.length + 1;
+            table.registered = id;
+            data.datasets.push({ id, name, schema, connection: "Shop database", connectionId: 1, health: "unknown", owner: "unassigned", importance: "medium", rows: table.rows, active: 0, open: 0, lastProfiled: "never" });
+          }
+        });
+        state.selectedTables.clear();
+        toast(`${selected.length} dataset${selected.length === 1 ? "" : "s"} registered`);
+        routeTo("/datasets");
+      }
+      if (action === "dataset-filter") { state.datasetFilter = target.dataset.value; render(); }
+      if (action === "incident-filter") { state.incidentFilter = target.dataset.value; render(); }
+      if (action === "governance-tab") { state.governanceTab = target.dataset.value; render(); }
+      if (action === "ai-filter") { state.aiQueueFilter = target.dataset.value; render(); }
+      if (action === "profile-now") { toast("Profile refreshed from sample stats"); state.showPreview = true; render(); }
+      if (action === "toggle-preview") { state.showPreview = !state.showPreview; render(); }
+      if (action === "generate-checks") {
+        const maxId = Math.max(...data.checks.map(c => c.id));
+        if (!data.checks.some(c => c.name === "created_at is not in the future")) {
+          data.checks.push({ id: maxId + 1, datasetId: 1, dataset: "orders", name: "created_at is not in the future", type: "custom_sql", column: "created_at", severity: "error", status: "proposed", origin: "llm", last: null, schedule: "every 60 min", rationale: "Future-dated orders distort daily volume and freshness reporting.", params: { expression: "created_at <= CURRENT_TIMESTAMP" } });
+        }
+        state.generatedBanner = "Generated 1 proposal via AI after exploring the data (2 duplicates skipped). Review and activate it below.";
+        render();
+      }
+      if (action === "activate-check") {
+        const c = data.checks.find(x => x.id === Number(target.dataset.id));
+        if (c) c.status = "active";
+        toast("Check activated");
+        render();
+      }
+      if (action === "dismiss-check" || action === "archive-check") {
+        const id = Number(target.dataset.id);
+        const idx = data.checks.findIndex(x => x.id === id);
+        if (idx >= 0) data.checks.splice(idx, 1);
+        toast(action === "dismiss-check" ? "Proposal dismissed" : "Check archived");
+        render();
+      }
+      if (action === "toggle-check") {
+        const c = data.checks.find(x => x.id === Number(target.dataset.id));
+        if (c) c.status = c.status === "active" ? "disabled" : "active";
+        render();
+      }
+      if (action === "run-check") {
+        const c = data.checks.find(x => x.id === Number(target.dataset.id));
+        if (c) {
+          c.last = c.type === "range" ? "fail" : "pass";
+          data.runs.unshift({ id: Math.max(...data.runs.map(r => r.id)) + 1, datasetId: c.datasetId, dataset: c.dataset, checkId: c.id, check: c.name, status: c.last === "fail" ? "failed" : "complete", violations: c.last === "fail" ? 128 : 0, started: "just now", duration: 377, severity: c.severity });
+          toast("Check run completed");
+        }
+        render();
+      }
+      if (action === "create-check") {
+        data.checks.push({ id: Math.max(...data.checks.map(c => c.id)) + 1, datasetId: 1, dataset: "orders", name: "manual range check", type: "range", column: "total_amount", severity: "error", status: "active", origin: "manual", last: null, schedule: "every 60 min", rationale: "Created from prototype modal.", params: { min: 0 } });
+        state.openModal = null; toast("Check created"); render();
+      }
+      if (action === "save-check") { state.openModal = null; toast("Check saved"); render(); }
+      if (action === "incident-resolve") {
+        const incident = data.incidents.find(i => i.id === target.dataset.id);
+        if (incident) {
+          incident.status = "monitoring";
+          incident.progress = Math.max(incident.progress, 85);
+        }
+        state.openModal = null;
+        toast("Incident moved to monitoring");
+        render();
+      }
+      if (action === "create-incident") {
+        data.incidents.unshift({ id: `DQ-${1043 + data.incidents.length}`, title: "Manual review: delayed customer segments", status: "active", severity: "sev2", owner: "growth-data", domain: "Customer", started: "just now", age: "0m", datasetId: 2, dataset: "customers", exceptions: 0, impact: "Lifecycle campaigns may use stale segment assignments", next: "Run freshness checks and inspect crm_segments lineage", progress: 10 });
+        state.openModal = null;
+        toast("Incident created");
+        render();
+      }
+      if (action === "add-contract") {
+        data.contracts.push({ datasetId: 1, field: "Order total non-negative", target: "total_amount >= 0", actual: "pending first evaluation", status: "warn" });
+        state.openModal = null;
+        toast("Contract assertion added");
+        render();
+      }
+      if (action === "approve-ai") {
+        const rec = data.recommendations.find(r => r.id === target.dataset.id);
+        if (rec) {
+          rec.status = "approved";
+          data.checks.push({ id: Math.max(...data.checks.map(c => c.id)) + 1, datasetId: rec.datasetId, dataset: rec.dataset, name: rec.title, type: rec.type, column: null, severity: rec.severity, status: "proposed", origin: "llm", last: null, schedule: "every 60 min", rationale: rec.rationale, params: {} });
+        }
+        toast("Recommendation approved and staged as a proposed check");
+        render();
+      }
+      if (action === "dismiss-ai") {
+        const rec = data.recommendations.find(r => r.id === target.dataset.id);
+        if (rec) rec.status = "dismissed";
+        toast("Recommendation dismissed");
+        render();
+      }
+      if (action === "exception-filter") { state.exceptionFilter = target.dataset.value; state.selectedExceptions.clear(); render(); }
+      if (action === "toggle-exception") {
+        event.stopPropagation();
+        const id = Number(target.dataset.id);
+        if (state.selectedExceptions.has(id)) state.selectedExceptions.delete(id);
+        else state.selectedExceptions.add(id);
+        render();
+      }
+      if (action === "toggle-all-exceptions") {
+        const route = currentRoute();
+        const datasetMatch = route.match(/datasets\/(\d+)\/exceptions/);
+        const datasetId = datasetMatch ? Number(datasetMatch[1]) : null;
+        const rows = data.exceptions.filter(e => (!datasetId || e.datasetId === datasetId) && (state.exceptionFilter === "all" || e.status === state.exceptionFilter));
+        const all = rows.length > 0 && rows.every(e => state.selectedExceptions.has(e.id));
+        if (all) rows.forEach(e => state.selectedExceptions.delete(e.id));
+        else rows.forEach(e => state.selectedExceptions.add(e.id));
+        render();
+      }
+      if (action === "triage") {
+        const status = target.dataset.status;
+        data.exceptions.forEach(e => {
+          if (state.selectedExceptions.has(e.id)) {
+            e.status = status;
+            if (state.triageNote) e.note = state.triageNote;
+          }
+        });
+        state.selectedExceptions.clear();
+        state.triageNote = "";
+        toast("Exceptions updated");
+        render();
+      }
+      if (action === "select-dashboard") { state.selectedDashboardId = Number(target.dataset.id); render(); }
+      if (action === "generate-dashboard") {
+        const id = Math.max(...data.dashboards.map(d => d.id)) + 1;
+        data.dashboards.unshift({ id, title: "Generated anomaly review", origin: "AI", focus: "negative totals", created: "just now" });
+        state.selectedDashboardId = id;
+        toast("Dashboard generated");
+        render();
+      }
+      if (action === "save-knowledge") { state.savedKnowledge = true; toast("Knowledge saved"); render(); setTimeout(() => { state.savedKnowledge = false; render(); }, 2500); }
+      if (action === "start-rca") {
+        state.rcaRunning = true;
+        render();
+        setTimeout(() => {
+          state.rcaRunning = false;
+          data.rcaSessions.unshift({ id: Math.max(...data.rcaSessions.map(s => s.id)) + 1, datasetId: 1, status: "complete", runId: null, created: "just now", model: "claude-sonnet-4-5", question: state.rcaQuestion, summary: "The newest failures cluster in the payments_v2 batch and match refund adjustment records.", report: ["The agent found the spike starts in the 09:30 batch.", "All sampled failures have event_type = refund_adjustment.", "Filtering those rows before the order merge should clear the current exceptions."] });
+          state.rcaQuestion = "";
+          render();
+        }, 1200);
+      }
+      if (action === "toggle-schema") {
+        const table = target.dataset.table;
+        if (state.schemaOpen.has(table)) state.schemaOpen.delete(table);
+        else state.schemaOpen.add(table);
+        render();
+      }
+      if (action === "insert-sql") {
+        state.workbenchSql = state.workbenchSql.trimEnd() + " " + target.dataset.text;
+        render();
+      }
+      if (action === "run-query") { state.workbenchRan = true; render(); }
+      if (action === "suggest-run") { state.workbenchSql = target.dataset.sql; state.workbenchRan = true; render(); }
+      if (action === "suggest-edit") { state.workbenchSql = target.dataset.sql; state.workbenchRan = false; render(); }
+      if (action === "toggle-workbench-chart") { state.workbenchChart = !state.workbenchChart; render(); }
+      if (action === "open-copilot") { state.copilotOpen = true; state.copilotFocus = true; state.openModal = null; render(); }
+      if (action === "close-copilot") { state.copilotOpen = false; render(); }
+      if (action === "copilot-send") sendCopilot();
+      if (action === "copilot-ask") { state.openModal = null; sendCopilot(target.dataset.q); }
+      if (action === "start-tour") { state.openModal = null; goToTourStop(0); }
+      if (action === "tour-next") goToTourStop(state.tourStep + 1);
+      if (action === "tour-back") goToTourStop(state.tourStep - 1);
+      if (action === "tour-exit") { state.tourStep = null; toast("Tour ended - explore freely"); render(); }
+      if (action === "start-demo") startDemo();
+      if (action === "stop-demo") stopDemo();
+      if (action === "toggle-theme") {
+        state.theme = state.theme === "dark" ? "light" : "dark";
+        document.documentElement.dataset.theme = state.theme;
+        try { localStorage.setItem("dq-theme", state.theme); } catch {}
+        render();
+      }
+      if (action === "regenerate-digest") {
+        state.digestGenerating = true;
+        render();
+        setTimeout(() => {
+          state.digestGenerating = false;
+          toast("Digest regenerated from the latest incidents, runs, and audit log");
+          render();
+        }, 1100);
+      }
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        state.openModal = state.openModal === "command" ? null : "command";
+        render();
+        return;
+      }
+      if (event.key === "Enter" && event.target?.dataset?.bind === "copilotInput") {
+        sendCopilot();
+        return;
+      }
+      if (event.key === "Escape") {
+        if (state.openModal) { state.openModal = null; render(); }
+        else if (state.copilotOpen) { state.copilotOpen = false; render(); }
+        else if (state.tourStep != null) { state.tourStep = null; render(); }
+      }
+    });
+
+    window.addEventListener("hashchange", () => {
+      state.openModal = null;
+      render();
+    });
+
+    render();
+  </script>
+</body>
+</html>
