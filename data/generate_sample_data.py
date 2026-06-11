@@ -89,6 +89,20 @@ CREATE VIEW order_revenue AS
            SUM(i.line_total) AS items_total, COUNT(i.order_item_id) AS item_count
     FROM orders o LEFT JOIN order_items i ON i.order_id = o.order_id
     GROUP BY o.order_id;
+CREATE VIEW daily_revenue AS
+    SELECT DATE(order_date) AS day, COUNT(*) AS orders,
+           SUM(total_amount) AS revenue, SUM(items_total) AS items_revenue
+    FROM order_revenue
+    GROUP BY DATE(order_date);
+CREATE VIEW customer_value AS
+    WITH settled AS (
+        SELECT o.customer_id, SUM(p.amount) AS settled_amount, COUNT(p.payment_id) AS payments
+        FROM orders o JOIN payments p ON p.order_id = o.order_id AND p.status = 'settled'
+        GROUP BY o.customer_id
+    )
+    SELECT c.customer_id, c.full_name, c.country, c.loyalty_tier,
+           settled.settled_amount, settled.payments
+    FROM customers c LEFT JOIN settled ON settled.customer_id = c.customer_id;
 """
 
 
