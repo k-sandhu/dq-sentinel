@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api import (
     adhoc_dashboards,
     auth,
+    chat,
     checks,
     connections,
     dashboard,
@@ -17,6 +18,7 @@ from app.api import (
 
 api_router = APIRouter()
 api_router.include_router(auth.router)
+api_router.include_router(chat.router)
 api_router.include_router(connections.router)
 api_router.include_router(datasets.router)
 api_router.include_router(knowledge.router)

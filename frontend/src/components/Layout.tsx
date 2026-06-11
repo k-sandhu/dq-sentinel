@@ -31,6 +31,7 @@ const NAV_GROUPS: {
     items: [
       { to: "/workbench", label: "Workbench", icon: "search" },
       { to: "/lineage", label: "Lineage", icon: "graph" },
+      { to: "/assistant", label: "Assistant", icon: "chat" },
     ],
   },
 ];

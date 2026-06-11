@@ -62,6 +62,12 @@ export function Icon({ name, size = 16 }: { name: string; size?: number }) {
         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
       </>
     ),
+    chat: (
+      <>
+        <path d="M21 12a8 8 0 0 1-8 8H4l1.7-3.4A8 8 0 1 1 21 12z" />
+        <path d="M8.5 11h.01M12 11h.01M15.5 11h.01" />
+      </>
+    ),
   };
   return (
     <svg

@@ -93,6 +93,26 @@ def test_openai_tool_conversion():
     assert "sql" in converted[0]["function"]["parameters"]["properties"]
 
 
+def test_openai_null_choices_raises_clear_error(monkeypatch):
+    """OpenRouter can return 200 with choices=null + an error body; that must
+    surface as a readable RuntimeError, not 'NoneType is not subscriptable'."""
+
+    class FakeNullResponse:
+        choices = None
+        error = {"message": "Provider returned error", "code": 429}
+
+    provider = OpenAICompatProvider.__new__(OpenAICompatProvider)  # skip SDK init
+    provider.model = "vendor/some-model"
+    monkeypatch.setattr(
+        OpenAICompatProvider, "_request", lambda self, *a, **k: FakeNullResponse()
+    )
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="no choices.*Provider returned error"):
+        provider._complete("sys", [{"role": "user", "text": "hi"}], None, None, 100, False)
+
+
 def test_anthropic_serializer_uses_raw_blocks():
     from app.llm.providers import AnthropicProvider
 
