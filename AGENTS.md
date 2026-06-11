@@ -45,7 +45,7 @@ when symlinks are unavailable). Read this top-to-bottom before making changes.
 | `backend/app/main.py` | FastAPI app factory + router mounting |
 | `backend/app/models.py` | All SQLAlchemy ORM models (app metadata DB) |
 | `backend/app/schemas.py` | All Pydantic request/response schemas |
-| `backend/app/api/` | One router per resource (auth, connections, datasets, checks, runs, exceptions, knowledge, rca, dashboard, lineage, query/workbench, adhoc dashboards, mcp) |
+| `backend/app/api/` | One router per resource (auth, connections, datasets, checks, runs, exceptions, knowledge, rca, dashboard, lineage, query/workbench, adhoc dashboards, mcp, chat — `chat` also serves the assistant WebSocket at `/api/v1/chat/ws/{session_id}?token=`) |
 | `backend/app/connectors/` | Source-DB access. **All source SQL must pass `safety.guard_sql()`**. `dialects.py` is the 9-engine registry (schemes, read-only enforcement, optional drivers, DDL catalog queries) |
 | `backend/app/core/lineage.py` | sqlglot view parsing → table-level lineage graph + check-health overlay |
 | `backend/app/core/check_types.py` | Check registry: type → param schema + violation-SQL compiler |
@@ -162,6 +162,13 @@ Push coherent checkpoints to `main` frequently (CI gates them) rather than batch
   on the Anthropic path. Test loop changes with the `FakeProvider` in `tests/test_llm_providers.py`.
 - All agent SQL goes through the same `guard_sql()` + row-limit path as humans.
 - The explorer and RCA agents are bounded loops (max turns, max rows per query) — keep bounds.
+- The **assistant chat** (`app/llm/chat_agent.py` + `app/api/chat.py`, frontend `/assistant`) streams
+  agent turns over a WebSocket (JWT via `token` query param, editor role; events: status/step/
+  message). Tools: dataset overview, recent failures, run_sql, get_table_code, render_chart
+  (inline charts reuse the PanelChart viz contract). Messages persist in `chat_messages`; the
+  provider-native history is in-process only and is rehydrated from messages after a restart.
+  Turn budget: `DQ_LLM_MAX_CHAT_TURNS`. WS proxying: vite `ws: true` in dev, Upgrade headers in
+  `frontend/nginx.conf` for docker.
 - When changing prompts, keep the JSON output contracts in `app/llm/prompts.py` in sync with the
   parsers next to them; parsers must tolerate markdown-fenced JSON.
 

@@ -9,8 +9,11 @@ export default defineConfig(({ mode }) => ({
     port: Number(process.env.PORT) || 5173,
     proxy: {
       "/api": {
-        target: process.env.VITE_API_PROXY ?? "http://localhost:8000",
+        // 127.0.0.1, not localhost: with the docker demo stack up, localhost can
+        // resolve to ::1 where docker's old api answers instead of dev uvicorn.
+        target: process.env.VITE_API_PROXY ?? "http://127.0.0.1:8000",
         changeOrigin: true,
+        ws: true, // assistant chat WebSocket
       },
     },
   },

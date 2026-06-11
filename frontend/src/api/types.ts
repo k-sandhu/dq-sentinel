@@ -390,3 +390,51 @@ export interface DatasetDdl {
   source: "database" | "synthesized";
   kind: "table" | "view";
 }
+
+// ---- assistant chat ----
+export type ChatStep =
+  | { type: "text"; content: string }
+  | { type: "sql"; sql: string; purpose: string }
+  | { type: "result"; content: string; error: boolean }
+  | { type: "tool"; name: string; content: Record<string, unknown> }
+  | {
+      type: "chart";
+      title: string;
+      sql: string;
+      viz: PanelViz;
+      columns: string[];
+      rows: unknown[][];
+      elapsed_ms: number;
+    }
+  | { type: "error"; content: string };
+
+export interface ChatMessage {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  steps: ChatStep[];
+  created_at: string;
+}
+
+export interface ChatSession {
+  id: number;
+  title: string;
+  model: string;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+}
+
+export interface ChatSessionDetail extends ChatSession {
+  messages: ChatMessage[];
+}
+
+// server -> client WebSocket events
+export type ChatWsEvent =
+  | { type: "session"; session: Omit<ChatSession, "message_count">; messages: ChatMessage[] }
+  | { type: "message_saved"; message: ChatMessage }
+  | { type: "status"; state: "thinking" | "tool"; tool?: string; detail?: string }
+  | { type: "step"; step: ChatStep }
+  | { type: "assistant_message"; message: ChatMessage }
+  | { type: "error"; detail: string }
+  | { type: "done" };

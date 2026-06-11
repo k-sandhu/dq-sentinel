@@ -313,6 +313,32 @@ class RcaOut(ORMModel):
     finished_at: datetime | None
 
 
+# ---- assistant chat ----
+class ChatSessionCreateIn(BaseModel):
+    title: str = Field(default="", max_length=300)
+
+
+class ChatMessageOut(ORMModel):
+    id: int
+    role: Literal["user", "assistant"]
+    content: str
+    steps: list[Any]
+    created_at: datetime
+
+
+class ChatSessionOut(ORMModel):
+    id: int
+    title: str
+    model: str
+    created_at: datetime
+    updated_at: datetime
+    message_count: int = 0
+
+
+class ChatSessionDetailOut(ChatSessionOut):
+    messages: list[ChatMessageOut] = []
+
+
 # ---- workbench / queries ----
 class QueryRunIn(BaseModel):
     connection_id: int

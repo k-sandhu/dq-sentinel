@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     llm_model: str = ""  # default per provider: anthropic -> claude-opus-4-8; openai -> required
     llm_max_explore_turns: int = 8
     llm_max_rca_turns: int = 12
+    llm_max_chat_turns: int = 10
     llm_max_output_tokens: int = 16000
 
     def resolved_llm(self) -> dict | None:

@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router";
 import { useAuth } from "./auth";
 import Layout from "./components/Layout";
 import { Spinner } from "./components/ui";
+import AssistantPage from "./pages/AssistantPage";
 import ChecksPage from "./pages/ChecksPage";
 import ConnectionBrowsePage from "./pages/ConnectionBrowsePage";
 import ConnectionsPage from "./pages/ConnectionsPage";
@@ -43,6 +44,7 @@ export default function App() {
         <Route path="/exceptions" element={<ExceptionsPage />} />
         <Route path="/workbench" element={<WorkbenchPage />} />
         <Route path="/lineage" element={<LineagePage />} />
+        <Route path="/assistant" element={<AssistantPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

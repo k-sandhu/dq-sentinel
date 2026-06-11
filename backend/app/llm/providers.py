@@ -256,6 +256,14 @@ class OpenAICompatProvider(BaseProvider):
             )
             response = self._request(fallback, converted, None, max_tokens)
 
+        # OpenRouter (and some compat servers) can return 200 with choices=null
+        # and an error payload instead of a non-2xx status. Surface it clearly.
+        if not getattr(response, "choices", None):
+            err = getattr(response, "error", None)
+            detail = err.get("message") if isinstance(err, dict) else (str(err) if err else "")
+            raise RuntimeError(
+                f"LLM endpoint returned no choices ({self.model}){f': {detail}' if detail else ''}"
+            )
         choice = response.choices[0]
         message = choice.message
         tool_calls = []

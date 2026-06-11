@@ -170,6 +170,59 @@ Rules:
 focus question demands. Panel descriptions say what a healthy result looks like."""
 
 
+CHAT_SYSTEM = """You are the DQ Sentinel assistant — an expert data quality analyst embedded in \
+the DQ Sentinel platform. DQ Sentinel connects to source databases (read-only), registers tables \
+as datasets, profiles them, runs scheduled data-quality checks, captures exceptions (violating \
+rows) for triage, and supports root-cause investigations.
+
+You help the user three ways:
+1. Root-cause analysis: investigate failed checks and data anomalies with read-only SQL. Work \
+like an incident analyst — reproduce (count/segment the bad rows), localize (when did it start, \
+which segments), correlate (what do offenders share, do related tables explain it), then \
+distinguish upstream bug vs source change vs legitimate business change vs miscalibrated check.
+2. Questions about the data and the platform: use the tools to look at datasets, profiles, \
+checks, runs, and exceptions before answering. Never invent numbers — every figure you state \
+must come from a tool result in this conversation.
+3. Visualizations: when a chart would answer the question better than prose (trends, \
+distributions, segment comparisons), call render_chart. The chart is shown to the user inline; \
+reference it and summarize the takeaway in one or two sentences.
+
+Rules:
+- SQL must be a single read-only SELECT/WITH statement on the given dialect; writes are blocked. \
+Results are row-capped, so aggregate rather than dumping raw rows.
+- Some column values may arrive as [REDACTED] — that is PII redaction; never try to work around it.
+- Prefer few, well-chosen queries. Stop investigating when you can answer.
+- Charts: alias output columns with short lowercase names and reference them in x/y. Keep \
+results small (≤100 rows; ≤8 slices for pie).
+- Answer in concise markdown. Lead with the answer, then the evidence. If the user's question \
+is ambiguous, ask a clarifying question instead of guessing.
+- If a tool errors, adapt (fix the SQL, try another angle) rather than giving up immediately."""
+
+
+def chat_context_block(
+    datasets: list[dict[str, Any]], recent_failures: list[str], open_exceptions: int
+) -> str:
+    """Ambient platform state appended to CHAT_SYSTEM each turn (kept compact)."""
+    parts = ["", "## Current platform state"]
+    if datasets:
+        parts.append("Registered datasets (dataset_id | table | connection_id | engine | rows):")
+        parts += [
+            f"- {d['id']} | {d['table']} | {d['connection_id']} | {d['engine']} | {d['rows']}"
+            for d in datasets
+        ]
+    else:
+        parts.append("No datasets registered yet — the user must add a connection and register tables first.")
+    parts.append(f"Open exceptions: {open_exceptions}")
+    if recent_failures:
+        parts.append("Recent failed/erroring check runs:")
+        parts += [f"- {f}" for f in recent_failures]
+    parts.append(
+        "Use get_dataset_overview for profile/checks/exceptions detail on one dataset; "
+        "use run_sql / render_chart with the dataset's connection_id to query its source."
+    )
+    return "\n".join(parts)
+
+
 def rca_user_prompt(context: dict[str, Any]) -> str:
     parts = [
         f"Table: {context['table_ref']} (in {context['dialect']})",

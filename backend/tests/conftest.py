@@ -16,6 +16,9 @@ os.environ["DQ_SECRET_KEY"] = "test-secret-0123456789abcdef0123456789abcdef"
 os.environ["DQ_BOOTSTRAP_ADMIN_EMAIL"] = "admin@example.com"
 os.environ["DQ_BOOTSTRAP_ADMIN_PASSWORD"] = "admin123"
 os.environ["ANTHROPIC_API_KEY"] = ""  # LLM features must degrade in tests
+os.environ["DQ_LLM_API_KEY"] = ""  # also shadow any ambient OPENROUTER_API_KEY
+os.environ["OPENROUTER_API_KEY"] = ""
+os.environ["DQ_LLM_MODEL"] = ""
 
 from app.db import init_db, reset_for_tests  # noqa: E402
 

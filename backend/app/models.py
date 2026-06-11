@@ -207,6 +207,38 @@ class AdhocDashboard(Base):
     last_refreshed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class ChatSession(Base):
+    """An assistant conversation. Messages persist; the provider-native LLM
+    history is kept in process memory and rehydrated from messages on demand."""
+
+    __tablename__ = "chat_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(300), default="")
+    model: Mapped[str] = mapped_column(String(100), default="")
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+    messages: Mapped[list["ChatMessage"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan", order_by="ChatMessage.id"
+    )
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("chat_sessions.id"), index=True)
+    role: Mapped[str] = mapped_column(String(10))  # user | assistant
+    content: Mapped[str] = mapped_column(Text, default="")
+    # Ordered activity for assistant turns: [{type: text|sql|result|chart|error, ...}]
+    steps: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    session: Mapped[ChatSession] = relationship(back_populates="messages")
+
+
 class RcaSession(Base):
     __tablename__ = "rca_sessions"
 
