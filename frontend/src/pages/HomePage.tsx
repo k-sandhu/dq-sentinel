@@ -1,13 +1,22 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api/client";
 import type { Dashboard } from "../api/types";
 import RunsTable from "../components/RunsTable";
-import { ErrorBox, Pill, Spinner, StatCard } from "../components/ui";
+import { EmptyState, ErrorBox, Icon, Pill, Spinner, StatCard } from "../components/ui";
 import { fmtNum, fmtPct } from "../lib/format";
 
+const TOOLTIP_STYLE = {
+  fontSize: 12,
+  borderRadius: 8,
+  border: "1px solid var(--border)",
+  background: "var(--card)",
+  color: "var(--text-dark)",
+};
+
 export default function HomePage() {
+  const navigate = useNavigate();
   const { data, isLoading, error } = useQuery({
     queryKey: ["dashboard"],
     queryFn: () => api.get<Dashboard>("/dashboard"),
@@ -32,11 +41,18 @@ export default function HomePage() {
               <span className="badge" title="Set ANTHROPIC_API_KEY to enable LLM check generation, exploration and RCA">
                 LLM disabled — heuristic mode
               </span>
+            )}{" "}
+            <span className="badge">{fmtNum(data.runs_24h)} runs in 24h</span>{" "}
+            {data.pass_rate_7d != null && (
+              <span className="badge">7-day pass rate {fmtPct(data.pass_rate_7d)}</span>
             )}
           </div>
         </div>
         <div className="header-actions">
-          <Link to="/connections" className="btn">Add data</Link>
+          <Link to="/connections" className="btn">
+            <Icon name="plus" size={14} />
+            Add data
+          </Link>
         </div>
       </div>
 
@@ -61,52 +77,89 @@ export default function HomePage() {
         />
       </div>
 
-      <div className="grid cols-2" style={{ marginBottom: 16 }}>
+      <div className="split" style={{ marginBottom: 16 }}>
         <div className="card card-pad">
-          <h3>Run results — last 14 days</h3>
+          <div className="section-title" style={{ margin: "0 0 12px" }}>
+            <h2>Run results — last 14 days</h2>
+            <Link to="/runs" className="btn small">
+              <Icon name="play" size={12} />
+              Runs
+            </Link>
+          </div>
           <ResponsiveContainer width="100%" height={210}>
             <BarChart data={trend} margin={{ top: 4, right: 4, left: -22, bottom: 0 }}>
-              <XAxis dataKey="day" tick={{ fontSize: 11, fill: "#949aab" }} tickLine={false} axisLine={{ stroke: "#e3e7e9" }} />
-              <YAxis tick={{ fontSize: 11, fill: "#949aab" }} tickLine={false} axisLine={false} allowDecimals={false} />
-              <Tooltip cursor={{ fill: "#f5f9fd" }} contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e3e7e9" }} />
-              <Bar dataKey="passed" stackId="a" fill="#84bb4c" />
-              <Bar dataKey="warned" stackId="a" fill="#f7c844" />
-              <Bar dataKey="failed" stackId="a" fill="#ed6e6e" />
-              <Bar dataKey="errored" stackId="a" fill="#a33" radius={[2, 2, 0, 0]} />
+              <XAxis
+                dataKey="day"
+                tick={{ fontSize: 11, fill: "var(--text-light)" }}
+                tickLine={false}
+                axisLine={{ stroke: "var(--border)" }}
+              />
+              <YAxis
+                tick={{ fontSize: 11, fill: "var(--text-light)" }}
+                tickLine={false}
+                axisLine={false}
+                allowDecimals={false}
+              />
+              <Tooltip cursor={{ fill: "var(--hover)" }} contentStyle={TOOLTIP_STYLE} />
+              <Bar dataKey="passed" stackId="a" fill="var(--ok)" />
+              <Bar dataKey="warned" stackId="a" fill="var(--yellow)" />
+              <Bar dataKey="failed" stackId="a" fill="var(--danger)" />
+              <Bar dataKey="errored" stackId="a" fill="var(--danger-deep)" radius={[2, 2, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
+          <div className="legend-row">
+            <span><span className="swatch" style={{ background: "var(--ok)" }} />passed</span>
+            <span><span className="swatch" style={{ background: "var(--yellow)" }} />warned</span>
+            <span><span className="swatch" style={{ background: "var(--danger)" }} />failed</span>
+            <span><span className="swatch" style={{ background: "var(--danger-deep)" }} />errored</span>
+          </div>
         </div>
 
         <div className="card card-pad">
-          <h3>Datasets needing attention</h3>
+          <div className="section-title" style={{ margin: "0 0 12px" }}>
+            <h2>Datasets needing attention</h2>
+            <Link to="/datasets" className="btn small">All datasets</Link>
+          </div>
           {data.worst_datasets.length === 0 ? (
-            <div className="empty" style={{ padding: 24 }}>No open exceptions anywhere. 🎉</div>
+            <EmptyState title="No open exceptions" hint="Every monitored dataset is currently clean." />
           ) : (
-            <table className="data">
-              <tbody>
-                {data.worst_datasets.map((d) => (
-                  <tr key={d.id}>
-                    <td>
-                      <Link to={`/datasets/${d.id}/exceptions`} style={{ fontWeight: 700 }}>
+            <div className="dense-list">
+              {data.worst_datasets.map((d) => (
+                <div
+                  key={d.id}
+                  className="dense-item clickable"
+                  onClick={() => navigate(`/datasets/${d.id}/exceptions`)}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                    <div>
+                      <div className="title">
+                        {d.schema_name ? `${d.schema_name}.` : ""}
                         {d.table_name}
-                      </Link>
-                      <div style={{ fontSize: 11.5, color: "var(--text-light)" }}>{d.connection_name}</div>
-                    </td>
-                    <td><Pill value={d.health} /></td>
-                    <td className="num" style={{ color: "var(--danger-dark)", fontWeight: 700 }}>
-                      {fmtNum(d.open_exceptions)} open
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                      </div>
+                      <div className="meta">{d.connection_name}</div>
+                    </div>
+                    <Pill value={d.health} />
+                  </div>
+                  <div className="metric-row" style={{ marginTop: 8 }}>
+                    <span className="big">{fmtNum(d.open_exceptions)}</span>
+                    <span className="delta bad">open exceptions</span>
+                    <span className="meta" style={{ color: "var(--text-light)", fontSize: 12 }}>
+                      {fmtNum(d.active_checks)} active checks
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       </div>
 
       <div className="card">
         <div className="card-pad" style={{ paddingBottom: 0 }}>
-          <h3>Recent runs</h3>
+          <div className="section-title" style={{ margin: 0 }}>
+            <h2 style={{ fontSize: 14 }}>Recent runs</h2>
+            <Link to="/runs" className="btn small">All runs</Link>
+          </div>
         </div>
         <RunsTable runs={data.recent_runs} />
       </div>

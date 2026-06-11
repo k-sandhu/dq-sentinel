@@ -17,10 +17,26 @@ import {
 import type { PanelViz } from "../api/types";
 import { fmtValue } from "../lib/format";
 
-const PALETTE = ["#509ee3", "#84bb4c", "#f7c844", "#ed6e6e", "#a989c5", "#f2a86f", "#69c8c8", "#b8c0c8"];
+// CSS variables so panels follow the active theme (light/dark).
+const PALETTE = [
+  "var(--brand)",
+  "var(--ok)",
+  "var(--yellow)",
+  "var(--danger)",
+  "var(--purple)",
+  "var(--warn)",
+  "var(--teal)",
+  "var(--slate)",
+];
 
-const AXIS = { fontSize: 11, fill: "#949aab" };
-const TOOLTIP_STYLE = { fontSize: 12, borderRadius: 8, border: "1px solid #e3e7e9" };
+const AXIS = { fontSize: 11, fill: "var(--text-light)" };
+const TOOLTIP_STYLE = {
+  fontSize: 12,
+  borderRadius: 8,
+  border: "1px solid var(--border)",
+  background: "var(--card)",
+  color: "var(--text-dark)",
+};
 
 function toObjects(columns: string[], rows: unknown[][]): Record<string, unknown>[] {
   return rows.map((r) => Object.fromEntries(columns.map((c, i) => [c, r[i]])));
@@ -96,10 +112,10 @@ export default function PanelChart({
 
   const common = (
     <>
-      <CartesianGrid stroke="#eef0f2" vertical={false} />
-      <XAxis dataKey={x} tick={AXIS} tickLine={false} axisLine={{ stroke: "#e3e7e9" }} tickFormatter={(v) => String(v).slice(0, 12)} />
+      <CartesianGrid stroke="var(--border-light)" vertical={false} />
+      <XAxis dataKey={x} tick={AXIS} tickLine={false} axisLine={{ stroke: "var(--border)" }} tickFormatter={(v) => String(v).slice(0, 12)} />
       <YAxis tick={AXIS} tickLine={false} axisLine={false} width={52} />
-      <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: "#f5f9fd" }} />
+      <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: "var(--hover)" }} />
     </>
   );
 
@@ -108,7 +124,7 @@ export default function PanelChart({
       <ResponsiveContainer width="100%" height={height}>
         <LineChart data={data} margin={{ top: 6, right: 6, left: 0, bottom: 0 }}>
           {common}
-          <Line type="monotone" dataKey={y} stroke="#509ee3" strokeWidth={2} dot={false} />
+          <Line type="monotone" dataKey={y} stroke="var(--brand)" strokeWidth={2} dot={false} />
         </LineChart>
       </ResponsiveContainer>
     );
@@ -118,7 +134,7 @@ export default function PanelChart({
       <ResponsiveContainer width="100%" height={height}>
         <AreaChart data={data} margin={{ top: 6, right: 6, left: 0, bottom: 0 }}>
           {common}
-          <Area type="monotone" dataKey={y} stroke="#509ee3" fill="#cbe2f7" strokeWidth={2} />
+          <Area type="monotone" dataKey={y} stroke="var(--brand)" fill="var(--brand-light)" strokeWidth={2} />
         </AreaChart>
       </ResponsiveContainer>
     );
@@ -127,7 +143,7 @@ export default function PanelChart({
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={dataAsc} margin={{ top: 6, right: 6, left: 0, bottom: 0 }}>
         {common}
-        <Bar dataKey={y} fill="#509ee3" radius={[2, 2, 0, 0]} />
+        <Bar dataKey={y} fill="var(--brand)" radius={[2, 2, 0, 0]} />
       </BarChart>
     </ResponsiveContainer>
   );
