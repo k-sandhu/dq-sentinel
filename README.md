@@ -10,8 +10,10 @@ root-cause analyst that investigates with read-only SQL and reports back with ev
 
 ## What it does
 
-1. **Connect** — register SQLite / DuckDB / PostgreSQL sources (always opened **read-only**;
+1. **Connect** — register SQLite / DuckDB / PostgreSQL / MySQL / SQL Server / Snowflake /
+   BigQuery / Trino / ClickHouse sources (always opened **read-only** where the engine allows;
    every query passes a SQL safety guard that allows only single SELECT/WITH statements).
+   Non-core drivers are optional extras: `pip install "dqsentinel[snowflake]"` etc.
 2. **Profile** — per-column stats pushed down as SQL aggregates plus sampled quantiles,
    string-format inference (email/uuid/url/date), primary-key and freshness candidates.
 3. **Generate checks** — a deterministic heuristic engine always works; with an
@@ -90,7 +92,9 @@ python scripts/e2e_smoke.py   # 28-step live workflow check against a running AP
         │                       └────────────┬──────────────────┘
         ▼                                    ▼
   source databases                  app DB (SQLite dev /
-  sqlite · duckdb · postgres        PostgreSQL prod)
+  9 engines via dialect registry    PostgreSQL prod)
+  (sqlite · duckdb · postgres · mysql · mssql ·
+   snowflake · bigquery · trino · clickhouse)
 ```
 
 - **Backend**: FastAPI + SQLAlchemy 2.0 + Pydantic v2, JWT auth with viewer/editor/admin
@@ -112,6 +116,8 @@ python scripts/e2e_smoke.py   # 28-step live workflow check against a running AP
 | `backend/app/core/check_types.py` | Check registry + how to add a type |
 | `backend/app/llm/` | Check generation, exploration agent, RCA agent, prompts |
 | `backend/app/connectors/safety.py` | The SQL guard everything goes through |
+| `backend/app/connectors/dialects.py` | 9-engine dialect registry: schemes, read-only enforcement, optional drivers, DDL catalog queries |
+| `backend/app/core/lineage.py` | sqlglot view parsing → lineage graph with check-health overlay |
 | `data/` | Sample-data generator + public-dataset downloader |
 | `scripts/e2e_smoke.py` | Full-workflow smoke test |
 
@@ -127,7 +133,7 @@ python scripts/e2e_smoke.py   # 28-step live workflow check against a running AP
 
 Open issues track the hardening path: Alembic migrations, secret encryption, distributed
 execution (queue/SKIP LOCKED), OIDC + granular RBAC, Slack/email notifications, drift checks
-(PSI/KS), warehouse connectors (Snowflake/BigQuery/SQL Server), audit log, triage-label
+(PSI/KS), audit log, triage-label
 learning, and lineage-aware RCA — see the
 [issue tracker](https://github.com/k-sandhu/dq-sentinel/issues) and
 [project board](https://github.com/users/k-sandhu/projects/4).

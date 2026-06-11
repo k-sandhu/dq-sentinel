@@ -8,7 +8,9 @@ when symlinks are unavailable). Read this top-to-bottom before making changes.
 
 **DQ Sentinel** is an enterprise data-quality platform:
 
-1. Connect to a data source (SQLite / DuckDB / PostgreSQL via SQLAlchemy DSNs).
+1. Connect to a data source via SQLAlchemy DSNs — SQLite / DuckDB / PostgreSQL / MySQL /
+   SQL Server / Snowflake / BigQuery / Trino / ClickHouse (non-core drivers are optional
+   pip extras; see `backend/app/connectors/dialects.py`).
 2. Register tables/views as **datasets** and **profile** them (SQL aggregates + sampled stats).
 3. **Generate checks** from the profile — heuristic rules always, LLM-proposed rules when an
    Anthropic API key is configured (the LLM can also run a read-only *exploration agent* that
@@ -33,7 +35,7 @@ when symlinks are unavailable). Read this top-to-bottom before making changes.
         │                       └───────────────┬───────────────┘
         ▼                                       ▼
   source databases                     app DB (SQLite dev /
-  (sqlite/duckdb/postgres)             PostgreSQL prod)
+  (9 engines, read-only)               PostgreSQL prod)
 ```
 
 ## Repo map
@@ -43,8 +45,9 @@ when symlinks are unavailable). Read this top-to-bottom before making changes.
 | `backend/app/main.py` | FastAPI app factory + router mounting |
 | `backend/app/models.py` | All SQLAlchemy ORM models (app metadata DB) |
 | `backend/app/schemas.py` | All Pydantic request/response schemas |
-| `backend/app/api/` | One router per resource (auth, connections, datasets, checks, runs, exceptions, knowledge, rca, dashboard) |
-| `backend/app/connectors/` | Source-DB access. **All source SQL must pass `safety.guard_sql()`** |
+| `backend/app/api/` | One router per resource (auth, connections, datasets, checks, runs, exceptions, knowledge, rca, dashboard, lineage, query/workbench, adhoc dashboards, mcp) |
+| `backend/app/connectors/` | Source-DB access. **All source SQL must pass `safety.guard_sql()`**. `dialects.py` is the 9-engine registry (schemes, read-only enforcement, optional drivers, DDL catalog queries) |
+| `backend/app/core/lineage.py` | sqlglot view parsing → table-level lineage graph + check-health overlay |
 | `backend/app/core/check_types.py` | Check registry: type → param schema + violation-SQL compiler |
 | `backend/app/core/profiler.py` | Profiling engine (SQL aggregates + pandas sample stats) |
 | `backend/app/core/runner.py` | Executes a check → `CheckRun` + `ExceptionRecord`s |
@@ -52,7 +55,7 @@ when symlinks are unavailable). Read this top-to-bottom before making changes.
 | `backend/app/core/ml.py` | IsolationForest outlier detection |
 | `backend/app/llm/` | Anthropic client, check generation, exploration agent, RCA agent |
 | `backend/tests/` | pytest suite — keep green |
-| `frontend/src/pages/` | One file per page; `DatasetDetailPage` is tabbed (Profile/Checks/Runs/Exceptions/Knowledge/RCA) |
+| `frontend/src/pages/` | One file per page; `DatasetDetailPage` is tabbed (Profile/Code/Lineage/Checks/Runs/Exceptions/Dashboards/Knowledge/RCA) |
 | `frontend/src/api/` | Typed API client (`client.ts`, `types.ts`) — mirror backend schemas here |
 | `data/` | `generate_sample_data.py` (synthetic shop DB with injected DQ issues), `download_public_data.py` (NYC taxi → DuckDB) |
 | `scripts/` | `dev.ps1` / `dev.sh` bootstrap helpers |
