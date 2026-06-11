@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { api } from "../api/client";
 import type { Dataset, TableInfo } from "../api/types";
 import { canEdit, useAuth } from "../auth";
-import { ErrorBox, Icon, Spinner } from "../components/ui";
+import { EmptyState, ErrorBox, Icon, Spinner } from "../components/ui";
 
 export default function ConnectionBrowsePage() {
   const { id } = useParams();
@@ -75,6 +75,17 @@ export default function ConnectionBrowsePage() {
       </div>
       {isLoading ? (
         <Spinner label="Introspecting source…" />
+      ) : !tables.length ? (
+        <div className="card">
+          <EmptyState
+            title={filter ? "No tables match your filter" : "No tables or views found"}
+            hint={
+              filter
+                ? "Clear the filter to see everything the source reported."
+                : "The source reported nothing to register — check that the DSN points at the right database and the user can see its schema."
+            }
+          />
+        </div>
       ) : (
         <div className="card table-wrap">
           <table className="data">

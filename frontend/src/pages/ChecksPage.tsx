@@ -3,7 +3,7 @@ import { useState } from "react";
 import { api } from "../api/client";
 import type { Check } from "../api/types";
 import ChecksTable from "../components/ChecksTable";
-import { ErrorBox, Spinner } from "../components/ui";
+import { EmptyState, ErrorBox, Spinner } from "../components/ui";
 
 const FILTERS = ["all", "active", "proposed", "disabled"] as const;
 
@@ -53,7 +53,22 @@ export default function ChecksPage() {
         </div>
       </div>
       <ErrorBox error={error} />
-      {isLoading ? <Spinner /> : <ChecksTable checks={shown} />}
+      {isLoading ? (
+        <Spinner />
+      ) : !shown.length ? (
+        <div className="card">
+          <EmptyState
+            title={filter !== "all" || search ? "No checks match your filters" : "No checks yet"}
+            hint={
+              filter !== "all" || search
+                ? "Clear the search or switch the status chip to see more."
+                : "Profile a dataset, then generate checks — or add one manually from its Checks tab."
+            }
+          />
+        </div>
+      ) : (
+        <ChecksTable checks={shown} />
+      )}
     </div>
   );
 }

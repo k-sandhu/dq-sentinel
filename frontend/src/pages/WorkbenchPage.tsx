@@ -241,7 +241,7 @@ export default function WorkbenchPage() {
                 ))}
               </select>
               <span style={{ fontSize: 11.5, color: "var(--text-light)" }}>
-                Read-only · single SELECT/WITH · Ctrl+Enter to run
+                Read-only · single SELECT/WITH · <span className="kbd">Ctrl</span>+<span className="kbd">Enter</span> to run
               </span>
             </div>
             <ErrorBox error={run.error} />

@@ -216,7 +216,7 @@ export default function SettingsPage() {
       <div className="page-header">
         <div>
           <h1>Settings</h1>
-          <div className="sub">Instance status and user management</div>
+          <div className="sub">Instance health, AI integration, and user management</div>
         </div>
       </div>
 

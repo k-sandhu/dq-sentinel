@@ -2,22 +2,26 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
 import { api } from "../api/client";
-import type { Connection, ConnectionHealth, ConnectionTest } from "../api/types";
+import type { Connection, ConnectionHealth, ConnectionTest, EngineInfo } from "../api/types";
 import { isAdmin, useAuth } from "../auth";
 import { EmptyState, ErrorBox, Icon, Modal, Spinner } from "../components/ui";
 import { fmtDateTime } from "../lib/format";
 
-const DSN_EXAMPLES = [
-  ["SQLite", "sqlite:///C:/path/to/samples/shopdb.sqlite"],
-  ["DuckDB", "duckdb:///C:/path/to/samples/nyc_taxi.duckdb"],
-  ["PostgreSQL", "postgresql+psycopg://user:pass@host:5432/dbname"],
-];
+const GENERIC_DSN_PLACEHOLDER = "dialect+driver://user:pass@host:port/dbname";
 
 function AddConnectionModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
   const [name, setName] = useState("");
   const [dsn, setDsn] = useState("");
+  const [kind, setKind] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<ConnectionTest | null>(null);
+
+  const engines = useQuery({
+    queryKey: ["engines"],
+    queryFn: () => api.get<EngineInfo[]>("/connections/engines"),
+    staleTime: Infinity,
+  });
+  const selected = (engines.data ?? []).find((e) => e.kind === kind);
 
   const test = useMutation({
     mutationFn: () => api.post<ConnectionTest>("/connections/test", { name: name || "test", dsn }),
@@ -30,6 +34,18 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
       onClose();
     },
   });
+
+  const pickEngine = (engine: EngineInfo) => {
+    if (engine.kind === kind) {
+      setKind(null); // toggle back to freeform
+      return;
+    }
+    setKind(engine.kind);
+    // Prefill only when the field is empty or still holds an untouched example,
+    // so users edit a template instead of typing a DSN from scratch.
+    const examples = (engines.data ?? []).map((e) => e.dsn_example);
+    if (!dsn.trim() || examples.includes(dsn)) setDsn(engine.dsn_example);
+  };
 
   return (
     <Modal
@@ -54,18 +70,83 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
         Display name <span className="req">*</span>
         <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Shop database" />
       </label>
+      {(engines.isLoading || (engines.data?.length ?? 0) > 0) && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--text-dark)" }}>
+            Engine{" "}
+            <span className="field-hint" style={{ display: "inline", marginLeft: 2 }}>
+              optional — picking one fills in a DSN template
+            </span>
+          </div>
+          {engines.isLoading ? (
+            <div style={{ marginTop: 8 }}>
+              <Spinner label="Loading engines…" />
+            </div>
+          ) : (
+            <>
+              <div className="grid cols-3" style={{ gap: 6, marginTop: 7 }}>
+                {(engines.data ?? []).map((e) => (
+                  <button
+                    key={e.kind}
+                    type="button"
+                    className="small"
+                    onClick={() => pickEngine(e)}
+                    title={
+                      e.driver_installed
+                        ? `${e.label} — driver installed`
+                        : `${e.label} — driver not installed on the API server`
+                    }
+                    style={{
+                      justifyContent: "flex-start",
+                      fontWeight: 600,
+                      borderColor: e.kind === kind ? "var(--brand)" : undefined,
+                      background: e.kind === kind ? "var(--hover-soft)" : undefined,
+                      boxShadow: e.kind === kind ? "0 0 0 1px var(--brand) inset" : undefined,
+                    }}
+                  >
+                    <span className={`env-dot${e.driver_installed ? "" : " neutral"}`} style={{ width: 7, height: 7 }} />
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.label}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="field-hint" style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 6 }}>
+                <span className="env-dot" style={{ width: 7, height: 7 }} /> driver installed
+                <span className="env-dot neutral" style={{ width: 7, height: 7, marginLeft: 10 }} /> driver not installed
+              </div>
+            </>
+          )}
+        </div>
+      )}
       <label className="field">
         Connection string (SQLAlchemy DSN) <span className="req">*</span>
-        <input type="text" value={dsn} onChange={(e) => setDsn(e.target.value)} placeholder="sqlite:///C:/data/shop.sqlite" style={{ fontFamily: "var(--mono)", fontSize: 12 }} />
+        <input
+          type="text"
+          value={dsn}
+          onChange={(e) => setDsn(e.target.value)}
+          placeholder={selected?.dsn_example ?? GENERIC_DSN_PLACEHOLDER}
+          style={{ fontFamily: "var(--mono)", fontSize: 12 }}
+        />
         <div className="field-hint">
-          Sources are always opened <strong>read-only</strong>. Supported:
-          {DSN_EXAMPLES.map(([label, ex]) => (
-            <div key={label} style={{ marginTop: 3 }}>
-              <strong>{label}</strong>: <code>{ex}</code>
-            </div>
-          ))}
+          Sources are always opened <strong>read-only</strong>.
+          {selected?.notes && <div style={{ marginTop: 3 }}>{selected.notes}</div>}
         </div>
       </label>
+      {selected && !selected.driver_installed && (
+        <div className="info-box">
+          The {selected.label} driver is not installed on the API server, so connection tests will
+          fail
+          {selected.install_extra ? (
+            <>
+              {" "}
+              until it is installed there with{" "}
+              <code>pip install "dqsentinel[{selected.install_extra}]"</code>.
+            </>
+          ) : (
+            <> until the driver is installed there.</>
+          )}{" "}
+          You can still save the connection now.
+        </div>
+      )}
     </Modal>
   );
 }
