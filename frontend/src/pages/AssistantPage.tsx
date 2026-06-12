@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { KeyboardEvent, ReactNode } from "react";
-import ReactMarkdown from "react-markdown";
 import { api } from "../api/client";
 import type { ChatMessage, ChatSession, ChatStep, ChatWsEvent, Health } from "../api/types";
 import { canEdit, useAuth } from "../auth";
+import ErrorBoundary from "../components/ErrorBoundary";
+import Markdown from "../components/Markdown";
 import PanelChart from "../components/PanelChart";
 import { EmptyState, ErrorBox, Icon, Spinner } from "../components/ui";
 import { timeAgo } from "../lib/format";
@@ -22,11 +23,7 @@ function StepList({ steps }: { steps: ChatStep[] }) {
   for (let i = 0; i < steps.length; i++) {
     const s = steps[i];
     if (s.type === "text") {
-      out.push(
-        <div key={i} className="markdown">
-          <ReactMarkdown>{s.content}</ReactMarkdown>
-        </div>,
-      );
+      out.push(<Markdown key={i}>{s.content}</Markdown>);
     } else if (s.type === "sql") {
       // pair each query with its result in one collapsible
       const next = steps[i + 1];
@@ -71,7 +68,9 @@ function StepList({ steps }: { steps: ChatStep[] }) {
       out.push(
         <div key={i} className="chat-chart">
           <div className="chat-chart-title">{s.title}</div>
-          <PanelChart columns={s.columns} rows={s.rows} viz={s.viz} height={220} />
+          <ErrorBoundary fallback={<div className="error-box">Could not render this chart.</div>}>
+            <PanelChart columns={s.columns ?? []} rows={s.rows ?? []} viz={s.viz} height={220} />
+          </ErrorBoundary>
         </div>,
       );
     } else if (s.type === "error") {
@@ -92,11 +91,7 @@ function MessageView({ message }: { message: ChatMessage }) {
   return (
     <div className="chat-msg assistant">
       <StepList steps={message.steps} />
-      {message.steps.length === 0 && message.content && (
-        <div className="markdown">
-          <ReactMarkdown>{message.content}</ReactMarkdown>
-        </div>
-      )}
+      {message.steps.length === 0 && message.content && <Markdown>{message.content}</Markdown>}
     </div>
   );
 }

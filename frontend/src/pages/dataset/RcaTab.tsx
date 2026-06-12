@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import ReactMarkdown from "react-markdown";
 import { api } from "../../api/client";
 import type { Health, RcaSession, TranscriptStep } from "../../api/types";
 import { canEdit, useAuth } from "../../auth";
+import Markdown from "../../components/Markdown";
 import { EmptyState, ErrorBox, Icon, Pill, Spinner } from "../../components/ui";
 import { fmtDateTime } from "../../lib/format";
 
@@ -67,9 +67,7 @@ function SessionView({ session }: { session: RcaSession }) {
           {session.root_cause_summary && (
             <div className="info-box" style={{ fontWeight: 600 }}>{session.root_cause_summary}</div>
           )}
-          <div className="markdown">
-            <ReactMarkdown>{session.report_md}</ReactMarkdown>
-          </div>
+          <Markdown>{session.report_md}</Markdown>
           {session.transcript?.length > 0 && <Transcript steps={session.transcript} />}
         </>
       )}
@@ -104,7 +102,8 @@ export default function RcaTab({ datasetId }: { datasetId: number }) {
     <div>
       {!llm && (
         <div className="info-box">
-          Root-cause analysis needs an LLM. Set <code>ANTHROPIC_API_KEY</code> in the backend environment and restart.
+          Root-cause analysis needs an LLM. Set <code>DQ_LLM_API_KEY</code> + <code>DQ_LLM_MODEL</code> (OpenRouter or
+          any OpenAI-compatible endpoint) or <code>ANTHROPIC_API_KEY</code> in the backend environment and restart.
         </div>
       )}
       {llm && canEdit(user) && (

@@ -140,7 +140,7 @@ export default function ChecksTab({ datasetId, hasProfile }: { datasetId: number
               Explore data first (agent runs SQL to learn more)
             </label>
           )}
-          {!llm && <span className="badge" title="Set ANTHROPIC_API_KEY for AI generation">heuristic mode</span>}
+          {!llm && <span className="badge" title="Set DQ_LLM_API_KEY + DQ_LLM_MODEL or ANTHROPIC_API_KEY for AI generation">heuristic mode</span>}
           <div className="right">
             <button onClick={() => setCreating(true)}>
               <Icon name="plus" size={13} /> New check

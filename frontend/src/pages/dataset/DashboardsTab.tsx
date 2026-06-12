@@ -3,6 +3,7 @@ import { useState } from "react";
 import { api } from "../../api/client";
 import type { AdhocDashboard, AdhocDashboardMeta, Health, Panel } from "../../api/types";
 import { canEdit, useAuth } from "../../auth";
+import ErrorBoundary from "../../components/ErrorBoundary";
 import PanelChart from "../../components/PanelChart";
 import { EmptyState, ErrorBox, Icon, Spinner } from "../../components/ui";
 import { fmtDateTime } from "../../lib/format";
@@ -25,7 +26,9 @@ function PanelCard({ panel }: { panel: Panel }) {
       {panel.error ? (
         <div className="error-box">{panel.error}</div>
       ) : (
-        <PanelChart columns={panel.columns} rows={panel.rows} viz={panel.viz} height={isNumber ? 60 : 210} />
+        <ErrorBoundary fallback={<div className="error-box">Could not render this chart.</div>}>
+          <PanelChart columns={panel.columns} rows={panel.rows} viz={panel.viz} height={isNumber ? 60 : 210} />
+        </ErrorBoundary>
       )}
       <div style={{ fontSize: 10.5, color: "var(--text-light)", marginTop: 4 }}>{panel.elapsed_ms} ms</div>
     </div>
@@ -99,6 +102,7 @@ export default function DashboardsTab({ datasetId, hasProfile }: { datasetId: nu
       <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", gap: 16, alignItems: "start" }}>
         <div className="card card-pad">
           <h3>Dashboards</h3>
+          <ErrorBox error={metas.error} />
           {metas.isLoading ? (
             <Spinner />
           ) : !metas.data?.length ? (
@@ -139,6 +143,14 @@ export default function DashboardsTab({ datasetId, hasProfile }: { datasetId: nu
             </div>
           ) : dashboard.isLoading ? (
             <Spinner label="Running panels against the source…" />
+          ) : dashboard.error ? (
+            // surface open/refresh failures — a silent blank pane looks like a crash
+            <div className="card card-pad">
+              <ErrorBox error={dashboard.error} />
+              <button className="small" onClick={() => dashboard.refetch()}>
+                <Icon name="refresh" size={12} /> Retry
+              </button>
+            </div>
           ) : dashboard.data ? (
             <>
               <div className="toolbar">

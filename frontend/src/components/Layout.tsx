@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { api } from "../api/client";
 import type { ConnectionHealth, Dataset } from "../api/types";
 import { useAuth } from "../auth";
+import ErrorBoundary from "./ErrorBoundary";
 import { Icon } from "./ui";
 
 const NAV_GROUPS: {
@@ -204,6 +205,7 @@ function ThemeToggle() {
 
 export default function Layout() {
   const { user, logout } = useAuth();
+  const location = useLocation();
   return (
     <div className="app">
       <aside className="sidebar">
@@ -256,7 +258,10 @@ export default function Layout() {
             <ThemeToggle />
           </div>
         </div>
-        <Outlet />
+        {/* keyed by path so a crashed page resets when the user navigates away */}
+        <ErrorBoundary key={location.pathname}>
+          <Outlet />
+        </ErrorBoundary>
       </main>
     </div>
   );
