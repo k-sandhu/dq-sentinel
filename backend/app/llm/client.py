@@ -19,6 +19,21 @@ def llm_enabled() -> bool:
     return get_settings().llm_enabled
 
 
+def safe_user_error(exc: Exception) -> str:
+    """User-facing text for an LLM-feature failure. Internal details (stack
+    traces, provider payloads, SQL) belong in the server log, not the UI;
+    only actionable, non-sensitive conditions get a specific message."""
+    if isinstance(exc, RuntimeError) and "No LLM provider configured" in str(exc):
+        return str(exc)
+    name = type(exc).__name__
+    text = str(exc).lower()
+    if "timeout" in name.lower() or "timed out" in text:
+        return "The LLM provider timed out. Try again in a moment."
+    if "rate" in text and "limit" in text or "429" in text:
+        return "The LLM provider is rate-limiting requests. Try again in a moment."
+    return "Something went wrong while answering — the full error was logged on the server."
+
+
 def provider_info() -> dict[str, Any]:
     resolved = get_settings().resolved_llm()
     if resolved is None:

@@ -72,6 +72,12 @@ class BaseProvider:
             LLM_TOKENS.labels(self.name, self.model, "input").inc(response.usage_in)
             LLM_TOKENS.labels(self.name, self.model, "output").inc(response.usage_out)
             return response
+        except Exception as exc:
+            log.error(
+                "LLM request failed (provider=%s model=%s after %.1fs): %s: %s",
+                self.name, self.model, time.perf_counter() - start, type(exc).__name__, exc,
+            )
+            raise
         finally:
             LLM_REQUESTS.labels(self.name, self.model, outcome).inc()
             LLM_LATENCY.labels(self.name, self.model).observe(time.perf_counter() - start)
@@ -88,7 +94,12 @@ class AnthropicProvider(BaseProvider):
         super().__init__(model)
         import anthropic
 
-        self._client = anthropic.Anthropic(api_key=api_key)
+        settings = get_settings()
+        self._client = anthropic.Anthropic(
+            api_key=api_key,
+            timeout=settings.llm_timeout_seconds,
+            max_retries=settings.llm_max_retries,
+        )
 
     @staticmethod
     def _serialize(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -171,11 +182,27 @@ class OpenAICompatProvider(BaseProvider):
 
     name = "openai"
 
+    # When True, JSON schemas are embedded in the prompt instead of sent as
+    # response_format. Default for OpenRouter: its structured-output emulation
+    # for some upstream models trickles the response for minutes and then
+    # returns 200 + {"error": ...} with choices=null (observed with large
+    # schemas on anthropic/* models), while prompt-embedded schemas answer in
+    # seconds. Flips to True (sticky) on the first structured-output failure
+    # elsewhere, so a broken endpoint pays the cost at most once per process.
+    _prompt_schema_only = False
+
     def __init__(self, model: str, api_key: str, base_url: str):
         super().__init__(model)
         import openai
 
-        self._client = openai.OpenAI(api_key=api_key, base_url=base_url)
+        settings = get_settings()
+        self._client = openai.OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=settings.llm_timeout_seconds,
+            max_retries=settings.llm_max_retries,
+        )
+        self._prompt_schema_only = "openrouter.ai" in (base_url or "")
 
     @staticmethod
     def _convert_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
@@ -230,32 +257,7 @@ class OpenAICompatProvider(BaseProvider):
             }
         return self._client.chat.completions.create(**kwargs)
 
-    def _complete(self, system, history, tools, json_schema, max_tokens, use_mcp) -> LlmResponse:
-        # MCP connector is Anthropic-specific; OpenAI-compatible path ignores it.
-        del use_mcp
-        settings = get_settings()
-        messages = self._serialize(system, history)
-        converted = self._convert_tools(tools)
-        max_tokens = max_tokens or settings.llm_max_output_tokens
-
-        try:
-            response = self._request(messages, converted, json_schema, max_tokens)
-        except Exception as exc:  # noqa: BLE001
-            if json_schema is None:
-                raise
-            # Some models/providers reject response_format — fall back to
-            # embedding the schema in the prompt; downstream parsing is tolerant.
-            log.warning("response_format rejected by %s (%s); falling back to prompt schema", self.model, exc)
-            fallback = list(messages)
-            fallback.append(
-                {
-                    "role": "user",
-                    "content": "Respond with ONLY a JSON object (no prose, no markdown fences) "
-                    f"matching this JSON schema:\n{json.dumps(json_schema)}",
-                }
-            )
-            response = self._request(fallback, converted, None, max_tokens)
-
+    def _first_choice(self, response):
         # OpenRouter (and some compat servers) can return 200 with choices=null
         # and an error payload instead of a non-2xx status. Surface it clearly.
         if not getattr(response, "choices", None):
@@ -264,7 +266,50 @@ class OpenAICompatProvider(BaseProvider):
             raise RuntimeError(
                 f"LLM endpoint returned no choices ({self.model}){f': {detail}' if detail else ''}"
             )
-        choice = response.choices[0]
+        return response.choices[0]
+
+    @staticmethod
+    def _schema_message(json_schema: dict[str, Any]) -> dict[str, str]:
+        return {
+            "role": "user",
+            "content": "Respond with ONLY a JSON object (no prose, no markdown fences) "
+            f"matching this JSON schema:\n{json.dumps(json_schema)}",
+        }
+
+    def _complete(self, system, history, tools, json_schema, max_tokens, use_mcp) -> LlmResponse:
+        # MCP connector is Anthropic-specific; OpenAI-compatible path ignores it.
+        del use_mcp
+        settings = get_settings()
+        messages = self._serialize(system, history)
+        converted = self._convert_tools(tools)
+        max_tokens = max_tokens or settings.llm_max_output_tokens
+
+        if json_schema is not None and self._prompt_schema_only:
+            response = self._request(
+                [*messages, self._schema_message(json_schema)], converted, None, max_tokens
+            )
+            choice = self._first_choice(response)
+        else:
+            try:
+                response = self._request(messages, converted, json_schema, max_tokens)
+                choice = self._first_choice(response)
+            except Exception as exc:  # noqa: BLE001
+                if json_schema is None:
+                    raise
+                # Structured-output requests fail on some models/providers —
+                # as an HTTP error, a timeout, or a 200 with an error payload
+                # and no choices. Fall back to embedding the schema in the
+                # prompt (parsing is tolerant) and stop trying response_format
+                # on this endpoint for the rest of the process.
+                log.warning(
+                    "structured output failed on %s (%s: %s); using prompt-embedded schemas from now on",
+                    self.model, type(exc).__name__, exc,
+                )
+                self._prompt_schema_only = True
+                response = self._request(
+                    [*messages, self._schema_message(json_schema)], converted, None, max_tokens
+                )
+                choice = self._first_choice(response)
         message = choice.message
         tool_calls = []
         for tc in message.tool_calls or []:

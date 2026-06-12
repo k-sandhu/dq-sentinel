@@ -25,7 +25,9 @@ def start_rca(
 ):
     if not llm_enabled():
         raise HTTPException(
-            503, "Root-cause analysis requires an LLM. Set ANTHROPIC_API_KEY and restart."
+            503,
+            "Root-cause analysis requires an LLM. Set DQ_LLM_API_KEY + DQ_LLM_MODEL "
+            "(any OpenAI-compatible endpoint) or ANTHROPIC_API_KEY and restart.",
         )
     dataset_id = body.dataset_id
     if body.check_run_id:

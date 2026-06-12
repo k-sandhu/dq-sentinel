@@ -19,6 +19,7 @@ from app.llm.client import (
     format_rows,
     redact_rows,
     run_agent_loop,
+    safe_user_error,
 )
 from app.models import Check, CheckRun, Dataset, ExceptionRecord, Profile, RcaSession, utcnow
 
@@ -168,6 +169,6 @@ def run_rca_session(session_id: int) -> None:
         except Exception as exc:  # noqa: BLE001 - persist the failure for the UI
             log.exception("RCA session %s failed", session_id)
             session.status = "failed"
-            session.report_md = f"RCA failed: {type(exc).__name__}: {exc}"
+            session.report_md = f"The investigation could not finish: {safe_user_error(exc)}"
         session.finished_at = utcnow()
         db.commit()

@@ -68,7 +68,13 @@ def generate(
         except Exception:  # noqa: BLE001 - heuristic fallback must always work
             log.exception("LLM dashboard generation failed; using heuristic panels")
     if panels is None:
-        panels = heuristic_panels(connector, ref, profile)
+        try:
+            panels = heuristic_panels(connector, ref, profile)
+        except Exception as exc:  # noqa: BLE001 - last resort: fail with a clean message
+            log.exception("Heuristic dashboard generation failed for dataset %s", ds.id)
+            raise HTTPException(
+                502, "Could not generate a dashboard from this profile — re-profile the dataset and retry"
+            ) from exc
         if body.focus:
             title = f"{ds.table_name}: {body.focus[:80]}"
 
@@ -114,7 +120,11 @@ def open_dashboard(
     ds = db.get(models.Dataset, dash.dataset_id)
     if ds is None:
         raise HTTPException(409, "Dashboard's dataset no longer exists")
-    connector = connector_for(ds.connection)
+    try:
+        connector = connector_for(ds.connection)
+    except Exception as exc:  # noqa: BLE001 - e.g. missing optional driver
+        log.exception("Cannot open source connection for dashboard %s", dashboard_id)
+        raise HTTPException(502, f"Cannot reach the dashboard's source: {exc}") from exc
     panels = (dash.spec or {}).get("panels", [])
     data = execute_panels(connector, panels)
     dash.last_refreshed_at = utcnow()

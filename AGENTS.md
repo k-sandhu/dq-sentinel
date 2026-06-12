@@ -162,6 +162,15 @@ Push coherent checkpoints to `main` frequently (CI gates them) rather than batch
   on the Anthropic path. Test loop changes with the `FakeProvider` in `tests/test_llm_providers.py`.
 - All agent SQL goes through the same `guard_sql()` + row-limit path as humans.
 - The explorer and RCA agents are bounded loops (max turns, max rows per query) — keep bounds.
+- LLM HTTP calls are bounded too: `DQ_LLM_TIMEOUT_SECONDS` (default 90) + `DQ_LLM_MAX_RETRIES`
+  on both SDK clients. Keep the timeout below any reverse-proxy read timeout (nginx: 300s).
+  OpenAI-compatible structured-output requests fall back to a prompt-embedded schema when the
+  endpoint errors — including OpenRouter's 200-with-error-payload (`choices=null`) responses —
+  and the fallback is sticky per process. On OpenRouter `response_format` is skipped up front:
+  its structured-output emulation can trickle for minutes before failing on large schemas.
+- Errors shown to users go through `llm/client.py: safe_user_error()` (chat + RCA): actionable
+  config/timeout messages pass through, everything else becomes a generic line while the full
+  traceback goes to the server log. Don't put raw exception text in WS events or reports.
 - The **assistant chat** (`app/llm/chat_agent.py` + `app/api/chat.py`, frontend `/assistant`) streams
   agent turns over a WebSocket (JWT via `token` query param, editor role; events: status/step/
   message). Tools: dataset overview, recent failures, run_sql, get_table_code, render_chart

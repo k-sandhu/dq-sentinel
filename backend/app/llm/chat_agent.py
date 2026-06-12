@@ -425,9 +425,10 @@ def _run_turn_locked(
             # The in-memory history may end mid-tool-call; rebuild it from
             # persisted messages next turn instead of replaying a broken tail.
             drop_history(session_id)
-            detail = f"{type(exc).__name__}: {exc}"
+            # Full detail goes to the log above; the UI gets a safe summary.
+            detail = llm_client.safe_user_error(exc)
             steps.append({"type": "error", "content": detail})
-            final_text = f"Something went wrong while answering: {detail}"
+            final_text = detail
             emit({"type": "error", "detail": detail})
 
         assistant = ChatMessage(

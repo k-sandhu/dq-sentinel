@@ -113,6 +113,69 @@ def test_openai_null_choices_raises_clear_error(monkeypatch):
         provider._complete("sys", [{"role": "user", "text": "hi"}], None, None, 100, False)
 
 
+def test_openai_structured_output_falls_back_on_error_payload(monkeypatch):
+    """A 200 + error payload (choices=null) on a json_schema request — seen from
+    OpenRouter as 'Provider returned error' — must retry with the schema embedded
+    in the prompt instead of failing the whole feature."""
+
+    class FakeNullResponse:
+        choices = None
+        error = {"message": "Provider returned error"}
+
+    class FakeMessage:
+        content = '{"ok": true}'
+        tool_calls = None
+
+    class FakeChoice:
+        message = FakeMessage()
+
+    class FakeGoodResponse:
+        choices = [FakeChoice()]
+        usage = None
+
+    calls: list[dict] = []
+
+    def fake_request(self, messages, tools, json_schema, max_tokens):
+        calls.append({"json_schema": json_schema, "last_msg": messages[-1]})
+        return FakeNullResponse() if json_schema is not None else FakeGoodResponse()
+
+    provider = OpenAICompatProvider.__new__(OpenAICompatProvider)  # skip SDK init
+    provider.model = "vendor/some-model"
+    monkeypatch.setattr(OpenAICompatProvider, "_request", fake_request)
+
+    out = provider._complete(
+        "sys", [{"role": "user", "text": "hi"}], None, {"type": "object"}, 100, False
+    )
+    assert out.text == '{"ok": true}'
+    assert [c["json_schema"] is None for c in calls] == [False, True]
+    assert "JSON schema" in calls[1]["last_msg"]["content"]  # schema moved into the prompt
+    # the failure is sticky: the next schema call skips response_format entirely
+    assert provider._prompt_schema_only is True
+    provider._complete("sys", [{"role": "user", "text": "hi"}], None, {"type": "object"}, 100, False)
+    assert calls[2]["json_schema"] is None
+
+
+def test_openrouter_skips_response_format_up_front(monkeypatch):
+    """OpenRouter's structured-output emulation trickles for minutes before
+    failing on large schemas — the provider must go straight to prompt schemas."""
+    import openai
+
+    monkeypatch.setattr(openai, "OpenAI", lambda **kw: object())
+    provider = OpenAICompatProvider("anthropic/claude-haiku-4.5", "k", "https://openrouter.ai/api/v1")
+    assert provider._prompt_schema_only is True
+    other = OpenAICompatProvider("gpt-4o-mini", "k", "https://api.openai.com/v1")
+    assert other._prompt_schema_only is False
+
+
+def test_safe_user_error_hides_internals():
+    assert "timed out" in llm_client.safe_user_error(TimeoutError("read timed out"))
+    config_msg = llm_client.safe_user_error(RuntimeError("No LLM provider configured. Set keys."))
+    assert config_msg.startswith("No LLM provider configured")  # actionable, kept verbatim
+    generic = llm_client.safe_user_error(ValueError("Traceback: secret_table.col blew up"))
+    assert "secret_table" not in generic
+    assert "logged on the server" in generic
+
+
 def test_anthropic_serializer_uses_raw_blocks():
     from app.llm.providers import AnthropicProvider
 

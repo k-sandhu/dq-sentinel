@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     llm_max_rca_turns: int = 12
     llm_max_chat_turns: int = 10
     llm_max_output_tokens: int = 16000
+    # Per-request HTTP timeout / retry budget for the LLM SDK clients. Without
+    # this the SDKs wait up to 600s on a hung provider, which blocks a worker
+    # thread and times out every proxy in front of the API.
+    llm_timeout_seconds: float = 90.0
+    llm_max_retries: int = 1
 
     def resolved_llm(self) -> dict | None:
         """Which provider/model will actually be used, or None when disabled."""
