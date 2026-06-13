@@ -611,3 +611,16 @@ class LineageGraph(BaseModel):
     edges: list[LineageEdge] = []
     parse_errors: int = 0  # view definitions sqlglot could not parse
     truncated: bool = False  # graph exceeded the node cap and was cut off
+
+
+# --- global search (issue #43) ---
+class SearchHit(BaseModel):
+    type: Literal["dataset", "check", "connection", "saved_query"]
+    id: int
+    title: str  # e.g. "shop.orders" / check name / connection name
+    subtitle: str  # e.g. connection name / dataset name / kind
+    url: str  # SPA path the frontend navigates to, e.g. "/datasets/12"
+
+
+class SearchOut(BaseModel):
+    hits: list[SearchHit] = []

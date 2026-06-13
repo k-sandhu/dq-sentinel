@@ -490,3 +490,16 @@ export interface AuditPage {
   limit: number;
   offset: number;
 }
+
+// ---- global search (issue #43) ----
+export interface SearchHit {
+  type: "dataset" | "check" | "connection" | "saved_query";
+  id: number;
+  title: string;
+  subtitle: string;
+  url: string;
+}
+
+export interface SearchOut {
+  hits: SearchHit[];
+}
