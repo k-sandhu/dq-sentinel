@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api } from "../api/client";
 import type { Dataset, Profile } from "../api/types";
 import { canEdit, useAuth } from "../auth";
 import { ErrorBox, Icon, Pill, Spinner } from "../components/ui";
 import { fmtNum, timeAgo } from "../lib/format";
+import { isFavorite, pushRecent, subscribePrefs, toggleFavorite } from "../lib/prefs";
 import ChecksTab from "./dataset/ChecksTab";
 import CodeTab from "./dataset/CodeTab";
 import DashboardsTab from "./dataset/DashboardsTab";
@@ -45,6 +47,16 @@ export default function DatasetDetailPage() {
     },
   });
 
+  // Recently-viewed (#59): record this visit (dedupe + cap handled in prefs).
+  useEffect(() => {
+    if (Number.isFinite(datasetId)) pushRecent(datasetId);
+  }, [datasetId]);
+
+  // Favorite toggle state, kept in sync with the sidebar / datasets page.
+  const [fav, setFav] = useState(() => isFavorite(datasetId));
+  useEffect(() => setFav(isFavorite(datasetId)), [datasetId]);
+  useEffect(() => subscribePrefs(() => setFav(isFavorite(datasetId))), [datasetId]);
+
   if (error) return <div className="page"><ErrorBox error={error} /></div>;
   if (!dataset) return <Spinner label="Loading dataset…" />;
 
@@ -62,6 +74,17 @@ export default function DatasetDetailPage() {
           </div>
         </div>
         <div className="header-actions">
+          <button
+            type="button"
+            className={`icon-only star-btn${fav ? " on" : ""}`}
+            aria-pressed={fav}
+            title={fav ? "Remove from favorites" : "Add to favorites"}
+            onClick={() => {
+              setFav(toggleFavorite(datasetId)); // optimistic; dq:prefs keeps siblings in sync
+            }}
+          >
+            <Icon name={fav ? "star-filled" : "star"} size={15} />
+          </button>
           <Link to={`/workbench?dataset_id=${datasetId}`} className="btn">
             <Icon name="search" size={13} /> Workbench
           </Link>

@@ -574,3 +574,21 @@ html[data-theme="dark"] .badge.danger { background: rgba(237, 110, 110, 0.16); b
 }
 .chat-composer textarea { flex: 1; margin-top: 0; resize: none; font-family: inherit; font-size: 13.5px; min-height: 48px; max-height: 160px; }
 .chat-composer button { flex: none; height: 38px; }
+
+/* ---------- personalization ---------- */
+/* Star toggle (datasets table + dataset header). Muted outline by default; the
+   gold fill comes from star-filled's inline fill. */
+.star-btn { color: var(--text-light); }
+.star-btn:hover { color: var(--warn-strong); background: var(--bg); }
+.star-btn[aria-pressed="true"], .star-btn.on { color: var(--warn-strong); border-color: transparent; background: transparent; }
+.star-btn[aria-pressed="true"]:hover, .star-btn.on:hover { background: var(--bg); }
+/* Leading favorite column: snug, centered, non-growing. */
+th.star-col, td.star-col { width: 34px; padding-left: 12px; padding-right: 0; text-align: center; }
+/* Sidebar favorites: keep long table names on one line. */
+.sidebar .fav-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.sidebar .nav-item svg[aria-hidden] { stroke: var(--warn-strong); }
+.sidebar .nav-item.active svg[aria-hidden] { stroke: #fff; }
+/* Recently-viewed chip strip above the datasets table. */
+.recents-strip { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 12px; }
+.recents-strip .recents-label { font-size: 11px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: var(--text-light); }
+.recents-strip .filter-chip { font-weight: 600; }
