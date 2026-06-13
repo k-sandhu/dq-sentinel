@@ -7,7 +7,7 @@ import { canEdit, useAuth } from "../auth";
 import { checkTypeLabel, originLabel } from "../lib/checkMeta";
 import { describeSchedule, timeAgo } from "../lib/format";
 import CheckParamsForm, { validateParams } from "./CheckParamsForm";
-import { EmptyState, ErrorBox, Icon, Modal, Pill, SeverityDot } from "./ui";
+import { EmptyState, ErrorBox, Icon, Modal, SeverityBadge, StatusPill } from "./ui";
 
 function paramsSummary(c: Check): string {
   const entries = Object.entries(c.params ?? {});
@@ -195,7 +195,7 @@ export default function ChecksTable({
                       )}
                     </td>
                     <td style={{ whiteSpace: "nowrap" }}>
-                      <SeverityDot severity={c.severity} />
+                      <SeverityBadge severity={c.severity} />
                     </td>
                     <td style={{ whiteSpace: "nowrap", color: "var(--text-light)", fontSize: 12 }}>
                       {describeSchedule(c.schedule_kind, c.schedule_expr)}
@@ -258,18 +258,18 @@ export default function ChecksTable({
                       </td>
                     )}
                     <td>
-                      <SeverityDot severity={c.severity} />
+                      <SeverityBadge severity={c.severity} />
                     </td>
                     <td style={{ fontSize: 12, color: "var(--text-light)" }}>
                       {describeSchedule(c.schedule_kind, c.schedule_expr)}
                     </td>
                     <td>
-                      <Pill value={c.status} />
+                      <StatusPill value={c.status} />
                     </td>
                     <td>
                       {c.last_status ? (
                         <>
-                          <Pill value={c.last_status} />{" "}
+                          <StatusPill value={c.last_status} />{" "}
                           <span style={{ fontSize: 11.5, color: "var(--text-light)" }}>{timeAgo(c.last_run_at)}</span>
                         </>
                       ) : (

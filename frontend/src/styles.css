@@ -59,12 +59,14 @@ html[data-theme="dark"] {
 }
 
 /* Dark-theme component overrides — pastel light backgrounds become tinted glass. */
-html[data-theme="dark"] .pill.pass, html[data-theme="dark"] .pill.resolved, html[data-theme="dark"] .pill.active, html[data-theme="dark"] .pill.complete, html[data-theme="dark"] .pill.approved { background: rgba(132, 187, 76, 0.16); color: #a3d573; }
-html[data-theme="dark"] .pill.warn, html[data-theme="dark"] .pill.acknowledged, html[data-theme="dark"] .pill.sev2 { background: rgba(242, 168, 111, 0.16); color: #ecb277; }
-html[data-theme="dark"] .pill.fail, html[data-theme="dark"] .pill.error, html[data-theme="dark"] .pill.open, html[data-theme="dark"] .pill.failed, html[data-theme="dark"] .pill.sev1 { background: rgba(237, 110, 110, 0.16); color: #f09090; }
-html[data-theme="dark"] .pill.expected, html[data-theme="dark"] .pill.running, html[data-theme="dark"] .pill.sev3, html[data-theme="dark"] .pill.monitoring { background: rgba(80, 158, 227, 0.18); color: #8ec3ee; }
-html[data-theme="dark"] .pill.proposed, html[data-theme="dark"] .pill.review { background: rgba(169, 137, 197, 0.2); color: #c5abdf; }
-html[data-theme="dark"] .pill.unknown, html[data-theme="dark"] .pill.muted, html[data-theme="dark"] .pill.disabled, html[data-theme="dark"] .pill.archived, html[data-theme="dark"] .pill.dismissed { background: rgba(255, 255, 255, 0.07); color: var(--text-light); }
+/* Semantic status tones, dark (issue #58). rgba tints composite over --card
+   (#1c2229); the brighter foregrounds keep WCAG-AA contrast on that composite. */
+html[data-theme="dark"] .pill.tone-ok      { background: rgba(132, 187, 76, 0.16); color: #a3d573; }
+html[data-theme="dark"] .pill.tone-warn    { background: rgba(242, 168, 111, 0.16); color: #ecb277; }
+html[data-theme="dark"] .pill.tone-danger  { background: rgba(237, 110, 110, 0.16); color: #f09090; }
+html[data-theme="dark"] .pill.tone-info    { background: rgba(80, 158, 227, 0.18); color: #8ec3ee; }
+html[data-theme="dark"] .pill.tone-accent  { background: rgba(169, 137, 197, 0.2); color: #c5abdf; }
+html[data-theme="dark"] .pill.tone-neutral { background: rgba(255, 255, 255, 0.07); color: #929cab; }
 html[data-theme="dark"] .badge.ai { background: #2a2138; border-color: #473560; color: #c5abdf; }
 html[data-theme="dark"] .heat-cell.ok { background: rgba(132, 187, 76, 0.14); color: #a3d573; }
 html[data-theme="dark"] .heat-cell.warn { background: rgba(242, 168, 111, 0.14); color: #ecb277; }
@@ -162,7 +164,7 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
   width: 100%; border: none; background: transparent; border-radius: 6px;
   padding: 7px 10px; text-align: left; min-height: 0;
 }
-.search-hit:hover { background: var(--hover); border: none; }
+.search-hit:hover, .search-hit.active { background: var(--hover); border: none; }
 .search-hit .title { color: var(--text-dark); font-weight: 700; font-size: 13px; }
 .search-hit .meta { color: var(--text-light); font-size: 11.5px; font-weight: 500; }
 .search-empty { padding: 12px 10px; color: var(--text-light); font-size: 12.5px; }
@@ -177,7 +179,7 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
 .page { padding: 26px 32px 60px; max-width: 1280px; margin: 0 auto; }
 .page.wide { max-width: 1500px; }
 .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
-.page-header h1 { font-size: 22px; }
+.page-header h1 { font-size: 20px; }
 .page-header .sub { color: var(--text-light); margin-top: 4px; font-size: 13px; }
 .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .section-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 22px 0 12px; }
@@ -205,7 +207,7 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
 
 .stat-card { padding: 16px 18px; }
 .stat-card .label { font-size: 12px; font-weight: 700; color: var(--text-light); text-transform: uppercase; letter-spacing: 0.5px; }
-.stat-card .value { font-size: 28px; font-weight: 800; color: var(--text-dark); margin-top: 6px; }
+.stat-card .value { font-size: 24px; font-weight: 800; color: var(--text-dark); margin-top: 6px; font-variant-numeric: tabular-nums; }
 .stat-card .value.danger { color: var(--danger-dark); }
 .stat-card .value.ok { color: var(--ok); }
 .stat-card .hint { font-size: 12px; color: var(--text-light); margin-top: 2px; }
@@ -286,7 +288,7 @@ table.data th {
   text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border);
   white-space: nowrap; background: var(--card2);
 }
-table.data td { padding: 10px 12px; border-bottom: 1px solid var(--border-light); vertical-align: middle; }
+table.data td { padding: 9px 12px; border-bottom: 1px solid var(--border-light); vertical-align: middle; }
 table.data tr:last-child td { border-bottom: none; }
 table.data tr.clickable { cursor: pointer; }
 table.data tr.clickable:hover td { background: var(--hover); }
@@ -294,28 +296,21 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 td.mono, .mono { font-family: var(--mono); font-size: 12px; }
 
 /* ---------- pills & badges ---------- */
+/* Semantic status tones (issue #58). Six tones, defined once for light and once
+   for dark (see the density/status block at the end of the file). The StatusPill /
+   SeverityBadge components in ui.tsx map every status string to one of these. */
 .pill { display: inline-flex; align-items: center; gap: 5px; padding: 2.5px 9px; border-radius: 99px; font-size: 11.5px; font-weight: 700; white-space: nowrap; }
-.pill.pass { background: #eaf4df; color: #5d9230; }
-.pill.warn { background: #fdf0e3; color: #c07f2b; }
-.pill.fail { background: #fde9e9; color: #c4403f; }
-.pill.error { background: #f7dcdc; color: #a33; }
-.pill.unknown, .pill.muted { background: #f0f2f4; color: var(--text-light); }
-.pill.open { background: #fde9e9; color: #c4403f; }
-.pill.acknowledged { background: #fdf0e3; color: #c07f2b; }
-.pill.expected { background: #e9f0fb; color: var(--brand-dark); }
-.pill.resolved { background: #eaf4df; color: #5d9230; }
-.pill.proposed { background: #f1eaf8; color: #7d5da3; }
-.pill.active { background: #eaf4df; color: #5d9230; }
-.pill.disabled, .pill.archived, .pill.dismissed { background: #f0f2f4; color: var(--text-light); }
-.pill.running { background: #e9f0fb; color: var(--brand-dark); }
-.pill.complete { background: #eaf4df; color: #5d9230; }
-.pill.failed { background: #fde9e9; color: #c4403f; }
-.pill.sev1 { background: #fde9e9; color: #c4403f; }
-.pill.sev2 { background: #fdf0e3; color: #c07f2b; }
-.pill.sev3 { background: #e9f0fb; color: var(--brand-dark); }
-.pill.monitoring { background: #e9f0fb; color: var(--brand-dark); }
-.pill.review { background: #f1eaf8; color: #7d5da3; }
-.pill.approved { background: #eaf4df; color: #5d9230; }
+/* Foregrounds are slightly darker than the original per-status palette so every
+   pair clears WCAG AA 4.5:1 (bold 11.5px is NOT "large text"); backgrounds are
+   unchanged. tone-info/neutral use literals (not --brand-dark/--text-light) so
+   the chips meet contrast without re-tokenizing the theme. Ratios in the PR. */
+.pill.tone-ok      { background: #eaf4df; color: #4c7827; }
+.pill.tone-warn    { background: #fdf0e3; color: #8f5e20; }
+.pill.tone-danger  { background: #fde9e9; color: #be3b3a; }
+.pill.tone-info    { background: #e9f0fb; color: #2c6c9f; }
+.pill.tone-neutral { background: #f0f2f4; color: #646b7d; }
+.pill.tone-accent  { background: #f1eaf8; color: #785799; }
+.pill-outline      { background: transparent; border: 1px solid currentColor; }
 .badge { display: inline-block; padding: 1.5px 7px; border-radius: 4px; background: var(--bg); border: 1px solid var(--border); font-size: 11px; font-weight: 600; color: var(--text); }
 .badge.ai { background: #f1eaf8; border-color: #e0d2ef; color: #7d5da3; }
 .badge.kind { font-family: var(--mono); font-size: 10.5px; }
@@ -591,3 +586,64 @@ html[data-theme="dark"] .badge.danger { background: rgba(237, 110, 110, 0.16); b
 }
 .chat-composer textarea { flex: 1; margin-top: 0; resize: none; font-family: inherit; font-size: 13.5px; min-height: 48px; max-height: 160px; }
 .chat-composer button { flex: none; height: 38px; }
+
+/* ---------- semantic status + density ---------- */
+
+/* Keyboard focus visibility (issue #58). Many interactive elements here set
+   border:none / border-color:transparent, which suppresses the browser's default
+   focus ring; restore a clear 2px brand outline for keyboard users only
+   (:focus-visible, so mouse clicks don't get a ring). Required for the
+   keyboard-first workflows in #63. */
+button:focus-visible,
+.btn:focus-visible,
+a:focus-visible,
+.tab:focus-visible,
+.filter-chip:focus-visible,
+.environment-pill:focus-visible,
+.chat-chip:focus-visible,
+.nav-item:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+/* Inputs keep their existing brand box-shadow ring; add a matching outline only
+   when focus is keyboard-driven, without doubling the visual weight. */
+input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 2px solid transparent; /* the box-shadow ring already signals focus */
+}
+
+/* Reduced motion (issue #58): vestibular-disorder users run all-day tools with
+   this OS setting — stop the looping pulse/spin animations. */
+@media (prefers-reduced-motion: reduce) {
+  .live-dot { animation: none; }
+  .spinner { animation: none; }
+}
+
+/* Compact density (issue #58): a personal, per-browser setting (localStorage
+   "dq-density"), applied pre-paint in index.html via html[data-density]. Tighter
+   table rows, cards, and page padding to fit more on screen for daily users. */
+html[data-density="compact"] table.data th { padding: 6px 10px; }
+html[data-density="compact"] table.data td { padding: 5px 10px; font-size: 12.5px; }
+html[data-density="compact"] .card-pad { padding: 12px 14px; }
+html[data-density="compact"] .stat-card .value { font-size: 22px; }
+html[data-density="compact"] .page { padding: 18px 24px 48px; }
+html[data-density="compact"] .dense-item { padding: 7px 10px; }
+
+/* ---------- personalization ---------- */
+/* Star toggle (datasets table + dataset header). Muted outline by default; the
+   gold fill comes from star-filled's inline fill. */
+.star-btn { color: var(--text-light); }
+.star-btn:hover { color: var(--warn-strong); background: var(--bg); }
+.star-btn[aria-pressed="true"], .star-btn.on { color: var(--warn-strong); border-color: transparent; background: transparent; }
+.star-btn[aria-pressed="true"]:hover, .star-btn.on:hover { background: var(--bg); }
+/* Leading favorite column: snug, centered, non-growing. */
+th.star-col, td.star-col { width: 34px; padding-left: 12px; padding-right: 0; text-align: center; }
+/* Sidebar favorites: keep long table names on one line. */
+.sidebar .fav-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.sidebar .nav-item svg[aria-hidden] { stroke: var(--warn-strong); }
+.sidebar .nav-item.active svg[aria-hidden] { stroke: #fff; }
+/* Recently-viewed chip strip above the datasets table. */
+.recents-strip { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 12px; }
+.recents-strip .recents-label { font-size: 11px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: var(--text-light); }
+.recents-strip .filter-chip { font-weight: 600; }

@@ -8,16 +8,45 @@ run a single worker against SQLite). See issue #25 for the queue-based design.
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 
-from sqlalchemy import update
+from sqlalchemy import delete, update
 
 from app.config import get_settings
 from app.core.runner import compute_next_run, run_check
 from app.db import session_factory
-from app.models import Check, utcnow
+from app.models import AuditEntry, Check, utcnow
 from app.observability import WORKER_CLAIMS, WORKER_UP
 
 log = logging.getLogger(__name__)
+
+# Last time the audit-retention purge ran (process-local; the worker is the only
+# long-lived process that calls poll_once on a loop).
+_last_audit_purge: datetime | None = None
+
+
+def purge_audit_log(now: datetime | None = None) -> int:
+    """Delete audit rows older than ``audit_retention_days``. Runs at most once
+    per 24h (issue #30). Returns rows deleted. ``audit_retention_days <= 0``
+    disables purging (keep everything).
+    """
+    global _last_audit_purge
+    now = now or utcnow()
+    if _last_audit_purge is not None and now - _last_audit_purge < timedelta(days=1):
+        return 0
+    _last_audit_purge = now
+    retention = get_settings().audit_retention_days
+    if retention <= 0:
+        return 0
+    cutoff = now - timedelta(days=retention)
+    factory = session_factory()
+    with factory() as db:
+        res = db.execute(delete(AuditEntry).where(AuditEntry.created_at < cutoff))
+        db.commit()
+        deleted = res.rowcount or 0
+    if deleted:
+        log.info("Purged %s audit row(s) older than %s days", deleted, retention)
+    return deleted
 
 
 def _execute(check_id: int) -> None:
@@ -37,6 +66,7 @@ def poll_once(executor: ThreadPoolExecutor) -> int:
     """One scheduling pass. Returns number of checks claimed."""
     factory = session_factory()
     now = utcnow()
+    purge_audit_log(now)  # self-throttles to at most once per day
     claimed = 0
     with factory() as db:
         # Initialize schedules that were activated without a next_run_at

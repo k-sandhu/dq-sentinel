@@ -28,16 +28,15 @@ def _connector(db: Session, connection_id: int) -> tuple[models.Connection, Conn
     return conn, connector_for(conn)
 
 
-@router.post("/query/run", response_model=schemas.QueryRunOut)
-def run_query(
-    body: schemas.QueryRunIn,
-    db: Session = Depends(get_db),
-    _: models.User = Depends(require_role("editor")),
-):
-    _, connector = _connector(db, body.connection_id)
+def execute_select(connector: Connector, sql: str, limit: int) -> schemas.QueryRunOut:
+    """Run a guarded SELECT through a connector and shape the result.
+
+    Shared by POST /query/run and POST /queries/{id}/run (saved_queries) so both
+    go through the exact same execution + error-mapping path — no HTTP self-calls.
+    """
     start = time.perf_counter()
     try:
-        res = connector.run_select(body.sql, limit=body.limit)
+        res = connector.run_select(sql, limit=limit)
     except SqlNotAllowed as exc:
         raise HTTPException(422, str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - surface driver errors to the analyst
@@ -48,9 +47,19 @@ def run_query(
         columns=res.columns,
         rows=rows,
         row_count=len(rows),
-        truncated=len(rows) >= body.limit,
+        truncated=len(rows) >= limit,
         elapsed_ms=elapsed,
     )
+
+
+@router.post("/query/run", response_model=schemas.QueryRunOut)
+def run_query(
+    body: schemas.QueryRunIn,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_role("editor")),
+):
+    _, connector = _connector(db, body.connection_id)
+    return execute_select(connector, body.sql, body.limit)
 
 
 @router.get("/connections/{connection_id}/schema", response_model=list[schemas.SchemaTable])

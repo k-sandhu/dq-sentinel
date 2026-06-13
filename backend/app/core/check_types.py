@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from sqlalchemy.orm import Session
 
@@ -380,6 +381,248 @@ def _run_ml_outlier(ctx: CheckContext) -> CheckResult:
     )
 
 
+# ---------------------------------------------------------------- distribution_drift
+_PSI_EPS = 1e-4  # epsilon-clamp for empty bins so ln(a/e) stays finite
+_DRIFT_SAMPLE_CAP = 2000  # reservoir sample size persisted for the KS path
+
+
+def _latest_baseline_profile(ctx: CheckContext) -> Any | None:
+    """Newest Profile row for this check's dataset (resolved via the check)."""
+    if ctx.db is None or ctx.check_id is None:
+        return None
+    from app.models import Check, Profile  # local import to avoid a cycle
+
+    check = ctx.db.get(Check, ctx.check_id)
+    if check is None:
+        return None
+    return (
+        ctx.db.query(Profile)
+        .filter(Profile.dataset_id == check.dataset_id)
+        .order_by(Profile.id.desc())
+        .first()
+    )
+
+
+def _baseline_column(profile: Any, column: str) -> dict[str, Any] | None:
+    for c in profile.columns or []:
+        if c.get("name") == column:
+            return c
+    return None
+
+
+def _psi(expected: np.ndarray, actual: np.ndarray) -> float:
+    """Population Stability Index between two probability vectors (same length).
+    Empty bins are epsilon-clamped so the log ratio stays finite."""
+    e = np.clip(expected.astype(float), _PSI_EPS, None)
+    a = np.clip(actual.astype(float), _PSI_EPS, None)
+    return float(np.sum((a - e) * np.log(a / e)))
+
+
+def _decile_edges(quantiles: dict[str, Any]) -> np.ndarray | None:
+    """Build 9 inner decile edges (p10..p90) from a profile's stored quantiles.
+
+    The profiler stores p1/p5/p25/p50/p75/p95/p99 (see profiler.py), not deciles,
+    so we interpolate the quantile function at the deciles. Edges are made strictly
+    increasing; degenerate (single-value) columns return None.
+    """
+    pts = sorted(
+        (float(k), float(v))
+        for k, v in quantiles.items()
+        if v is not None and not (isinstance(v, float) and (np.isnan(v) or np.isinf(v)))
+    )
+    if len(pts) < 2:
+        return None
+    probs = np.array([p for p, _ in pts])
+    vals = np.array([v for _, v in pts])
+    inner = np.interp(np.arange(1, 10) / 10.0, probs, vals)
+    edges = np.concatenate(([-np.inf], inner, [np.inf]))
+    # collapse ties so np.histogram gets monotonic edges; a near-constant column
+    # (all edges equal) can't form a distribution → signal "no usable baseline".
+    edges = np.unique(edges)
+    if edges.size < 3:
+        return None
+    return edges
+
+
+def _numeric_drift(values: pd.Series, bcol: dict[str, Any], threshold: float) -> CheckResult | None:
+    """PSI of current numeric values vs the baseline profile's decile distribution."""
+    edges = _decile_edges(bcol.get("quantiles") or {})
+    if edges is None:
+        return None
+    nbins = edges.size - 1
+    expected = np.full(nbins, 1.0 / nbins)  # deciles are equiprobable by construction
+    nums = pd.to_numeric(values, errors="coerce").dropna().to_numpy()
+    if nums.size == 0:
+        return CheckResult(
+            violation_count=0,
+            rows_evaluated=0,
+            detail="no current numeric values to compare against baseline",
+        )
+    counts, _ = np.histogram(nums, bins=edges)
+    actual = counts / counts.sum()
+    score = _psi(expected, actual)
+    bins = [
+        {
+            "range": f"[{_edge(edges[i])}, {_edge(edges[i + 1])})",
+            "expected_pct": round(float(expected[i]), 4),
+            "actual_pct": round(float(actual[i]), 4),
+        }
+        for i in range(nbins)
+    ]
+    drifted = score >= threshold
+    return CheckResult(
+        violation_count=1 if drifted else 0,
+        rows_evaluated=int(nums.size),
+        metrics={"method": "psi", "kind": "numeric", "score": round(score, 4),
+                 "threshold": threshold, "bins": bins},
+        detail=f"PSI {score:.3f} (threshold {threshold})",
+    )
+
+
+def _edge(x: float) -> Any:
+    if np.isinf(x):
+        return "-inf" if x < 0 else "inf"
+    return round(float(x), 4)
+
+
+def _categorical_drift(
+    values: pd.Series, bcol: dict[str, Any], sampled_rows: int, threshold: float
+) -> CheckResult:
+    """PSI of current category mix vs the baseline top_values (+ __other__)."""
+    tops = bcol.get("top_values") or []
+    cats = [str(t["value"]) for t in tops]
+    base_counts = np.array([float(t["count"]) for t in tops])
+    base_total = float(sampled_rows) if sampled_rows else float(base_counts.sum())
+    base_total = max(base_total, base_counts.sum(), 1.0)
+    expected = np.append(base_counts / base_total, max(0.0, 1.0 - base_counts.sum() / base_total))
+
+    cur = values.dropna().astype(str)
+    cur_total = max(len(cur), 1)
+    vc = cur.value_counts()
+    actual_named = np.array([float(vc.get(c, 0)) for c in cats]) / cur_total
+    actual_other = max(0.0, 1.0 - actual_named.sum())
+    actual = np.append(actual_named, actual_other)
+
+    score = _psi(expected, actual)
+    labels = [*cats, "__other__"]
+    bins = [
+        {"category": labels[i], "expected_pct": round(float(expected[i]), 4),
+         "actual_pct": round(float(actual[i]), 4)}
+        for i in range(len(labels))
+    ]
+    drifted = score >= threshold
+    return CheckResult(
+        violation_count=1 if drifted else 0,
+        rows_evaluated=int(len(cur)),
+        metrics={"method": "psi", "kind": "categorical", "score": round(score, 4),
+                 "threshold": threshold, "bins": bins},
+        detail=f"PSI {score:.3f} (threshold {threshold})",
+    )
+
+
+def _reservoir_sample(values: np.ndarray, k: int = _DRIFT_SAMPLE_CAP) -> list[float]:
+    if values.size <= k:
+        return [float(v) for v in values]
+    rng = np.random.default_rng(0)  # deterministic sub-sample
+    idx = rng.choice(values.size, size=k, replace=False)
+    return [float(v) for v in values[idx]]
+
+
+def _ks_drift(values: pd.Series, ctx: CheckContext, threshold: float) -> CheckResult:
+    """KS two-sample test of current numeric values vs the PREVIOUS run's stored
+    reservoir sample. Baseline raw values aren't persisted in the profile, so KS
+    drift is measured run-over-run: the first run captures a sample and passes."""
+    from scipy.stats import ks_2samp  # transitively available via scikit-learn
+
+    from app.models import CheckRun  # local import to avoid a cycle
+
+    nums = pd.to_numeric(values, errors="coerce").dropna().to_numpy()
+    current_sample = _reservoir_sample(nums)
+
+    prior: list[float] = []
+    if ctx.db is not None and ctx.check_id is not None:
+        run = (
+            ctx.db.query(CheckRun)
+            .filter(CheckRun.check_id == ctx.check_id, CheckRun.status != "error")
+            .order_by(CheckRun.started_at.desc())
+            .first()
+        )
+        if run and run.metrics:
+            prior = [float(x) for x in (run.metrics.get("drift_sample") or [])]
+
+    base_metrics = {
+        "method": "ks",
+        "kind": "numeric",
+        "threshold": threshold,
+        "drift_sample": current_sample,  # persisted by the runner into run.metrics
+    }
+    if len(prior) < 2 or len(current_sample) < 2:
+        return CheckResult(
+            violation_count=0,
+            rows_evaluated=int(nums.size),
+            metrics={**base_metrics, "note": "baseline captured"},
+            detail="KS baseline captured (first run) — drift measured from next run",
+        )
+    res = ks_2samp(current_sample, prior)
+    pvalue = float(res.pvalue)
+    statistic = float(res.statistic)
+    drifted = pvalue <= threshold
+    return CheckResult(
+        violation_count=1 if drifted else 0,
+        rows_evaluated=int(nums.size),
+        metrics={**base_metrics, "score": round(pvalue, 6), "statistic": round(statistic, 4),
+                 "prior_n": len(prior)},
+        detail=f"KS p-value {pvalue:.4g} vs previous run (D={statistic:.3f}, fails when p<={threshold})",
+    )
+
+
+def _run_distribution_drift(ctx: CheckContext) -> CheckResult:
+    settings = get_settings()
+    method = str(ctx.params.get("method") or "psi").lower()
+    threshold = float(ctx.params.get("threshold", 0.2))
+    raw_max = ctx.params.get("max_rows")
+    max_rows = int(raw_max) if raw_max not in (None, "") else int(settings.ml_max_rows)
+
+    values = ctx.connector.fetch_df(f"SELECT {ctx.col} AS v FROM {ctx.ref}", limit=max_rows)["v"]
+
+    if method == "ks":
+        return _ks_drift(values, ctx, threshold)
+
+    profile = _latest_baseline_profile(ctx)
+    if profile is None:
+        return CheckResult(violation_count=0, detail="no baseline profile — profile the dataset first")
+    bcol = _baseline_column(profile, ctx.column or "")
+    if bcol is None:
+        return CheckResult(
+            violation_count=0,
+            detail=f"column {ctx.column!r} not found in baseline profile #{profile.id}",
+        )
+
+    if bcol.get("quantiles"):
+        result = _numeric_drift(values, bcol, threshold)
+        if result is None:  # degenerate baseline (constant column) — can't bin
+            return CheckResult(
+                violation_count=0,
+                detail=f"baseline profile #{profile.id} has no usable numeric distribution",
+            )
+    elif bcol.get("top_values"):
+        result = _categorical_drift(values, bcol, profile.sampled_rows, threshold)
+    else:
+        return CheckResult(
+            violation_count=0,
+            detail=f"baseline profile #{profile.id} has neither quantiles nor categories for {ctx.column!r}",
+        )
+
+    result.metrics["baseline_profile_id"] = profile.id
+    score = result.metrics.get("score")
+    result.detail = (
+        f"PSI {score} vs baseline profile #{profile.id} (threshold {threshold})"
+        if score is not None
+        else result.detail
+    )
+    return result
+
+
 def _p(name: str, type_: str, required: bool = False, default: Any = None, desc: str = "") -> dict:
     return {"name": name, "type": type_, "required": required, "default": default, "description": desc}
 
@@ -439,6 +682,15 @@ CHECK_TYPES: dict[str, CheckType] = {
              _p("max_rows", "number", False, None, "Sample size cap")],
             _run_ml_outlier,
         ),
+        CheckType(
+            "distribution_drift", "Distribution drift",
+            "Alert when the column's distribution shifts vs the profiling baseline (PSI or KS)", True,
+            [_p("method", "string", False, "psi", "psi | ks"),
+             _p("threshold", "number", False, 0.2,
+                "PSI >= threshold (or KS p-value <= threshold when method=ks) fails"),
+             _p("max_rows", "number", False, None, "Sample cap for current data (default settings.ml_max_rows)")],
+            _run_distribution_drift,
+        ),
     ]
 }
 
@@ -462,6 +714,11 @@ def validate_check(check_type: str, column_name: str | None, params: dict[str, A
             re.compile(normalized["pattern"])
         except re.error as exc:
             raise ValueError(f"Invalid regex pattern: {exc}") from exc
+    if check_type == "distribution_drift":
+        method = str(normalized.get("method") or "psi").lower()
+        if method not in ("psi", "ks"):
+            raise ValueError("distribution_drift 'method' must be 'psi' or 'ks'")
+        normalized["method"] = method
     return normalized
 
 
