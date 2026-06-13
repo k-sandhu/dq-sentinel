@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
 import { api } from "../api/client";
-import type { ExceptionRecord, ExceptionStatus } from "../api/types";
+import type { ExceptionPage, ExceptionRecord, ExceptionStatus } from "../api/types";
 import { canEdit, useAuth } from "../auth";
 import { fmtDateTime, fmtValue } from "../lib/format";
 import { EmptyState, ErrorBox, Modal, Pill, Spinner } from "./ui";
@@ -90,7 +90,9 @@ export default function ExceptionsTriage({
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["exceptions", qs],
-    queryFn: () => api.get<ExceptionRecord[]>(`/exceptions?${qs}`),
+    // API v2 returns a paged envelope (#57); read .items. The full workspace
+    // rebuild (#63) replaces this component with components/exceptions/**.
+    queryFn: () => api.get<ExceptionPage>(`/exceptions?${qs}`),
   });
 
   const triage = useMutation({
@@ -105,7 +107,7 @@ export default function ExceptionsTriage({
     },
   });
 
-  const excs = useMemo(() => data ?? [], [data]);
+  const excs = useMemo(() => data?.items ?? [], [data]);
   const allSelected = excs.length > 0 && excs.every((e) => selected.has(e.id));
 
   const toggleAll = () =>

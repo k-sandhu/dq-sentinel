@@ -116,7 +116,7 @@ def test_suggestions_heuristic_and_runnable(client, admin_headers, source_db):
         headers=admin_headers,
     ).json()
     run = client.post(f"/api/v1/checks/{check['id']}/run", headers=admin_headers).json()
-    excs = client.get(f"/api/v1/exceptions?run_id={run['id']}", headers=admin_headers).json()
+    excs = client.get(f"/api/v1/exceptions?run_id={run['id']}", headers=admin_headers).json()["items"]
     resp = client.post(
         "/api/v1/query/suggest", json={"exception_id": excs[0]["id"]}, headers=admin_headers
     )
@@ -137,10 +137,10 @@ def test_search_and_totals(client, admin_headers):
     assert hits and all("people" in d["table_name"] for d in hits)
     assert client.get("/api/v1/datasets?q=zzz-nope", headers=admin_headers).json() == []
 
-    # exceptions carry a total header
-    resp = client.get("/api/v1/exceptions?limit=1", headers=admin_headers)
-    assert "x-total-count" in {k.lower() for k in resp.headers.keys()}
-    assert int(resp.headers["X-Total-Count"]) >= len(resp.json())
+    # exceptions carry a total in the paged envelope (#57; X-Total-Count dropped)
+    page = client.get("/api/v1/exceptions?limit=1", headers=admin_headers).json()
+    assert page["total"] >= len(page["items"])
+    assert page["limit"] == 1
 
     # checks ?q=
     hits = client.get("/api/v1/checks?q=email", headers=admin_headers).json()
