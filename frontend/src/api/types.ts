@@ -438,3 +438,16 @@ export type ChatWsEvent =
   | { type: "assistant_message"; message: ChatMessage }
   | { type: "error"; detail: string }
   | { type: "done" };
+
+// ---- global search (issue #43) ----
+export interface SearchHit {
+  type: "dataset" | "check" | "connection" | "saved_query";
+  id: number;
+  title: string;
+  subtitle: string;
+  url: string;
+}
+
+export interface SearchOut {
+  hits: SearchHit[];
+}

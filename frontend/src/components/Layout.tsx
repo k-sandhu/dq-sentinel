@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { api } from "../api/client";
-import type { ConnectionHealth, Dataset } from "../api/types";
+import type { ConnectionHealth, SearchHit, SearchOut } from "../api/types";
 import { useAuth } from "../auth";
 import ErrorBoundary from "./ErrorBoundary";
 import { Icon } from "./ui";
@@ -74,12 +74,64 @@ function FleetHealthPill() {
   );
 }
 
-/** Global dataset search: debounced GET /datasets?q=…, top 8 hits, "/" focuses. */
+// Group order + display labels for the command palette. Matches the backend's
+// hit ordering in app/api/search.py.
+const SEARCH_GROUPS: { type: SearchHit["type"]; label: string }[] = [
+  { type: "dataset", label: "Datasets" },
+  { type: "check", label: "Checks" },
+  { type: "connection", label: "Connections" },
+  { type: "saved_query", label: "Saved queries" },
+];
+
+/** "Recently viewed" datasets from sibling #59's lib/prefs (issue #59). That
+ *  module does not exist in every build, so we feature-detect it with a
+ *  variable-specifier dynamic import (keeps tsc + vite build green when absent)
+ *  and skip the section silently if it or its accessor is missing. */
+function useRecentDatasets(enabled: boolean): SearchHit[] {
+  const [recents, setRecents] = useState<SearchHit[]>([]);
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        // Non-literal specifier so the bundler/TS don't hard-require the module.
+        const spec = "../lib/prefs";
+        const mod = (await import(/* @vite-ignore */ spec)) as {
+          getRecentDatasets?: () => { id: number; title?: string; subtitle?: string }[];
+          getRecents?: () => { id: number; title?: string; subtitle?: string }[];
+        };
+        const read = mod.getRecentDatasets ?? mod.getRecents;
+        const rows = read?.() ?? [];
+        if (cancelled) return;
+        setRecents(
+          rows.slice(0, 6).map((r) => ({
+            type: "dataset" as const,
+            id: r.id,
+            title: r.title ?? `Dataset ${r.id}`,
+            subtitle: r.subtitle ?? "Recently viewed",
+            url: `/datasets/${r.id}`,
+          })),
+        );
+      } catch {
+        /* #59 not present in this build — no recents section, by design */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled]);
+  return recents;
+}
+
+/** Global command palette: debounced GET /search?q=…, hits grouped by entity
+ *  type, arrow-key navigation, Enter to jump. "/" and Ctrl/Cmd+K both focus it;
+ *  empty focus shows "Recently viewed" datasets when sibling #59's prefs exist. */
 function GlobalSearch() {
   const navigate = useNavigate();
   const [term, setTerm] = useState("");
   const [debounced, setDebounced] = useState("");
   const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
   const boxRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -88,22 +140,45 @@ function GlobalSearch() {
     return () => clearTimeout(t);
   }, [term]);
 
-  const { data: hits } = useQuery({
-    queryKey: ["dataset-search", debounced],
-    queryFn: () => api.get<Dataset[]>(`/datasets?q=${encodeURIComponent(debounced)}`),
+  const { data } = useQuery({
+    queryKey: ["global-search", debounced],
+    queryFn: () => api.get<SearchOut>(`/search?q=${encodeURIComponent(debounced)}`),
     enabled: debounced.length > 0,
     staleTime: 30_000,
     placeholderData: (prev) => prev, // keep last results while typing — no dropdown flicker
   });
 
-  // "/" focuses the search box unless the user is already typing somewhere.
+  // Empty-query "Recently viewed" (soft dep on #59); only fetched when the box
+  // is open with no query typed.
+  const recents = useRecentDatasets(open && debounced.length === 0);
+
+  const hits = debounced.length > 0 ? (data?.hits ?? []) : recents;
+  // Flattened hit list (group order) for keyboard navigation.
+  const flat: SearchHit[] = SEARCH_GROUPS.flatMap((g) => hits.filter((h) => h.type === g.type));
+  const showRecents = debounced.length === 0 && recents.length > 0;
+  const visible =
+    open && (showRecents || (debounced.length > 0 && data !== undefined));
+
+  // Reset the highlight whenever the result set changes.
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [debounced, hits.length]);
+
+  // "/" or Ctrl/Cmd+K focuses the search box unless the user is already typing.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
+      const isSlash = e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey;
+      const isCmdK = (e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K");
+      if (!isSlash && !isCmdK) return;
       const el = document.activeElement as HTMLElement | null;
-      const tag = el?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el?.isContentEditable) return;
-      e.preventDefault();
+      // Ctrl/Cmd+K still works from inside inputs; "/" must not hijack typing.
+      if (isSlash) {
+        const tag = el?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el?.isContentEditable)
+          return;
+      }
+      e.preventDefault(); // beat the browser's "/" quick-find and Cmd+K address bar
+      setOpen(true);
       inputRef.current?.focus();
     }
     document.addEventListener("keydown", onKey);
@@ -119,24 +194,22 @@ function GlobalSearch() {
     return () => document.removeEventListener("mousedown", onDown);
   }, []);
 
-  const top = (hits ?? []).slice(0, 8);
-  const visible = open && debounced.length > 0 && hits !== undefined;
-
-  function go(id: number) {
+  function go(url: string) {
     setOpen(false);
     setTerm("");
     setDebounced("");
-    navigate(`/datasets/${id}`);
+    navigate(url);
   }
 
+  let flatCursor = -1; // running index across groups so highlight maps to `flat`
   return (
     <div className="global-search" ref={boxRef}>
       <Icon name="search" size={15} />
       <input
         ref={inputRef}
         type="text"
-        placeholder="Search datasets…"
-        aria-label="Search datasets"
+        placeholder="Search datasets, checks, connections…"
+        aria-label="Search datasets, checks, connections"
         value={term}
         onChange={(e) => {
           setTerm(e.target.value);
@@ -147,26 +220,51 @@ function GlobalSearch() {
           if (e.key === "Escape") {
             setOpen(false);
             inputRef.current?.blur();
-          } else if (e.key === "Enter" && visible && top.length > 0) {
-            go(top[0].id);
+          } else if (e.key === "ArrowDown") {
+            if (flat.length === 0) return;
+            e.preventDefault();
+            setActiveIndex((i) => Math.min(i + 1, flat.length - 1));
+          } else if (e.key === "ArrowUp") {
+            if (flat.length === 0) return;
+            e.preventDefault();
+            setActiveIndex((i) => Math.max(i - 1, 0));
+          } else if (e.key === "Enter" && visible && flat.length > 0) {
+            go(flat[Math.min(activeIndex, flat.length - 1)].url);
           }
         }}
       />
-      {!term && <span className="kbd search-kbd">/</span>}
+      {!term && <span className="kbd search-kbd">Ctrl K</span>}
       {visible && (
         <div className="search-pop">
-          {top.length === 0 ? (
-            <div className="search-empty">No datasets match “{debounced}”</div>
+          {showRecents && <div className="nav-section">Recently viewed</div>}
+          {debounced.length > 0 && flat.length === 0 ? (
+            <div className="search-empty">No matches for “{debounced}”</div>
           ) : (
-            top.map((d) => (
-              <button key={d.id} type="button" className="search-hit" onClick={() => go(d.id)}>
-                <span className="title">
-                  {d.schema_name ? `${d.schema_name}.` : ""}
-                  {d.table_name}
-                </span>
-                <span className="meta">{d.connection_name}</span>
-              </button>
-            ))
+            SEARCH_GROUPS.map((group) => {
+              const groupHits = hits.filter((h) => h.type === group.type);
+              if (groupHits.length === 0) return null;
+              return (
+                <div key={group.type}>
+                  {!showRecents && <div className="nav-section">{group.label}</div>}
+                  {groupHits.map((h) => {
+                    flatCursor += 1;
+                    const idx = flatCursor;
+                    return (
+                      <button
+                        key={`${h.type}-${h.id}`}
+                        type="button"
+                        className={`search-hit${idx === activeIndex ? " active" : ""}`}
+                        onMouseEnter={() => setActiveIndex(idx)}
+                        onClick={() => go(h.url)}
+                      >
+                        <span className="title">{h.title}</span>
+                        <span className="meta">{h.subtitle}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })
           )}
         </div>
       )}
