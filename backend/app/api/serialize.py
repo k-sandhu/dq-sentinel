@@ -57,6 +57,7 @@ def exception_out(db: Session, exc: models.ExceptionRecord) -> schemas.Exception
     if check:
         out.check_name = check.name
         out.check_type = check.check_type
+        out.check_severity = check.severity
         out.column_name = check.column_name
     dataset = db.get(models.Dataset, exc.dataset_id)
     if dataset:

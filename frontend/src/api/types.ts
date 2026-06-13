@@ -194,6 +194,7 @@ export interface ExceptionRecord {
   check_id: number;
   check_name: string;
   check_type: string;
+  check_severity: Severity;
   column_name: string | null;
   dataset_id: number;
   dataset_name: string;

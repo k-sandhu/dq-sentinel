@@ -284,6 +284,7 @@ class ExceptionOut(ORMModel):
     check_id: int
     check_name: str = ""
     check_type: str = ""
+    check_severity: Severity = "error"  # denormalized from the check for the triage table
     column_name: str | None = None
     dataset_id: int
     dataset_name: str = ""
