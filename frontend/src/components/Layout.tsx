@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { api } from "../api/client";
 import type { ConnectionHealth, SearchHit, SearchOut } from "../api/types";
 import { useAuth } from "../auth";
+import { FAVORITES_SIDEBAR_CAP, getFavorites, pruneStalePrefs, subscribePrefs } from "../lib/prefs";
 import ErrorBoundary from "./ErrorBoundary";
 import { Icon } from "./ui";
 
@@ -336,6 +337,64 @@ function DensityToggle() {
   );
 }
 
+/** Sidebar "Favorites" group (#59): up to FAVORITES_SIDEBAR_CAP starred datasets
+ *  as NavLinks. Names resolve from the shared ["datasets"] query cache (same key
+ *  the rest of the app uses — no extra request). Stays in sync with star toggles
+ *  via the `dq:prefs` window event, prunes stale ids once the live list loads,
+ *  and renders nothing when there are no (resolvable) favorites. */
+function FavoritesNav() {
+  // Re-render on in-tab pref changes (star toggled elsewhere) without a remount.
+  const [favIds, setFavIds] = useState<number[]>(() => getFavorites());
+  useEffect(() => subscribePrefs(() => setFavIds(getFavorites())), []);
+
+  // Reuse the shared cache; don't trigger a fetch from the sidebar — if the list
+  // isn't loaded yet we simply render nothing until a page populates it.
+  const { data: datasets } = useQuery({
+    queryKey: ["datasets"],
+    queryFn: () => api.get<Dataset[]>("/datasets"),
+    enabled: favIds.length > 0,
+  });
+
+  // Once we know the live ids, drop any favorites pointing at deleted datasets
+  // (prunes storage too, which fires dq:prefs and refreshes favIds).
+  useEffect(() => {
+    if (datasets) pruneStalePrefs(datasets.map((d) => d.id));
+  }, [datasets]);
+
+  if (favIds.length === 0) return null;
+
+  const byId = new Map((datasets ?? []).map((d) => [d.id, d]));
+  // Keep starred order (most-recent first); resolve only datasets we can name.
+  const items = favIds
+    .map((id) => byId.get(id))
+    .filter((d): d is Dataset => d !== undefined)
+    .slice(0, FAVORITES_SIDEBAR_CAP);
+
+  if (items.length === 0) return null;
+
+  return (
+    <div className="nav-group" key="Favorites">
+      <div className="nav-section">Favorites</div>
+      <nav>
+        {items.map((d) => {
+          const label = `${d.schema_name ? `${d.schema_name}.` : ""}${d.table_name}`;
+          return (
+            <NavLink
+              key={d.id}
+              to={`/datasets/${d.id}`}
+              className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
+              title={`${label} · ${d.connection_name}`}
+            >
+              <Icon name="star-filled" />
+              <span className="fav-name">{label}</span>
+            </NavLink>
+          );
+        })}
+      </nav>
+    </div>
+  );
+}
+
 export default function Layout() {
   const { user, logout } = useAuth();
   const location = useLocation();
@@ -349,22 +408,26 @@ export default function Layout() {
           DQ Sentinel
         </div>
         {NAV_GROUPS.map((group) => (
-          <div className="nav-group" key={group.label}>
-            <div className="nav-section">{group.label}</div>
-            <nav>
-              {group.items.map((n) => (
-                <NavLink
-                  key={n.to}
-                  to={n.to}
-                  end={n.end}
-                  className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
-                >
-                  <Icon name={n.icon} />
-                  {n.label}
-                </NavLink>
-              ))}
-            </nav>
-          </div>
+          <Fragment key={group.label}>
+            <div className="nav-group">
+              <div className="nav-section">{group.label}</div>
+              <nav>
+                {group.items.map((n) => (
+                  <NavLink
+                    key={n.to}
+                    to={n.to}
+                    end={n.end}
+                    className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
+                  >
+                    <Icon name={n.icon} />
+                    {n.label}
+                  </NavLink>
+                ))}
+              </nav>
+            </div>
+            {/* Favorites group sits between "Overview" and "Sources" (#59). */}
+            {group.label === "Overview" && <FavoritesNav />}
+          </Fragment>
         ))}
         <div className="spacer" />
         <nav>

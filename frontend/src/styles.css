@@ -612,3 +612,21 @@ html[data-density="compact"] .card-pad { padding: 12px 14px; }
 html[data-density="compact"] .stat-card .value { font-size: 22px; }
 html[data-density="compact"] .page { padding: 18px 24px 48px; }
 html[data-density="compact"] .dense-item { padding: 7px 10px; }
+
+/* ---------- personalization ---------- */
+/* Star toggle (datasets table + dataset header). Muted outline by default; the
+   gold fill comes from star-filled's inline fill. */
+.star-btn { color: var(--text-light); }
+.star-btn:hover { color: var(--warn-strong); background: var(--bg); }
+.star-btn[aria-pressed="true"], .star-btn.on { color: var(--warn-strong); border-color: transparent; background: transparent; }
+.star-btn[aria-pressed="true"]:hover, .star-btn.on:hover { background: var(--bg); }
+/* Leading favorite column: snug, centered, non-growing. */
+th.star-col, td.star-col { width: 34px; padding-left: 12px; padding-right: 0; text-align: center; }
+/* Sidebar favorites: keep long table names on one line. */
+.sidebar .fav-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.sidebar .nav-item svg[aria-hidden] { stroke: var(--warn-strong); }
+.sidebar .nav-item.active svg[aria-hidden] { stroke: #fff; }
+/* Recently-viewed chip strip above the datasets table. */
+.recents-strip { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 12px; }
+.recents-strip .recents-label { font-size: 11px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: var(--text-light); }
+.recents-strip .filter-chip { font-weight: 600; }

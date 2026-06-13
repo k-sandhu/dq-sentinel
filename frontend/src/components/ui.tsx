@@ -69,6 +69,14 @@ export function Icon({ name, size = 16 }: { name: string; size?: number }) {
       </>
     ),
     rows: <path d="M4 6h16M4 12h16M4 18h16" />,
+    // Personalization (#59): outline + filled star for favorites toggles.
+    star: <path d="M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.6 9.7l5.8-.8L12 3.6z" />,
+    "star-filled": (
+      <path
+        d="M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.6 9.7l5.8-.8L12 3.6z"
+        fill="currentColor"
+      />
+    ),
   };
   return (
     <svg

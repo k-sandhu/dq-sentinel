@@ -15,6 +15,44 @@ import type {
 import { isAdmin, useAuth } from "../auth";
 import { EmptyState, ErrorBox, Icon, Modal, Spinner, StatusPill } from "../components/ui";
 import { fmtDateTime } from "../lib/format";
+import { getLanding, LANDING_OPTIONS, type LandingPref, setLanding } from "../lib/prefs";
+
+/** Personalization (#59): per-browser preferences (localStorage today; see
+ *  prefs.ts for the v2 server-swap contract). */
+function PreferencesCard() {
+  const [landing, setLandingState] = useState<LandingPref>(() => getLanding());
+  return (
+    <div className="card card-pad" style={{ marginBottom: 18 }}>
+      <h3>Preferences</h3>
+      <p style={{ fontSize: 12.5, color: "var(--text-light)", margin: "4px 0 14px" }}>
+        Saved in this browser only. Personal comforts — they don't change anything for your
+        teammates.
+      </p>
+      <label className="field" style={{ maxWidth: 320, marginBottom: 0 }}>
+        Default landing page
+        <select
+          value={landing}
+          onChange={(e) => {
+            const next = e.target.value as LandingPref;
+            setLandingState(next);
+            setLanding(next);
+          }}
+          style={{ marginTop: 5 }}
+        >
+          {LANDING_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        <div className="field-hint">
+          Where a fresh tab opens. Deep links (notification emails, shared URLs) always override
+          this.
+        </div>
+      </label>
+    </div>
+  );
+}
 
 const AUDIT_PAGE = 25;
 const ENTITY_TYPES = ["user", "connection", "check", "exception", "dataset", "mcp"];
@@ -612,6 +650,8 @@ export default function SettingsPage() {
           <div className="hint">role: {user?.role}</div>
         </div>
       </div>
+
+      <PreferencesCard />
 
       <McpServersCard />
 
