@@ -301,6 +301,79 @@ class ChatMessage(Base):
     session: Mapped[ChatSession] = relationship(back_populates="messages")
 
 
+class SavedQuery(Base):
+    """A workbench query saved to the shared team library (issue #41). Optionally
+    pinned to a dataset (dataset_id set) so it surfaces where investigations start.
+    SQL is validated through guard_sql() at save time, so the library stays runnable."""
+
+    __tablename__ = "saved_queries"
+    __table_args__ = (Index("ix_savedq_conn", "connection_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    connection_id: Mapped[int] = mapped_column(ForeignKey("connections.id"))
+    dataset_id: Mapped[int | None] = mapped_column(
+        ForeignKey("datasets.id"), nullable=True
+    )  # set => pinned to that dataset
+    name: Mapped[str] = mapped_column(String(255))
+    description: Mapped[str] = mapped_column(Text, default="")
+    sql: Mapped[str] = mapped_column(Text)
+    tags: Mapped[list] = mapped_column(JSON, default=list)  # list[str]
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class NotificationRule(Base):
+    """Routing rule for failure/recovery notifications (issue #27).
+
+    Firing decision lives in core/runner.py (transition-based); this row only
+    decides *where* a fired event goes. ``dataset_id is None`` matches every
+    dataset; ``min_severity`` gates on the check's severity; ``target`` is the
+    Slack webhook URL or comma-separated emails (empty Slack target falls back
+    to the global ``notify_slack_webhook_url`` setting)."""
+
+    __tablename__ = "notification_rules"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_id: Mapped[int | None] = mapped_column(
+        ForeignKey("datasets.id"), nullable=True, index=True
+    )  # None = all datasets
+    min_severity: Mapped[str] = mapped_column(String(10), default="error")  # info | warn | error
+    channel: Mapped[str] = mapped_column(String(10))  # slack | email
+    target: Mapped[str] = mapped_column(Text, default="")  # webhook URL or comma-separated emails
+    on_error_runs: Mapped[bool] = mapped_column(Boolean, default=True)  # also fire on status == "error"
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class AuditEntry(Base):
+    """Append-only audit trail of security/config-relevant actions (issue #30).
+
+    Distinct from ``ExceptionEvent`` (#56): that is the per-exception user-facing
+    timeline; this is the global admin/compliance surface. NEVER store secrets,
+    DSNs, password hashes, or source row data in ``detail``.
+    """
+
+    __tablename__ = "audit_log"
+    __table_args__ = (
+        Index("ix_audit_entity", "entity_type", "entity_id"),
+        Index("ix_audit_created", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )  # None = system/anonymous (e.g. failed login)
+    action: Mapped[str] = mapped_column(String(50))  # e.g. "login.success", "check.update"
+    entity_type: Mapped[str] = mapped_column(String(30))  # user|connection|dataset|check|exception|...
+    entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)  # diffs/params — NEVER secrets or row data
+    request_id: Mapped[str] = mapped_column(String(16), default="")  # joins to request logs
+    client_ip: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class RcaSession(Base):
     __tablename__ = "rca_sessions"
 

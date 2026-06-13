@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.api.serialize import exception_event_out, exception_out
+from app.core.audit import audit
 from app.core.events import record_event
 from app.db import get_db
 from app.models import utcnow
@@ -319,6 +320,8 @@ def triage(
         if touched or body.note:
             e.marked_by_id = user.id
             e.marked_at = now
+    # One audit row per batch (#30); ExceptionEvent has the per-row record (#56).
+    audit(db, user, "exception.triage", "exception", None, count=len(excs), status=body.status)
     db.commit()
     return [exception_out(db, e) for e in excs]
 

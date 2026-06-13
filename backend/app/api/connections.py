@@ -8,6 +8,7 @@ from app import models, schemas
 from app.api.serialize import connection_out
 from app.connectors.dialects import REGISTRY, DriverNotInstalled, driver_installed
 from app.connectors.sa import Connector, SqlNotAllowed, connector_for, dispose_connection, kind_from_dsn
+from app.core.audit import audit
 from app.db import get_db
 from app.security import get_current_user, require_role
 
@@ -64,6 +65,8 @@ def create_connection(
         raise HTTPException(409, "A connection with this name already exists")
     conn = models.Connection(name=body.name, kind=kind, dsn=body.dsn, created_by_id=user.id)
     db.add(conn)
+    db.flush()  # assign conn.id for the audit row
+    audit(db, user, "connection.create", "connection", conn.id, name=conn.name, kind=conn.kind)
     db.commit()
     db.refresh(conn)
     return connection_out(conn, 0)
@@ -151,11 +154,12 @@ def list_tables(
 def delete_connection(
     connection_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(require_role("admin")),
+    user: models.User = Depends(require_role("admin")),
 ):
     conn = db.get(models.Connection, connection_id)
     if conn is None:
         raise HTTPException(404, "Connection not found")
+    audit(db, user, "connection.delete", "connection", conn.id, name=conn.name, kind=conn.kind)
     db.delete(conn)  # cascades to datasets/checks/runs via ORM relationships
     db.commit()
     dispose_connection(connection_id)
