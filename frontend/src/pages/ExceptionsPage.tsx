@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router";
 import { api } from "../api/client";
 import type { Dataset } from "../api/types";
+import Breadcrumbs from "../components/Breadcrumbs";
 import ExceptionsTriage from "../components/ExceptionsTriage";
 
 export default function ExceptionsPage() {
@@ -17,6 +18,15 @@ export default function ExceptionsPage() {
   const selectedDataset = datasets?.find((dataset) => dataset.id === datasetFilter);
   const selectedDatasetLabel =
     selectedDataset?.display_name || selectedDataset?.table_name || `#${datasetFilter}`;
+  const breadcrumbItems = datasetFilter
+    ? [
+        { label: "Datasets", to: "/datasets" },
+        { label: selectedDatasetLabel, to: `/datasets/${datasetFilter}` },
+        { label: "Exceptions" },
+      ]
+    : runId
+      ? [{ label: "Runs", to: "/runs" }, { label: `Run #${runId}`, to: `/runs/${runId}` }, { label: "Exceptions" }]
+      : [{ label: "Exceptions" }];
 
   const setFilterParam = (key: string, value: string | null) => {
     const next = new URLSearchParams(params);
@@ -27,6 +37,7 @@ export default function ExceptionsPage() {
 
   return (
     <div className="page">
+      <Breadcrumbs items={breadcrumbItems} />
       <div className="page-header">
         <div>
           <h1>Exceptions</h1>

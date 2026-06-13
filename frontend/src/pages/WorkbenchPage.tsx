@@ -13,6 +13,7 @@ import type {
   VizType,
 } from "../api/types";
 import { canEdit, useAuth } from "../auth";
+import Breadcrumbs from "../components/Breadcrumbs";
 import PanelChart from "../components/PanelChart";
 import { EmptyState, ErrorBox, Icon, Modal, Spinner } from "../components/ui";
 import { fmtNum, fmtValue } from "../lib/format";
@@ -234,9 +235,17 @@ export default function WorkbenchPage() {
       result.rows.some((r) => typeof r[i] === "number"),
     );
   }, [result]);
+  const datasetName = dataset ? `${dataset.schema_name ? `${dataset.schema_name}.` : ""}${dataset.table_name}` : null;
 
   return (
     <div className="page" style={{ maxWidth: 1500 }}>
+      <Breadcrumbs
+        items={
+          dataset && datasetName
+            ? [{ label: "Datasets", to: "/datasets" }, { label: datasetName, to: `/datasets/${dataset.id}` }, { label: "Workbench" }]
+            : [{ label: "Workbench" }]
+        }
+      />
       <div className="page-header">
         <div>
           <h1>Workbench</h1>
