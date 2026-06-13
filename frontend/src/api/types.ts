@@ -323,6 +323,21 @@ export interface McpServer {
   created_at: string;
 }
 
+// ---- notification rules (issue #27) ----
+export type NotifyChannel = "slack" | "email";
+
+export interface NotificationRule {
+  id: number;
+  dataset_id: number | null; // null = all datasets
+  dataset_name: string; // "" when dataset_id is null
+  min_severity: Severity;
+  channel: NotifyChannel;
+  target: string; // webhook URL or comma-separated emails ("" = global Slack default)
+  on_error_runs: boolean;
+  enabled: boolean;
+  created_at: string;
+}
+
 // ---- ad-hoc dashboards ----
 export type VizType = "number" | "bar" | "line" | "area" | "pie" | "table";
 

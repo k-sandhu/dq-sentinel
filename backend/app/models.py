@@ -239,6 +239,29 @@ class ChatMessage(Base):
     session: Mapped[ChatSession] = relationship(back_populates="messages")
 
 
+class NotificationRule(Base):
+    """Routing rule for failure/recovery notifications (issue #27).
+
+    Firing decision lives in core/runner.py (transition-based); this row only
+    decides *where* a fired event goes. ``dataset_id is None`` matches every
+    dataset; ``min_severity`` gates on the check's severity; ``target`` is the
+    Slack webhook URL or comma-separated emails (empty Slack target falls back
+    to the global ``notify_slack_webhook_url`` setting)."""
+
+    __tablename__ = "notification_rules"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_id: Mapped[int | None] = mapped_column(
+        ForeignKey("datasets.id"), nullable=True, index=True
+    )  # None = all datasets
+    min_severity: Mapped[str] = mapped_column(String(10), default="error")  # info | warn | error
+    channel: Mapped[str] = mapped_column(String(10))  # slack | email
+    target: Mapped[str] = mapped_column(Text, default="")  # webhook URL or comma-separated emails
+    on_error_runs: Mapped[bool] = mapped_column(Boolean, default=True)  # also fire on status == "error"
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class RcaSession(Base):
     __tablename__ = "rca_sessions"
 

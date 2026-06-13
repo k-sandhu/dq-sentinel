@@ -1,7 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../api/client";
-import type { Health, McpServer, Role, User } from "../api/types";
+import type {
+  Dataset,
+  Health,
+  McpServer,
+  NotificationRule,
+  NotifyChannel,
+  Role,
+  Severity,
+  User,
+} from "../api/types";
 import { isAdmin, useAuth } from "../auth";
 import { EmptyState, ErrorBox, Icon, Modal, Pill, Spinner } from "../components/ui";
 import { fmtDateTime } from "../lib/format";
@@ -137,6 +146,189 @@ function McpServersCard() {
   );
 }
 
+function NotificationsCard() {
+  const qc = useQueryClient();
+  const [adding, setAdding] = useState(false);
+  const [datasetId, setDatasetId] = useState<string>(""); // "" = all datasets
+  const [minSeverity, setMinSeverity] = useState<Severity>("error");
+  const [channel, setChannel] = useState<NotifyChannel>("slack");
+  const [target, setTarget] = useState("");
+  const [onErrorRuns, setOnErrorRuns] = useState(true);
+  const [tested, setTested] = useState<Record<number, string>>({});
+
+  const { data, error } = useQuery({
+    queryKey: ["notification-rules"],
+    queryFn: () => api.get<NotificationRule[]>("/notifications/rules"),
+  });
+  const { data: datasets } = useQuery({
+    queryKey: ["datasets"],
+    queryFn: () => api.get<Dataset[]>("/datasets"),
+  });
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["notification-rules"] });
+  const reset = () => {
+    setAdding(false);
+    setDatasetId("");
+    setMinSeverity("error");
+    setChannel("slack");
+    setTarget("");
+    setOnErrorRuns(true);
+  };
+  const create = useMutation({
+    mutationFn: () =>
+      api.post<NotificationRule>("/notifications/rules", {
+        dataset_id: datasetId ? Number(datasetId) : null,
+        min_severity: minSeverity,
+        channel,
+        target,
+        on_error_runs: onErrorRuns,
+      }),
+    onSuccess: () => {
+      reset();
+      invalidate();
+    },
+  });
+  const toggle = useMutation({
+    mutationFn: (r: NotificationRule) =>
+      api.patch<NotificationRule>(`/notifications/rules/${r.id}`, { enabled: !r.enabled }),
+    onSuccess: invalidate,
+  });
+  const remove = useMutation({
+    mutationFn: (id: number) => api.del(`/notifications/rules/${id}`),
+    onSuccess: invalidate,
+  });
+  const test = useMutation({
+    mutationFn: (id: number) => api.post<{ ok: boolean; message: string }>(`/notifications/rules/${id}/test`),
+    onSuccess: (res, id) => setTested((t) => ({ ...t, [id]: res.ok ? "✓ sent" : res.message })),
+  });
+
+  // Slack target may be blank (falls back to the global webhook); email needs a target.
+  const addDisabled = create.isPending || (channel === "email" && !target.trim());
+
+  return (
+    <div className="card" style={{ marginBottom: 18 }}>
+      <div className="card-pad" style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", paddingBottom: 8 }}>
+        <div>
+          <h3>Notifications — alerts on failed runs</h3>
+          <p style={{ fontSize: 12.5, color: "var(--text-light)", margin: "4px 0 0" }}>
+            Route check failures to Slack or email. Alerts fire on the transition into failure (and once
+            on recovery) — a check that keeps failing stays quiet, so you are not paged twice for the same
+            break. A rule with no dataset applies to all datasets; the severity gate compares against each
+            check's severity. Configure transports (SMTP, a global Slack webhook) via <code>DQ_</code> env vars.
+          </p>
+        </div>
+        <button className="primary small" onClick={() => setAdding(true)} style={{ flex: "none" }}>
+          <Icon name="plus" size={13} /> Add rule
+        </button>
+      </div>
+      <ErrorBox error={error || create.error || toggle.error || remove.error || test.error} />
+      {!data?.length ? (
+        <div className="empty" style={{ padding: 18 }}>No notification rules. Failures will not be pushed anywhere.</div>
+      ) : (
+        <div className="table-wrap">
+          <table className="data">
+            <thead>
+              <tr>
+                <th>Dataset</th>
+                <th>Min severity</th>
+                <th>Channel</th>
+                <th>Target</th>
+                <th>On errors</th>
+                <th>Status</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {data.map((r) => (
+                <tr key={r.id}>
+                  <td style={{ fontWeight: 600, color: "var(--text-dark)" }}>
+                    {r.dataset_id === null ? <span className="badge">all datasets</span> : r.dataset_name || `#${r.dataset_id}`}
+                  </td>
+                  <td><Pill value={r.min_severity} /></td>
+                  <td>{r.channel}</td>
+                  <td className="mono" style={{ maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {r.target || <span style={{ color: "var(--text-light)" }}>global default</span>}
+                  </td>
+                  <td>{r.on_error_runs ? "yes" : "no"}</td>
+                  <td>{r.enabled ? <Pill value="active" /> : <Pill value="disabled" />}</td>
+                  <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                    {tested[r.id] && <span style={{ fontSize: 11, color: "var(--text-light)", marginRight: 6 }}>{tested[r.id]}</span>}
+                    <button className="small" onClick={() => test.mutate(r.id)} disabled={test.isPending}>Test</button>{" "}
+                    <button className="small" onClick={() => toggle.mutate(r)}>{r.enabled ? "Disable" : "Enable"}</button>{" "}
+                    <button className="small danger" onClick={() => remove.mutate(r.id)}>Delete</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {adding && (
+        <Modal
+          title="Add notification rule"
+          onClose={reset}
+          footer={
+            <>
+              <button onClick={reset}>Cancel</button>
+              <button className="primary" onClick={() => create.mutate()} disabled={addDisabled}>
+                Add rule
+              </button>
+            </>
+          }
+        >
+          <ErrorBox error={create.error} />
+          <div className="form-row">
+            <label className="field">
+              Dataset
+              <select value={datasetId} onChange={(e) => setDatasetId(e.target.value)}>
+                <option value="">All datasets</option>
+                {datasets?.map((d) => (
+                  <option key={d.id} value={d.id}>{d.display_name || d.table_name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              Minimum severity
+              <select value={minSeverity} onChange={(e) => setMinSeverity(e.target.value as Severity)}>
+                <option value="info">info — alert on any check</option>
+                <option value="warn">warn — warn & error checks</option>
+                <option value="error">error — error checks only</option>
+              </select>
+            </label>
+          </div>
+          <label className="field">
+            Channel
+            <select value={channel} onChange={(e) => setChannel(e.target.value as NotifyChannel)}>
+              <option value="slack">Slack webhook</option>
+              <option value="email">Email (SMTP)</option>
+            </select>
+          </label>
+          <label className="field">
+            {channel === "slack" ? "Webhook URL" : "Recipients"}
+            {channel === "email" && <span className="req"> *</span>}
+            <input
+              type="text"
+              value={target}
+              onChange={(e) => setTarget(e.target.value)}
+              placeholder={channel === "slack" ? "https://hooks.slack.com/services/… (blank = global default)" : "alice@co.com, oncall@co.com"}
+              style={{ fontFamily: "var(--mono)", fontSize: 12 }}
+            />
+            <div className="field-hint">
+              {channel === "slack"
+                ? "Slack incoming-webhook URL. Leave blank to use the global DQ_NOTIFY_SLACK_WEBHOOK_URL."
+                : "Comma-separated email addresses. Requires SMTP configured via DQ_SMTP_* env vars."}
+            </div>
+          </label>
+          <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <input type="checkbox" checked={onErrorRuns} onChange={(e) => setOnErrorRuns(e.target.checked)} style={{ width: "auto" }} />
+            Also fire on run errors (infra failures, not just data violations)
+          </label>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 function NewUserModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
   const [email, setEmail] = useState("");
@@ -251,6 +443,8 @@ export default function SettingsPage() {
       </div>
 
       <McpServersCard />
+
+      {isAdmin(user) && <NotificationsCard />}
 
       {isAdmin(user) ? (
         <div className="card">
