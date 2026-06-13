@@ -15,12 +15,17 @@ import type {
 import { isAdmin, useAuth } from "../auth";
 import { EmptyState, ErrorBox, Icon, Modal, SeverityBadge, Spinner, StatusPill } from "../components/ui";
 import { fmtDateTime } from "../lib/format";
-import { getLanding, LANDING_OPTIONS, type LandingPref, setLanding } from "../lib/prefs";
+import { getLanding, LANDING_OPTIONS, type NamedLanding, setLanding } from "../lib/prefs";
 
 /** Personalization (#59): per-browser preferences (localStorage today; see
  *  prefs.ts for the v2 server-swap contract). */
 function PreferencesCard() {
-  const [landing, setLandingState] = useState<LandingPref>(() => getLanding());
+  // The dropdown only offers the named pages; a stored custom-dashboard landing
+  // (#68) isn't one of them, so fall back to "Home" for display in that case.
+  const [landing, setLandingState] = useState<NamedLanding>(() => {
+    const stored = getLanding();
+    return LANDING_OPTIONS.some((o) => o.value === stored) ? (stored as NamedLanding) : "/";
+  });
   return (
     <div className="card card-pad" style={{ marginBottom: 18 }}>
       <h3>Preferences</h3>
@@ -33,7 +38,7 @@ function PreferencesCard() {
         <select
           value={landing}
           onChange={(e) => {
-            const next = e.target.value as LandingPref;
+            const next = e.target.value as NamedLanding;
             setLandingState(next);
             setLanding(next);
           }}

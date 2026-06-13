@@ -7,6 +7,7 @@ from app.api import (
     chat,
     checks,
     connections,
+    custom_dashboards,
     dashboard,
     datasets,
     exceptions_api,
@@ -34,6 +35,7 @@ api_router.include_router(dashboard.router)
 api_router.include_router(query.router)
 api_router.include_router(saved_queries.router)
 api_router.include_router(adhoc_dashboards.router)
+api_router.include_router(custom_dashboards.router)
 api_router.include_router(mcp.router)
 api_router.include_router(notifications.router)
 api_router.include_router(audit.router)

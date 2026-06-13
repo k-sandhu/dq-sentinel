@@ -7,6 +7,8 @@ import AssistantPage from "./pages/AssistantPage";
 import ChecksPage from "./pages/ChecksPage";
 import ConnectionBrowsePage from "./pages/ConnectionBrowsePage";
 import ConnectionsPage from "./pages/ConnectionsPage";
+import CustomDashboardPage from "./pages/CustomDashboardPage";
+import DashboardsListPage from "./pages/DashboardsListPage";
 import DatasetDetailPage from "./pages/DatasetDetailPage";
 import DatasetsPage from "./pages/DatasetsPage";
 import ExceptionsPage from "./pages/ExceptionsPage";
@@ -76,6 +78,8 @@ export default function App() {
             </LandingRedirect>
           }
         />
+        <Route path="/dashboards" element={<DashboardsListPage />} />
+        <Route path="/dashboards/:id" element={<CustomDashboardPage />} />
         <Route path="/connections" element={<ConnectionsPage />} />
         <Route path="/connections/:id/browse" element={<ConnectionBrowsePage />} />
         <Route path="/datasets" element={<DatasetsPage />} />

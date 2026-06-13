@@ -81,9 +81,21 @@ export interface SavedView {
 
 // ── landing page ──────────────────────────────────────────────────────────────
 
-export type LandingPref = "/" | "/exceptions" | "/datasets" | "/workbench";
+/**
+ * The fixed, named landing destinations offered by the Settings dropdown
+ * (#59). Kept as a closed union so `LANDING_OPTIONS` stays exhaustive.
+ */
+export type NamedLanding = "/" | "/exceptions" | "/datasets" | "/workbench";
 
-export const LANDING_OPTIONS: { value: LandingPref; label: string }[] = [
+/**
+ * The stored landing preference. Besides the named pages above, custom
+ * dashboards (#68) let a user pin a specific board (e.g. "/dashboards/3") as
+ * their landing page, so the stored value is any in-app path. The `(string & {})`
+ * arm widens to arbitrary paths while preserving autocomplete for the named ones.
+ */
+export type LandingPref = NamedLanding | (string & {});
+
+export const LANDING_OPTIONS: { value: NamedLanding; label: string }[] = [
   { value: "/", label: "Home" },
   { value: "/exceptions", label: "Exceptions" },
   { value: "/datasets", label: "Datasets" },
@@ -96,6 +108,15 @@ export function getLanding(): LandingPref {
 
 export function setLanding(value: LandingPref): void {
   setPref(PREF_KEYS.landing, value);
+}
+
+/**
+ * Reset the landing preference back to Home. Used when the pinned destination
+ * disappears — e.g. deleting the custom dashboard (#68) that was set as landing,
+ * so a fresh tab doesn't loop into a 404.
+ */
+export function clearLanding(): void {
+  setPref(PREF_KEYS.landing, "/");
 }
 
 // ── favorites ─────────────────────────────────────────────────────────────────
