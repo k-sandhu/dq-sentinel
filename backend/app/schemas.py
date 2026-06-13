@@ -423,6 +423,27 @@ class McpServerOut(ORMModel):
     created_at: datetime
 
 
+# ---- audit log (issue #30) ----
+class AuditEntryOut(ORMModel):
+    id: int
+    user_id: int | None
+    user: str | None = None  # resolved display name (name or email), None = system/anonymous
+    action: str
+    entity_type: str
+    entity_id: int | None
+    detail: dict[str, Any]
+    request_id: str
+    client_ip: str
+    created_at: datetime
+
+
+class AuditPage(BaseModel):
+    items: list[AuditEntryOut]
+    total: int
+    limit: int
+    offset: int
+
+
 # ---- ad-hoc dashboards ----
 class PanelViz(BaseModel):
     type: Literal["number", "bar", "line", "area", "pie", "table"] = "table"

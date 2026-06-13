@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api import (
     adhoc_dashboards,
+    audit,
     auth,
     chat,
     checks,
@@ -30,3 +31,4 @@ api_router.include_router(dashboard.router)
 api_router.include_router(query.router)
 api_router.include_router(adhoc_dashboards.router)
 api_router.include_router(mcp.router)
+api_router.include_router(audit.router)

@@ -84,6 +84,10 @@ class Settings(BaseSettings):
     worker_concurrency: int = 4
     worker_metrics_port: int = 9100
 
+    # Audit log retention (issue #30): rows older than this are purged by a
+    # daily pass in the worker. 0 disables purging (keep everything).
+    audit_retention_days: int = 365
+
     # Observability
     log_format: str = "text"  # text | json
     log_level: str = "INFO"
