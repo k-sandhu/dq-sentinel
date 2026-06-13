@@ -16,13 +16,16 @@ import { canEdit, useAuth } from "../auth";
 import PanelChart from "../components/PanelChart";
 import { EmptyState, ErrorBox, Icon, Modal, Spinner } from "../components/ui";
 import { fmtNum, fmtValue } from "../lib/format";
+import { qualifiedRef, quoteIdent } from "../lib/sqlIdent";
 
 function SchemaSidebar({
   connectionId,
+  dialect,
   onInsert,
 }: {
   connectionId: number;
-  onInsert: (text: string) => void;
+  dialect: string | null;
+  onInsert: (text: string, opts?: { table?: boolean }) => void;
 }) {
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [ddlTable, setDdlTable] = useState<string | null>(null);
@@ -60,7 +63,11 @@ function SchemaSidebar({
                 {expanded ? "▾" : "▸"} {t.table_name}
                 {t.kind === "view" && <span className="badge kind" style={{ marginLeft: 4 }}>view</span>}
               </button>
-              <button className="ghost small" title="Insert name" onClick={() => onInsert(t.table_name)}>
+              <button
+                className="ghost small"
+                title="Insert schema-qualified table"
+                onClick={() => onInsert(qualifiedRef(t.schema_name, t.table_name, dialect), { table: true })}
+              >
                 <Icon name="plus" size={11} />
               </button>
               <button className="ghost small" title="View definition (DDL)" onClick={() => setDdlTable(t.table_name)}>
@@ -74,7 +81,7 @@ function SchemaSidebar({
                     key={c.name}
                     className="clickable"
                     style={{ display: "flex", justifyContent: "space-between", padding: "1.5px 4px", cursor: "pointer", borderRadius: 4 }}
-                    onClick={() => onInsert(c.name)}
+                    onClick={() => onInsert(quoteIdent(c.name, dialect))}
                     title="Click to insert"
                   >
                     <span style={{ fontFamily: "var(--mono)", fontSize: 11.5 }}>{c.name}</span>
@@ -170,8 +177,32 @@ export default function WorkbenchPage() {
     }
   };
 
-  const insert = (text: string) =>
-    setSql((s) => (s ? `${s.trimEnd()} ${text}` : `SELECT * FROM ${text} LIMIT 50`));
+  // The engine kind of the selected connection drives identifier quoting
+  // (Connection.kind is one of the dialects.py registry kinds, e.g. "postgresql").
+  const dialect = useMemo(
+    () => connections?.find((c) => c.id === connectionId)?.kind ?? null,
+    [connections, connectionId],
+  );
+
+  // Insert a schema-browser identifier into the editor. Table references seed an
+  // empty editor with a schema-qualified `SELECT * … LIMIT 50`; columns (and
+  // tables added to existing SQL) are appended verbatim — the caller has already
+  // quoted/qualified the text for the active dialect.
+  const insert = (text: string, opts?: { table?: boolean }) =>
+    setSql((s) => {
+      if (s.trim()) return `${s.trimEnd()} ${text}`;
+      return opts?.table ? `SELECT * FROM ${text} LIMIT 50` : text;
+    });
+
+  // Switching the source must not leave SQL/results pointed at the old database.
+  const changeConnection = (id: number) => {
+    if (id === connectionId) return;
+    setConnectionId(id);
+    setSql("");
+    setResult(null);
+    setChart(false);
+    run.reset();
+  };
 
   const numericColumns = useMemo(() => {
     if (!result) return [];
@@ -194,7 +225,7 @@ export default function WorkbenchPage() {
         <div className="header-actions">
           <select
             value={connectionId ?? ""}
-            onChange={(e) => setConnectionId(Number(e.target.value))}
+            onChange={(e) => changeConnection(Number(e.target.value))}
             style={{ marginTop: 0, width: 220 }}
           >
             {connections?.map((c) => (
@@ -208,7 +239,7 @@ export default function WorkbenchPage() {
         <div className="card card-pad">
           <h3>Schema</h3>
           {connectionId ? (
-            <SchemaSidebar connectionId={connectionId} onInsert={insert} />
+            <SchemaSidebar connectionId={connectionId} dialect={dialect} onInsert={insert} />
           ) : (
             <div className="empty">Pick a connection</div>
           )}
