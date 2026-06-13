@@ -438,3 +438,89 @@ export type ChatWsEvent =
   | { type: "assistant_message"; message: ChatMessage }
   | { type: "error"; detail: string }
   | { type: "done" };
+
+// --- exceptions paged envelope (issue #57) ---
+// GET /exceptions returns this envelope; metric/exceptions dashboard widgets read
+// `total` (the count) and `items` (the rows) from it with their stored params, so
+// a widget's number is always identical to the triage queue's for the same filters.
+export interface ExceptionPage {
+  items: ExceptionRecord[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+// --- custom dashboards (issues #67/#68) ---
+// This Widget union mirrors backend/app/schemas.py (the authoritative contract).
+export type Visibility = "private" | "team";
+export type WidgetSpan = 1 | 2;
+export type WidgetType = "metric" | "exceptions" | "checks" | "sql" | "note";
+
+// `params` keys mirror the GET /exceptions query contract (#57); values are strings.
+export type WidgetParams = Record<string, string>;
+
+export interface WidgetBase {
+  id: string; // client-generated uuid
+  title: string;
+  span: WidgetSpan;
+}
+
+export interface MetricWidget extends WidgetBase {
+  type: "metric";
+  config: { params: WidgetParams; warn_at: number | null; danger_at: number | null };
+}
+
+export interface ExceptionsWidget extends WidgetBase {
+  type: "exceptions";
+  config: { params: WidgetParams; limit: number }; // limit clamped 1..10
+}
+
+export interface ChecksWidget extends WidgetBase {
+  type: "checks";
+  config: { dataset_ids: number[]; only_failing: boolean }; // dataset_ids capped at 20
+}
+
+// Server-executed snapshot — written ONLY by POST /dashboards/custom/{id}/refresh.
+export interface WidgetSnapshot {
+  columns: string[];
+  rows: unknown[][];
+  refreshed_at: string; // UTC; the UI labels freshness
+  error: string | null;
+  elapsed_ms: number;
+}
+
+export interface SqlWidget extends WidgetBase {
+  type: "sql";
+  config: { connection_id: number; sql: string; viz: PanelViz };
+  snapshot?: WidgetSnapshot | null;
+}
+
+export interface NoteWidget extends WidgetBase {
+  type: "note";
+  config: { markdown: string };
+}
+
+export type Widget = MetricWidget | ExceptionsWidget | ChecksWidget | SqlWidget | NoteWidget;
+
+export interface DashboardLayout {
+  version: 1;
+  widgets: Widget[];
+}
+
+export interface CustomDashboardMeta {
+  id: number;
+  name: string;
+  description: string;
+  owner_id: number;
+  owner_name: string;
+  owner_active: boolean;
+  visibility: Visibility;
+  widget_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CustomDashboard extends CustomDashboardMeta {
+  layout: DashboardLayout;
+  can_edit: boolean;
+}

@@ -11,7 +11,13 @@ const NAV_GROUPS: {
   label: string;
   items: { to: string; label: string; icon: string; end?: boolean }[];
 }[] = [
-  { label: "Overview", items: [{ to: "/", label: "Home", icon: "home", end: true }] },
+  {
+    label: "Overview",
+    items: [
+      { to: "/", label: "Home", icon: "home", end: true },
+      { to: "/dashboards", label: "Dashboards", icon: "grid" },
+    ],
+  },
   {
     label: "Sources",
     items: [

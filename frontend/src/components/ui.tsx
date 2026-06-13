@@ -68,6 +68,28 @@ export function Icon({ name, size = 16 }: { name: string; size?: number }) {
         <path d="M8.5 11h.01M12 11h.01M15.5 11h.01" />
       </>
     ),
+    grid: (
+      <>
+        <rect x="3" y="3" width="7" height="7" rx="1.5" />
+        <rect x="14" y="3" width="7" height="7" rx="1.5" />
+        <rect x="3" y="14" width="7" height="7" rx="1.5" />
+        <rect x="14" y="14" width="7" height="7" rx="1.5" />
+      </>
+    ),
+    up: <path d="M6 15l6-6 6 6" />,
+    down: <path d="M6 9l6 6 6-6" />,
+    wide: (
+      <>
+        <rect x="3" y="6" width="18" height="12" rx="1.5" />
+        <path d="M8 6v12M16 6v12" />
+      </>
+    ),
+    narrow: (
+      <>
+        <rect x="3" y="6" width="18" height="12" rx="1.5" />
+        <path d="M12 6v12" />
+      </>
+    ),
   };
   return (
     <svg
