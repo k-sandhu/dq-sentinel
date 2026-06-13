@@ -14,6 +14,7 @@ from app.api import (
     query,
     rca,
     runs,
+    saved_queries,
 )
 
 api_router = APIRouter()
@@ -28,5 +29,6 @@ api_router.include_router(exceptions_api.router)
 api_router.include_router(rca.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(query.router)
+api_router.include_router(saved_queries.router)
 api_router.include_router(adhoc_dashboards.router)
 api_router.include_router(mcp.router)

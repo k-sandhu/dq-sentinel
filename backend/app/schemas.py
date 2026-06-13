@@ -396,6 +396,40 @@ class ConnectionHealth(BaseModel):
     latency_ms: int | None = None
 
 
+# ---- saved queries (team snippet library) ----
+class SavedQueryIn(BaseModel):
+    connection_id: int
+    dataset_id: int | None = None  # set => pin to this dataset
+    name: str = Field(min_length=1, max_length=255)
+    description: str = ""
+    sql: str = Field(min_length=1)
+    tags: list[str] = []
+
+
+class SavedQueryUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = None
+    sql: str | None = Field(default=None, min_length=1)
+    tags: list[str] | None = None
+    dataset_id: int | None = None  # null leaves the pin unchanged; use unpin=True to clear
+    unpin: bool = False  # explicitly clear the dataset pin
+
+
+class SavedQueryOut(ORMModel):
+    id: int
+    connection_id: int
+    dataset_id: int | None
+    name: str
+    description: str
+    sql: str
+    tags: list[str]
+    created_by_id: int | None
+    created_by: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    last_run_at: datetime | None
+
+
 # ---- MCP servers ----
 class McpServerIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
