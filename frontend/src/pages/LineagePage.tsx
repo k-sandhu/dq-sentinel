@@ -6,7 +6,7 @@ import { Link, useNavigate, useSearchParams } from "react-router";
 import { api } from "../api/client";
 import type { Connection, LineageGraph as LineageGraphData, LineageNode } from "../api/types";
 import LineageGraph from "../components/LineageGraph";
-import { EmptyState, ErrorBox, Pill, Spinner } from "../components/ui";
+import { EmptyState, ErrorBox, Spinner, StatusPill } from "../components/ui";
 
 function nodeLabel(n: LineageNode): string {
   return n.schema_name ? `${n.schema_name}.${n.table_name}` : n.table_name;
@@ -118,10 +118,10 @@ export default function LineagePage() {
                     <div
                       key={n.id}
                       className={`dense-item${n.dataset_id !== null ? " clickable" : ""}`}
-                      onClick={() => n.dataset_id !== null && navigate(`/datasets/${n.dataset_id}`)}
+                      onClick={() => n.dataset_id !== null && navigate(`/datasets/${n.dataset_id}/exceptions`)}
                     >
                       <div className="title">
-                        {nodeLabel(n)} <Pill value={n.health} />
+                        {nodeLabel(n)} <StatusPill value={n.health} />
                       </div>
                       <div className="meta">
                         {n.failing_checks} failing check{n.failing_checks === 1 ? "" : "s"} · {n.open_exceptions} open
@@ -166,11 +166,14 @@ export default function LineagePage() {
                           <td className="mono">{e.target}</td>
                           <td>feeds</td>
                           <td>
-                            <Pill value={target?.health ?? "unknown"} />
+                            <StatusPill value={target?.health ?? "unknown"} />
                           </td>
                           <td>
                             {target?.dataset_id != null && (
-                              <Link to={`/datasets/${target.dataset_id}`}>open dataset</Link>
+                              <span className="chip-row">
+                                <Link to={`/datasets/${target.dataset_id}`}>profile</Link>
+                                <Link to={`/datasets/${target.dataset_id}/lineage`}>lineage</Link>
+                              </span>
                             )}
                           </td>
                         </tr>

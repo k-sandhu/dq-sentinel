@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api } from "../api/client";
 import type { Dataset, Profile } from "../api/types";
 import { canEdit, useAuth } from "../auth";
-import { ErrorBox, Icon, Pill, Spinner } from "../components/ui";
+import { ErrorBox, Icon, Spinner, StatusPill } from "../components/ui";
 import { fmtNum, timeAgo } from "../lib/format";
+import { getFavoriteDatasetIds, markDatasetRecent, subscribePrefs, toggleFavoriteDataset } from "../lib/prefs";
 import ChecksTab from "./dataset/ChecksTab";
 import CodeTab from "./dataset/CodeTab";
 import DashboardsTab from "./dataset/DashboardsTab";
@@ -18,6 +20,10 @@ import RunsTab from "./dataset/RunsTab";
 const TABS = ["profile", "code", "lineage", "checks", "runs", "exceptions", "dashboards", "knowledge", "rca"] as const;
 type Tab = (typeof TABS)[number];
 
+function datasetLabel(dataset: Dataset): string {
+  return dataset.display_name || `${dataset.schema_name ? `${dataset.schema_name}.` : ""}${dataset.table_name}`;
+}
+
 export default function DatasetDetailPage() {
   const { id, tab } = useParams();
   const datasetId = Number(id);
@@ -25,6 +31,7 @@ export default function DatasetDetailPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
   const active: Tab = TABS.includes(tab as Tab) ? (tab as Tab) : "profile";
+  const [favorites, setFavorites] = useState<number[]>(() => getFavoriteDatasetIds());
 
   const { data: dataset, error } = useQuery({
     queryKey: ["datasets", datasetId],
@@ -45,8 +52,16 @@ export default function DatasetDetailPage() {
     },
   });
 
+  useEffect(() => subscribePrefs(() => setFavorites(getFavoriteDatasetIds())), []);
+
+  useEffect(() => {
+    if (dataset?.id) markDatasetRecent(dataset.id);
+  }, [dataset?.id]);
+
   if (error) return <div className="page"><ErrorBox error={error} /></div>;
   if (!dataset) return <Spinner label="Loading dataset…" />;
+
+  const isFavorite = favorites.includes(dataset.id);
 
   return (
     <div className="page">
@@ -54,7 +69,7 @@ export default function DatasetDetailPage() {
         <div>
           <h1>
             {dataset.schema_name ? `${dataset.schema_name}.` : ""}
-            {dataset.table_name} <Pill value={dataset.health} />
+            {dataset.table_name} <StatusPill value={dataset.health} />
           </h1>
           <div className="sub">
             {dataset.connection_name} · {fmtNum(dataset.row_count)} rows · profiled {timeAgo(dataset.last_profiled_at)} ·{" "}
@@ -62,6 +77,16 @@ export default function DatasetDetailPage() {
           </div>
         </div>
         <div className="header-actions">
+          <button
+            type="button"
+            className={`favorite-toggle${isFavorite ? " on" : ""}`}
+            aria-label={`${isFavorite ? "Remove" : "Add"} ${datasetLabel(dataset)} ${isFavorite ? "from" : "to"} favorites`}
+            aria-pressed={isFavorite}
+            title={isFavorite ? "Remove from favorites" : "Add to favorites"}
+            onClick={() => setFavorites(toggleFavoriteDataset(dataset.id))}
+          >
+            <Icon name={isFavorite ? "star-filled" : "star"} size={15} />
+          </button>
           <Link to={`/workbench?dataset_id=${datasetId}`} className="btn">
             <Icon name="search" size={13} /> Workbench
           </Link>

@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { api } from "../api/client";
-import type { ConnectionHealth, Dataset } from "../api/types";
+import type { ConnectionHealth, Dataset, SearchHit, SearchOut } from "../api/types";
 import { useAuth } from "../auth";
+import { getFavoriteDatasetIds, getRecentDatasets, pruneDatasetPrefs, subscribePrefs } from "../lib/prefs";
 import ErrorBoundary from "./ErrorBoundary";
 import { Icon } from "./ui";
 
@@ -74,12 +75,95 @@ function FleetHealthPill() {
   );
 }
 
-/** Global dataset search: debounced GET /datasets?q=…, top 8 hits, "/" focuses. */
+const SEARCH_TYPE_LABELS: Record<SearchHit["type"], string> = {
+  dataset: "Datasets",
+  check: "Checks",
+  connection: "Connections",
+  saved_query: "Saved queries",
+};
+const SEARCH_TYPE_ORDER: SearchHit["type"][] = ["dataset", "check", "connection", "saved_query"];
+
+function datasetTitle(dataset: Dataset) {
+  return `${dataset.schema_name ? `${dataset.schema_name}.` : ""}${dataset.table_name}`;
+}
+
+function favoriteDatasetLabel(dataset: Dataset): string {
+  return dataset.display_name || datasetTitle(dataset);
+}
+
+function SidebarNavGroup({ group }: { group: (typeof NAV_GROUPS)[number] }) {
+  return (
+    <div className="nav-group">
+      <div className="nav-section">{group.label}</div>
+      <nav>
+        {group.items.map((n) => (
+          <NavLink
+            key={n.to}
+            to={n.to}
+            end={n.end}
+            className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
+          >
+            <Icon name={n.icon} />
+            {n.label}
+          </NavLink>
+        ))}
+      </nav>
+    </div>
+  );
+}
+
+function FavoriteDatasetsNav() {
+  const [favorites, setFavorites] = useState<number[]>(() => getFavoriteDatasetIds());
+  const { data: datasets } = useQuery({
+    queryKey: ["datasets"],
+    queryFn: () => api.get<Dataset[]>("/datasets"),
+  });
+
+  useEffect(() => subscribePrefs(() => setFavorites(getFavoriteDatasetIds())), []);
+
+  useEffect(() => {
+    if (!datasets) return;
+    setFavorites(pruneDatasetPrefs(datasets.map((dataset) => dataset.id)).favorites);
+  }, [datasets]);
+
+  const favoriteDatasets = useMemo(() => {
+    if (!datasets) return [];
+    const datasetsById = new Map(datasets.map((dataset) => [dataset.id, dataset]));
+    return favorites
+      .map((id) => datasetsById.get(id))
+      .filter((dataset): dataset is Dataset => Boolean(dataset))
+      .slice(0, 6);
+  }, [datasets, favorites]);
+
+  if (favoriteDatasets.length === 0) return null;
+
+  return (
+    <div className="nav-group favorites-nav">
+      <div className="nav-section">Favorites</div>
+      <nav>
+        {favoriteDatasets.map((dataset) => (
+          <NavLink
+            key={dataset.id}
+            to={`/datasets/${dataset.id}`}
+            className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
+            title={`${favoriteDatasetLabel(dataset)} on ${dataset.connection_name}`}
+          >
+            <Icon name="star-filled" />
+            <span className="nav-label">{favoriteDatasetLabel(dataset)}</span>
+          </NavLink>
+        ))}
+      </nav>
+    </div>
+  );
+}
+
+/** Global entity search: debounced GET /search?q=…, grouped dropdown, "/" and Ctrl/Cmd+K focus. */
 function GlobalSearch() {
   const navigate = useNavigate();
   const [term, setTerm] = useState("");
   const [debounced, setDebounced] = useState("");
   const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
   const boxRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -88,23 +172,67 @@ function GlobalSearch() {
     return () => clearTimeout(t);
   }, [term]);
 
-  const { data: hits } = useQuery({
-    queryKey: ["dataset-search", debounced],
-    queryFn: () => api.get<Dataset[]>(`/datasets?q=${encodeURIComponent(debounced)}`),
+  const { data } = useQuery({
+    queryKey: ["global-search", debounced],
+    queryFn: () => api.get<SearchOut>(`/search?q=${encodeURIComponent(debounced)}`),
     enabled: debounced.length > 0,
     staleTime: 30_000,
     placeholderData: (prev) => prev, // keep last results while typing — no dropdown flicker
   });
 
-  // "/" focuses the search box unless the user is already typing somewhere.
+  const recentIds = term.trim() ? [] : getRecentDatasets().map((recent) => recent.id);
+  const { data: datasets } = useQuery({
+    queryKey: ["datasets"],
+    queryFn: () => api.get<Dataset[]>("/datasets"),
+    enabled: open && debounced.length === 0 && recentIds.length > 0,
+    staleTime: 30_000,
+  });
+  const recentHits = useMemo<SearchHit[]>(() => {
+    if (debounced.length > 0 || !datasets) return [];
+    const byId = new Map(datasets.map((dataset) => [dataset.id, dataset]));
+    return recentIds
+      .map((id) => byId.get(id))
+      .filter((dataset): dataset is Dataset => Boolean(dataset))
+      .map((dataset) => ({
+        type: "dataset",
+        id: dataset.id,
+        title: datasetTitle(dataset),
+        subtitle: `Recently viewed - ${dataset.connection_name}`,
+        url: `/datasets/${dataset.id}`,
+      }));
+  }, [datasets, debounced.length, recentIds]);
+
+  const hits = debounced.length > 0 ? data?.hits ?? [] : recentHits;
+  const visible =
+    open &&
+    ((debounced.length > 0 && data !== undefined) || (debounced.length === 0 && recentHits.length > 0));
+  const currentActive = hits.length > 0 ? Math.min(activeIndex, hits.length - 1) : 0;
+  const groupedHits = SEARCH_TYPE_ORDER.map((type) => ({
+    type,
+    hits: hits.map((hit, index) => ({ hit, index })).filter((item) => item.hit.type === type),
+  })).filter((group) => group.hits.length > 0);
+
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [debounced, hits.length]);
+
+  useEffect(() => {
+    if (hits.length > 0 && activeIndex >= hits.length) setActiveIndex(hits.length - 1);
+  }, [activeIndex, hits.length]);
+
+  // "/" and Ctrl/Cmd+K focus the search box unless the user is already typing somewhere.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
+      const slash = e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey;
+      const commandK = e.key.toLowerCase() === "k" && (e.ctrlKey || e.metaKey) && !e.altKey;
+      if (!slash && !commandK) return;
       const el = document.activeElement as HTMLElement | null;
       const tag = el?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el?.isContentEditable) return;
       e.preventDefault();
       inputRef.current?.focus();
+      inputRef.current?.select();
+      setOpen(true);
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -119,14 +247,12 @@ function GlobalSearch() {
     return () => document.removeEventListener("mousedown", onDown);
   }, []);
 
-  const top = (hits ?? []).slice(0, 8);
-  const visible = open && debounced.length > 0 && hits !== undefined;
-
-  function go(id: number) {
+  function go(url: string) {
     setOpen(false);
     setTerm("");
     setDebounced("");
-    navigate(`/datasets/${id}`);
+    setActiveIndex(0);
+    navigate(url);
   }
 
   return (
@@ -135,8 +261,8 @@ function GlobalSearch() {
       <input
         ref={inputRef}
         type="text"
-        placeholder="Search datasets…"
-        aria-label="Search datasets"
+        placeholder="Search datasets, checks, connections…"
+        aria-label="Search datasets, checks, connections"
         value={term}
         onChange={(e) => {
           setTerm(e.target.value);
@@ -147,25 +273,42 @@ function GlobalSearch() {
           if (e.key === "Escape") {
             setOpen(false);
             inputRef.current?.blur();
-          } else if (e.key === "Enter" && visible && top.length > 0) {
-            go(top[0].id);
+          } else if (e.key === "ArrowDown" && visible && hits.length > 0) {
+            e.preventDefault();
+            setActiveIndex((index) => (index + 1) % hits.length);
+          } else if (e.key === "ArrowUp" && visible && hits.length > 0) {
+            e.preventDefault();
+            setActiveIndex((index) => (index - 1 + hits.length) % hits.length);
+          } else if (e.key === "Enter" && visible && hits.length > 0) {
+            e.preventDefault();
+            go(hits[currentActive].url);
           }
         }}
       />
-      {!term && <span className="kbd search-kbd">/</span>}
+      {!term && <span className="kbd search-kbd">Ctrl K</span>}
       {visible && (
         <div className="search-pop">
-          {top.length === 0 ? (
-            <div className="search-empty">No datasets match “{debounced}”</div>
+          {hits.length === 0 ? (
+            <div className="search-empty">No results match “{debounced}”</div>
           ) : (
-            top.map((d) => (
-              <button key={d.id} type="button" className="search-hit" onClick={() => go(d.id)}>
-                <span className="title">
-                  {d.schema_name ? `${d.schema_name}.` : ""}
-                  {d.table_name}
-                </span>
-                <span className="meta">{d.connection_name}</span>
-              </button>
+            groupedHits.map((group) => (
+              <div className="search-group" key={group.type}>
+                <div className="search-group-title">
+                  {debounced.length === 0 && group.type === "dataset" ? "Recently viewed" : SEARCH_TYPE_LABELS[group.type]}
+                </div>
+                {group.hits.map(({ hit, index }) => (
+                  <button
+                    key={`${hit.type}-${hit.id}`}
+                    type="button"
+                    className={`search-hit${index === currentActive ? " active" : ""}`}
+                    onClick={() => go(hit.url)}
+                    onMouseEnter={() => setActiveIndex(index)}
+                  >
+                    <span className="title">{hit.title}</span>
+                    <span className="meta">{hit.subtitle}</span>
+                  </button>
+                ))}
+              </div>
             ))
           )}
         </div>
@@ -203,6 +346,37 @@ function ThemeToggle() {
   );
 }
 
+function DensityToggle() {
+  const [density, setDensity] = useState<"comfortable" | "compact">(() =>
+    document.documentElement.dataset.density === "compact" ? "compact" : "comfortable",
+  );
+  function toggle() {
+    const next = density === "compact" ? "comfortable" : "compact";
+    if (next === "compact") {
+      document.documentElement.dataset.density = "compact";
+    } else {
+      delete document.documentElement.dataset.density;
+    }
+    try {
+      localStorage.setItem("dq-density", next);
+    } catch {
+      /* storage unavailable - density still applies for this session */
+    }
+    setDensity(next);
+  }
+  return (
+    <button
+      type="button"
+      className="small icon-only"
+      onClick={toggle}
+      title={density === "compact" ? "Use comfortable density" : "Use compact density"}
+      aria-label="Toggle density"
+    >
+      <Icon name="rows" size={14} />
+    </button>
+  );
+}
+
 export default function Layout() {
   const { user, logout } = useAuth();
   const location = useLocation();
@@ -215,23 +389,10 @@ export default function Layout() {
           </span>
           DQ Sentinel
         </div>
-        {NAV_GROUPS.map((group) => (
-          <div className="nav-group" key={group.label}>
-            <div className="nav-section">{group.label}</div>
-            <nav>
-              {group.items.map((n) => (
-                <NavLink
-                  key={n.to}
-                  to={n.to}
-                  end={n.end}
-                  className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
-                >
-                  <Icon name={n.icon} />
-                  {n.label}
-                </NavLink>
-              ))}
-            </nav>
-          </div>
+        <SidebarNavGroup group={NAV_GROUPS[0]} />
+        <FavoriteDatasetsNav />
+        {NAV_GROUPS.slice(1).map((group) => (
+          <SidebarNavGroup key={group.label} group={group} />
         ))}
         <div className="spacer" />
         <nav>
@@ -255,6 +416,7 @@ export default function Layout() {
           <FleetHealthPill />
           <GlobalSearch />
           <div className="topbar-actions">
+            <DensityToggle />
             <ThemeToggle />
           </div>
         </div>

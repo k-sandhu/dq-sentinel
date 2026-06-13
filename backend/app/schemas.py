@@ -125,6 +125,19 @@ class PreviewOut(BaseModel):
     total_rows: int | None = None
 
 
+# ---- global search ----
+class SearchHit(BaseModel):
+    type: Literal["dataset", "check", "connection", "saved_query"]
+    id: int
+    title: str
+    subtitle: str
+    url: str
+
+
+class SearchOut(BaseModel):
+    hits: list[SearchHit]
+
+
 # ---- profiles ----
 class TopValue(BaseModel):
     value: Any

@@ -28,11 +28,12 @@ function RowDetailModal({ exc, onClose }: { exc: ExceptionRecord; onClose: () =>
           className="btn small"
           style={{ marginLeft: "auto" }}
         >
-          Investigate in workbench →
+          Open in Workbench
         </Link>
       </div>
       <div style={{ fontSize: 12.5, color: "var(--text-light)", marginBottom: 12 }}>
-        {exc.check_name} · {exc.dataset_name} · run #{exc.run_id} · {fmtDateTime(exc.created_at)}
+        <Link to={`/checks/${exc.check_id}`}>{exc.check_name}</Link> · {exc.dataset_name} ·{" "}
+        <Link to={`/runs/${exc.run_id}`}>run #{exc.run_id}</Link> · {fmtDateTime(exc.created_at)}
         {exc.note && (
           <div style={{ marginTop: 4 }}>
             Note: <em>{exc.note}</em> {exc.marked_by ? `— ${exc.marked_by}` : ""}
@@ -205,7 +206,11 @@ export default function ExceptionsTriage({
                     </div>
                   </td>
                   <td className="num">{e.outlier_score != null ? <span className="score-chip">{e.outlier_score}</span> : ""}</td>
-                  <td style={{ fontSize: 12 }}>{e.check_name}</td>
+                  <td style={{ fontSize: 12 }}>
+                    <Link to={`/checks/${e.check_id}`} onClick={(ev) => ev.stopPropagation()}>
+                      {e.check_name}
+                    </Link>
+                  </td>
                   {!datasetId && <td style={{ fontSize: 12 }}>{e.dataset_name}</td>}
                   <td style={{ whiteSpace: "nowrap", fontSize: 12, color: "var(--text-light)" }}>{fmtDateTime(e.created_at)}</td>
                 </tr>

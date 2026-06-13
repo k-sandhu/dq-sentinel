@@ -68,6 +68,19 @@ export function Icon({ name, size = 16 }: { name: string; size?: number }) {
         <path d="M8.5 11h.01M12 11h.01M15.5 11h.01" />
       </>
     ),
+    rows: (
+      <>
+        <path d="M4 7h16M4 12h16M4 17h16" />
+        <path d="M7 5v4M7 10v4M7 15v4" />
+      </>
+    ),
+    star: <path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3l-5.6 2.9 1.1-6.2L3 9.6l6.2-.9L12 3z" />,
+    "star-filled": (
+      <path
+        d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3l-5.6 2.9 1.1-6.2L3 9.6l6.2-.9L12 3z"
+        fill="currentColor"
+      />
+    ),
   };
   return (
     <svg
@@ -86,9 +99,48 @@ export function Icon({ name, size = 16 }: { name: string; size?: number }) {
   );
 }
 
+type Tone = "ok" | "warn" | "danger" | "info" | "neutral" | "accent";
+
+const STATUS_TONES: Record<string, Tone> = {
+  pass: "ok",
+  warn: "warn",
+  fail: "danger",
+  error: "danger",
+  proposed: "accent",
+  active: "ok",
+  disabled: "neutral",
+  archived: "neutral",
+  open: "danger",
+  acknowledged: "warn",
+  expected: "info",
+  resolved: "ok",
+  muted: "neutral",
+  running: "info",
+  complete: "ok",
+  failed: "danger",
+  unknown: "neutral",
+  review: "accent",
+  approved: "ok",
+  monitoring: "info",
+  dismissed: "neutral",
+};
+
+export function StatusPill({ value }: { value: string | null | undefined }) {
+  if (!value) return <span className="pill tone-neutral">-</span>;
+  const tone = STATUS_TONES[value] ?? "neutral";
+  const className = `pill tone-${tone}`;
+  return <span className={className}>{value}</span>;
+}
+
+export function SeverityBadge({ severity }: { severity: string | null | undefined }) {
+  const label = severity || "info";
+  const tone = label === "error" ? "danger" : label === "warn" ? "warn" : "info";
+  const className = `pill tone-${tone} pill-outline`;
+  return <span className={className}>{label}</span>;
+}
+
 export function Pill({ value }: { value: string | null | undefined }) {
-  if (!value) return <span className="pill unknown">—</span>;
-  return <span className={`pill ${value}`}>{value}</span>;
+  return <StatusPill value={value} />;
 }
 
 export function SeverityDot({ severity }: { severity: string }) {

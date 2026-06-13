@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import { api } from "../api/client";
 import type { Health, RcaSession, Run } from "../api/types";
 import { canEdit, useAuth } from "../auth";
@@ -11,14 +11,21 @@ const FILTERS = ["all", "fail", "warn", "error", "pass"] as const;
 
 export default function RunsPage() {
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("all");
+  const [params] = useSearchParams();
+  const checkId = params.get("check_id") ? Number(params.get("check_id")) : undefined;
   const { user } = useAuth();
   const navigate = useNavigate();
   const qc = useQueryClient();
 
   const { data: health } = useQuery({ queryKey: ["health"], queryFn: () => api.get<Health>("/health") });
   const { data, isLoading, error } = useQuery({
-    queryKey: ["runs", { filter }],
-    queryFn: () => api.get<Run[]>(`/runs?limit=100${filter === "all" ? "" : `&status=${filter}`}`),
+    queryKey: ["runs", { filter, checkId }],
+    queryFn: () => {
+      const qs = new URLSearchParams({ limit: "100" });
+      if (filter !== "all") qs.set("status", filter);
+      if (checkId) qs.set("check_id", String(checkId));
+      return api.get<Run[]>(`/runs?${qs}`);
+    },
     refetchInterval: 20_000,
   });
 
@@ -37,7 +44,10 @@ export default function RunsPage() {
       <div className="page-header">
         <div>
           <h1>Runs</h1>
-          <div className="sub">Check execution history (auto-refreshes)</div>
+          <div className="sub">
+            Check execution history (auto-refreshes)
+            {checkId ? ` · filtered to check #${checkId}` : ""}
+          </div>
         </div>
         {canEdit(user) && health?.llm_enabled && failedRuns.length > 0 && (
           <button

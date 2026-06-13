@@ -1,21 +1,57 @@
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { api } from "../api/client";
 import type { Dataset } from "../api/types";
-import { EmptyState, ErrorBox, Pill, Spinner } from "../components/ui";
+import { EmptyState, ErrorBox, Icon, Spinner, StatusPill } from "../components/ui";
 import { fmtNum, timeAgo } from "../lib/format";
+import {
+  getFavoriteDatasetIds,
+  getRecentDatasets,
+  pruneDatasetPrefs,
+  subscribePrefs,
+  toggleFavoriteDataset,
+} from "../lib/prefs";
 
 const HEALTH_FILTERS = ["all", "fail", "warn", "pass", "unknown"] as const;
+
+function datasetLabel(dataset: Dataset): string {
+  return dataset.display_name || `${dataset.schema_name ? `${dataset.schema_name}.` : ""}${dataset.table_name}`;
+}
 
 export default function DatasetsPage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
   const [healthFilter, setHealthFilter] = useState<(typeof HEALTH_FILTERS)[number]>("all");
+  const [favorites, setFavorites] = useState<number[]>(() => getFavoriteDatasetIds());
+  const [recents, setRecents] = useState(() => getRecentDatasets());
   const { data: raw, isLoading, error } = useQuery({
     queryKey: ["datasets"],
     queryFn: () => api.get<Dataset[]>("/datasets"),
   });
+
+  useEffect(
+    () =>
+      subscribePrefs(() => {
+        setFavorites(getFavoriteDatasetIds());
+        setRecents(getRecentDatasets());
+      }),
+    [],
+  );
+
+  useEffect(() => {
+    if (!raw) return;
+    const pruned = pruneDatasetPrefs(raw.map((dataset) => dataset.id));
+    setFavorites(pruned.favorites);
+    setRecents(pruned.recents);
+  }, [raw]);
+
+  const datasetsById = useMemo(() => new Map((raw ?? []).map((dataset) => [dataset.id, dataset])), [raw]);
+  const favoriteIds = useMemo(() => new Set(favorites), [favorites]);
+  const recentDatasets = useMemo(
+    () => recents.map((recent) => datasetsById.get(recent.id)).filter((dataset): dataset is Dataset => Boolean(dataset)),
+    [datasetsById, recents],
+  );
 
   const data = useMemo(() => {
     let list = raw ?? [];
@@ -29,8 +65,18 @@ export default function DatasetsPage() {
       );
     }
     if (healthFilter !== "all") list = list.filter((d) => (d.health ?? "unknown") === healthFilter);
-    return [...list].sort((a, b) => b.open_exceptions - a.open_exceptions);
-  }, [raw, search, healthFilter]);
+    const favoriteRank = new Map(favorites.map((id, index) => [id, index]));
+    return [...list].sort((a, b) => {
+      const aRank = favoriteRank.get(a.id);
+      const bRank = favoriteRank.get(b.id);
+      if (aRank !== undefined || bRank !== undefined) {
+        if (aRank === undefined) return 1;
+        if (bRank === undefined) return -1;
+        return aRank - bRank;
+      }
+      return b.open_exceptions - a.open_exceptions || datasetLabel(a).localeCompare(datasetLabel(b));
+    });
+  }, [raw, search, healthFilter, favorites]);
 
   return (
     <div className="page">
@@ -72,10 +118,30 @@ export default function DatasetsPage() {
           </EmptyState>
         </div>
       ) : (
-        <div className="card table-wrap">
+        <>
+          {recentDatasets.length > 0 && (
+            <div className="recent-strip">
+              <span className="recent-label">Recently viewed</span>
+              <div className="chip-row">
+                {recentDatasets.map((dataset) => (
+                  <button
+                    key={dataset.id}
+                    type="button"
+                    className="filter-chip recent-chip"
+                    title={`${datasetLabel(dataset)} on ${dataset.connection_name}`}
+                    onClick={() => navigate(`/datasets/${dataset.id}`)}
+                  >
+                    {datasetLabel(dataset)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="card table-wrap">
           <table className="data">
             <thead>
               <tr>
+                <th className="favorite-col" aria-label="Favorite" />
                 <th>Health</th>
                 <th>Dataset</th>
                 <th>Connection</th>
@@ -88,9 +154,26 @@ export default function DatasetsPage() {
               </tr>
             </thead>
             <tbody>
-              {data.map((d) => (
+              {data.map((d) => {
+                const isFavorite = favoriteIds.has(d.id);
+                return (
                 <tr key={d.id} className="clickable" onClick={() => navigate(`/datasets/${d.id}`)}>
-                  <td><Pill value={d.health} /></td>
+                  <td className="favorite-col">
+                    <button
+                      type="button"
+                      className={`favorite-toggle${isFavorite ? " on" : ""}`}
+                      aria-label={`${isFavorite ? "Remove" : "Add"} ${datasetLabel(d)} ${isFavorite ? "from" : "to"} favorites`}
+                      aria-pressed={isFavorite}
+                      title={isFavorite ? "Remove from favorites" : "Add to favorites"}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setFavorites(toggleFavoriteDataset(d.id));
+                      }}
+                    >
+                      <Icon name={isFavorite ? "star-filled" : "star"} size={15} />
+                    </button>
+                  </td>
+                  <td><StatusPill value={d.health} /></td>
                   <td style={{ fontWeight: 700, color: "var(--text-dark)" }}>
                     {d.schema_name ? `${d.schema_name}.` : ""}
                     {d.table_name}
@@ -113,10 +196,12 @@ export default function DatasetsPage() {
                   </td>
                   <td style={{ color: "var(--text-light)" }}>{timeAgo(d.last_profiled_at)}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
-        </div>
+          </div>
+        </>
       )}
     </div>
   );

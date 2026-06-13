@@ -13,6 +13,9 @@
         if (localStorage.getItem("dq-theme") === "dark") {
           document.documentElement.dataset.theme = "dark";
         }
+        if (localStorage.getItem("dq-density") === "compact") {
+          document.documentElement.dataset.density = "compact";
+        }
       } catch (e) {
         /* storage unavailable — stay light */
       }

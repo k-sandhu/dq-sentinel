@@ -1,79 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../../api/client";
-import type { Health, RcaSession, TranscriptStep } from "../../api/types";
+import type { Health, RcaSession } from "../../api/types";
 import { canEdit, useAuth } from "../../auth";
-import Markdown from "../../components/Markdown";
-import { EmptyState, ErrorBox, Icon, Pill, Spinner } from "../../components/ui";
-import { fmtDateTime } from "../../lib/format";
-
-function Transcript({ steps }: { steps: TranscriptStep[] }) {
-  const sqlSteps = steps.filter((s) => s.type === "sql").length;
-  return (
-    <details className="step" style={{ marginTop: 14 }}>
-      <summary>Investigation transcript ({sqlSteps} queries)</summary>
-      <div className="body">
-        {steps.map((s, i) => {
-          if (s.type === "text") {
-            return (
-              <p key={i} style={{ fontSize: 12.5, margin: "8px 0" }}>
-                {String(s.content)}
-              </p>
-            );
-          }
-          if (s.type === "sql") {
-            return (
-              <div key={i}>
-                {s.purpose && <div style={{ fontSize: 12, fontWeight: 700, marginTop: 8 }}>▸ {s.purpose}</div>}
-                <pre className="sql">{s.sql}</pre>
-              </div>
-            );
-          }
-          if (s.type === "result") {
-            return (
-              <pre key={i} className="result" style={s.error ? { borderColor: "var(--danger)", color: "var(--danger-dark)" } : undefined}>
-                {String(s.content)}
-              </pre>
-            );
-          }
-          return null;
-        })}
-      </div>
-    </details>
-  );
-}
-
-function SessionView({ session }: { session: RcaSession }) {
-  return (
-    <div className="card card-pad" style={{ marginBottom: 16 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
-        <h3 style={{ marginBottom: 4 }}>
-          <Pill value={session.status} />{" "}
-          {session.check_run_id ? `Run #${session.check_run_id}` : "Ad-hoc investigation"}
-          <span style={{ fontWeight: 400, color: "var(--text-light)", fontSize: 12, marginLeft: 8 }}>
-            {fmtDateTime(session.created_at)} {session.model && `· ${session.model}`}
-          </span>
-        </h3>
-      </div>
-      {session.question && (
-        <p style={{ fontSize: 12.5, color: "var(--text-light)", margin: "2px 0 8px" }}>
-          Q: {session.question}
-        </p>
-      )}
-      {session.status === "running" ? (
-        <Spinner label="Agent is investigating (writing read-only SQL against the source)…" />
-      ) : (
-        <>
-          {session.root_cause_summary && (
-            <div className="info-box" style={{ fontWeight: 600 }}>{session.root_cause_summary}</div>
-          )}
-          <Markdown>{session.report_md}</Markdown>
-          {session.transcript?.length > 0 && <Transcript steps={session.transcript} />}
-        </>
-      )}
-    </div>
-  );
-}
+import RcaReport from "../../components/RcaReport";
+import { EmptyState, ErrorBox, Icon, Spinner } from "../../components/ui";
 
 export default function RcaTab({ datasetId }: { datasetId: number }) {
   const { user } = useAuth();
@@ -136,7 +67,7 @@ export default function RcaTab({ datasetId }: { datasetId: number }) {
           <EmptyState title="No investigations yet" hint="Launch one from a failed run, or ask a question above." />
         </div>
       ) : (
-        sessions.map((s) => <SessionView key={s.id} session={s} />)
+        sessions.map((s) => <RcaReport key={s.id} session={s} />)
       )}
     </div>
   );

@@ -17,6 +17,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         populate_by_name=True,
+        validate_by_name=True,
     )
 
     # App metadata database (SQLite for dev, PostgreSQL for prod)
@@ -35,9 +36,11 @@ class Settings(BaseSettings):
     # "auto" picks anthropic if ANTHROPIC_API_KEY is set, else openai if
     # DQ_LLM_API_KEY is set.
     llm_provider: str = "auto"  # auto | anthropic | openai | openrouter
-    anthropic_api_key: str = Field(default="", validation_alias="ANTHROPIC_API_KEY")
+    anthropic_api_key: str = Field(
+        default="", validation_alias=AliasChoices("ANTHROPIC_API_KEY", "anthropic_api_key")
+    )
     llm_api_key: str = Field(
-        default="", validation_alias=AliasChoices("DQ_LLM_API_KEY", "OPENROUTER_API_KEY")
+        default="", validation_alias=AliasChoices("DQ_LLM_API_KEY", "OPENROUTER_API_KEY", "llm_api_key")
     )
     llm_base_url: str = "https://openrouter.ai/api/v1"
     llm_model: str = ""  # default per provider: anthropic -> claude-opus-4-8; openai -> required
@@ -50,6 +53,13 @@ class Settings(BaseSettings):
     # thread and times out every proxy in front of the API.
     llm_timeout_seconds: float = 90.0
     llm_max_retries: int = 1
+
+    def __init__(self, **data: object) -> None:
+        if "anthropic_api_key" in data and "ANTHROPIC_API_KEY" not in data:
+            data["ANTHROPIC_API_KEY"] = data.pop("anthropic_api_key")
+        if "llm_api_key" in data and "DQ_LLM_API_KEY" not in data:
+            data["DQ_LLM_API_KEY"] = data.pop("llm_api_key")
+        super().__init__(**data)
 
     def resolved_llm(self) -> dict | None:
         """Which provider/model will actually be used, or None when disabled."""

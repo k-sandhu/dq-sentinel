@@ -1,12 +1,12 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { api } from "../api/client";
 import type { Check, Run } from "../api/types";
 import { canEdit, useAuth } from "../auth";
 import { checkTypeLabel, originLabel } from "../lib/checkMeta";
 import { describeSchedule, timeAgo } from "../lib/format";
-import { EmptyState, ErrorBox, Icon, Modal, Pill, SeverityDot } from "./ui";
+import { EmptyState, ErrorBox, Icon, Modal, SeverityBadge, StatusPill } from "./ui";
 
 function paramsSummary(c: Check): string {
   const entries = Object.entries(c.params ?? {});
@@ -110,6 +110,7 @@ export default function ChecksTable({
   onRunFinished?: (run: Run) => void;
 }) {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const editable = canEdit(user);
   const [editing, setEditing] = useState<Check | null>(null);
@@ -169,13 +170,19 @@ export default function ChecksTable({
             <table className="data">
               <tbody>
                 {proposed.map((c) => (
-                  <tr key={c.id}>
+                  <tr key={c.id} className="clickable" onClick={() => navigate(`/checks/${c.id}`)}>
                     <td style={{ width: 24 }}>
                       <span className={`badge ${c.origin === "llm" ? "ai" : ""}`}>{originLabel(c.origin)}</span>
                     </td>
                     <td>
                       <div style={{ fontWeight: 700, color: "var(--text-dark)" }}>
-                        {checkTypeLabel(c.check_type)}
+                        <Link
+                          to={`/checks/${c.id}`}
+                          onClick={(e) => e.stopPropagation()}
+                          style={{ color: "var(--text-dark)" }}
+                        >
+                          {checkTypeLabel(c.check_type)}
+                        </Link>
                         {c.column_name && <span style={{ fontWeight: 400 }}> on </span>}
                         {c.column_name && <code>{c.column_name}</code>}
                         {showDataset && (
@@ -188,13 +195,13 @@ export default function ChecksTable({
                       )}
                     </td>
                     <td style={{ whiteSpace: "nowrap" }}>
-                      <SeverityDot severity={c.severity} />
+                      <SeverityBadge severity={c.severity} />
                     </td>
                     <td style={{ whiteSpace: "nowrap", color: "var(--text-light)", fontSize: 12 }}>
                       {describeSchedule(c.schedule_kind, c.schedule_expr)}
                     </td>
                     {editable && (
-                      <td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
+                      <td style={{ whiteSpace: "nowrap", textAlign: "right" }} onClick={(e) => e.stopPropagation()}>
                         <button
                           className="primary small"
                           onClick={() => setStatus.mutate({ id: c.id, status: "active" })}
@@ -234,9 +241,15 @@ export default function ChecksTable({
               </thead>
               <tbody>
                 {rest.map((c) => (
-                  <tr key={c.id}>
+                  <tr key={c.id} className="clickable" onClick={() => navigate(`/checks/${c.id}`)}>
                     <td>
-                      <div style={{ fontWeight: 600, color: "var(--text-dark)" }}>{c.name}</div>
+                      <Link
+                        to={`/checks/${c.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        style={{ fontWeight: 600, color: "var(--text-dark)" }}
+                      >
+                        {c.name}
+                      </Link>
                       <div style={{ fontSize: 11.5, color: "var(--text-light)" }}>
                         {checkTypeLabel(c.check_type)}
                         {c.column_name ? ` · ${c.column_name}` : ""} ·{" "}
@@ -247,22 +260,24 @@ export default function ChecksTable({
                     </td>
                     {showDataset && (
                       <td>
-                        <Link to={`/datasets/${c.dataset_id}/checks`}>{c.dataset_name}</Link>
+                        <Link to={`/datasets/${c.dataset_id}/checks`} onClick={(e) => e.stopPropagation()}>
+                          {c.dataset_name}
+                        </Link>
                       </td>
                     )}
                     <td>
-                      <SeverityDot severity={c.severity} />
+                      <SeverityBadge severity={c.severity} />
                     </td>
                     <td style={{ fontSize: 12, color: "var(--text-light)" }}>
                       {describeSchedule(c.schedule_kind, c.schedule_expr)}
                     </td>
                     <td>
-                      <Pill value={c.status} />
+                      <StatusPill value={c.status} />
                     </td>
                     <td>
                       {c.last_status ? (
                         <>
-                          <Pill value={c.last_status} />{" "}
+                          <StatusPill value={c.last_status} />{" "}
                           <span style={{ fontSize: 11.5, color: "var(--text-light)" }}>{timeAgo(c.last_run_at)}</span>
                         </>
                       ) : (
@@ -270,7 +285,7 @@ export default function ChecksTable({
                       )}
                     </td>
                     {editable && (
-                      <td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
+                      <td style={{ whiteSpace: "nowrap", textAlign: "right" }} onClick={(e) => e.stopPropagation()}>
                         <button
                           className="small"
                           disabled={runningId === c.id}

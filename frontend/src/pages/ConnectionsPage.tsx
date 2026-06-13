@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { api } from "../api/client";
 import type { Connection, ConnectionHealth, ConnectionTest, EngineInfo } from "../api/types";
 import { isAdmin, useAuth } from "../auth";
-import { EmptyState, ErrorBox, Icon, Modal, Spinner } from "../components/ui";
+import { EmptyState, ErrorBox, Icon, Modal, Spinner, StatusPill } from "../components/ui";
 import { fmtDateTime } from "../lib/format";
 
 const GENERIC_DSN_PLACEHOLDER = "dialect+driver://user:pass@host:port/dbname";
@@ -153,6 +153,7 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
 
 export default function ConnectionsPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const [adding, setAdding] = useState(false);
   const { data, isLoading, error } = useQuery({
@@ -231,26 +232,37 @@ export default function ConnectionsPage() {
               </tr>
             </thead>
             <tbody>
-              {data.map((c) => (
-                <tr key={c.id}>
-                  <td style={{ fontWeight: 700, color: "var(--text-dark)" }}>{c.name}</td>
+              {data.map((c) => {
+                const rowHealth = healthById.get(c.id);
+                const healthClass = rowHealth?.ok ? "pill tone-ok" : "pill tone-danger";
+                return (
+                <tr key={c.id} className="clickable" onClick={() => navigate(`/connections/${c.id}`)}>
                   <td>
-                    {healthById.has(c.id) ? (
+                    <Link
+                      to={`/connections/${c.id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      style={{ fontWeight: 700, color: "var(--text-dark)" }}
+                    >
+                      {c.name}
+                    </Link>
+                  </td>
+                  <td>
+                    {rowHealth ? (
                       <span
-                        className={`pill ${healthById.get(c.id)!.ok ? "pass" : "fail"}`}
-                        title={healthById.get(c.id)!.message}
+                        className={healthClass}
+                        title={rowHealth.message}
                       >
-                        {healthById.get(c.id)!.ok ? `up · ${healthById.get(c.id)!.latency_ms}ms` : "down"}
+                        {rowHealth.ok ? `up · ${rowHealth.latency_ms}ms` : "down"}
                       </span>
                     ) : (
-                      <span className="pill unknown">—</span>
+                      <StatusPill value={null} />
                     )}
                   </td>
                   <td><span className="badge kind">{c.kind}</span></td>
                   <td className="mono" style={{ maxWidth: 340, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.dsn_masked}</td>
                   <td className="num">{c.dataset_count}</td>
                   <td style={{ color: "var(--text-light)" }}>{fmtDateTime(c.created_at)}</td>
-                  <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                  <td style={{ textAlign: "right", whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
                     <Link to={`/connections/${c.id}/browse`} className="btn small" style={{ marginRight: 6 }}>
                       <Icon name="search" size={12} /> Browse tables
                     </Link>
@@ -266,7 +278,8 @@ export default function ConnectionsPage() {
                     )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
