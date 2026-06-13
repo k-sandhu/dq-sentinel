@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { api } from "../api/client";
 import type { Dataset, Profile } from "../api/types";
 import { canEdit, useAuth } from "../auth";
-import { ErrorBox, Icon, Pill, Spinner } from "../components/ui";
+import { ErrorBox, Icon, Spinner, StatusPill } from "../components/ui";
 import { fmtNum, timeAgo } from "../lib/format";
 import ChecksTab from "./dataset/ChecksTab";
 import CodeTab from "./dataset/CodeTab";
@@ -54,7 +54,7 @@ export default function DatasetDetailPage() {
         <div>
           <h1>
             {dataset.schema_name ? `${dataset.schema_name}.` : ""}
-            {dataset.table_name} <Pill value={dataset.health} />
+            {dataset.table_name} <StatusPill value={dataset.health} />
           </h1>
           <div className="sub">
             {dataset.connection_name} · {fmtNum(dataset.row_count)} rows · profiled {timeAgo(dataset.last_profiled_at)} ·{" "}
