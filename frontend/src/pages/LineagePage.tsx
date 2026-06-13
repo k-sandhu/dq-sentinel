@@ -7,6 +7,7 @@ import { api } from "../api/client";
 import type { Connection, LineageGraph as LineageGraphData, LineageNode } from "../api/types";
 import LineageGraph from "../components/LineageGraph";
 import { EmptyState, ErrorBox, Spinner, StatusPill } from "../components/ui";
+import { lineageNodeHref } from "../lib/lineageNav";
 
 function nodeLabel(n: LineageNode): string {
   return n.schema_name ? `${n.schema_name}.${n.table_name}` : n.table_name;
@@ -114,21 +115,34 @@ export default function LineagePage() {
               )}
               {attention.length > 0 && (
                 <div className="dense-list">
-                  {attention.map((n) => (
-                    <div
-                      key={n.id}
-                      className={`dense-item${n.dataset_id !== null ? " clickable" : ""}`}
-                      onClick={() => n.dataset_id !== null && navigate(`/datasets/${n.dataset_id}`)}
-                    >
-                      <div className="title">
-                        {nodeLabel(n)} <StatusPill value={n.health} />
+                  {attention.map((n) => {
+                    const href = lineageNodeHref(n);
+                    return (
+                      <div
+                        key={n.id}
+                        className={`dense-item${href ? " clickable" : ""}`}
+                        onClick={() => href && navigate(href)}
+                      >
+                        <div className="title">
+                          {nodeLabel(n)} <StatusPill value={n.health} />
+                        </div>
+                        <div className="meta">
+                          {n.failing_checks} failing check{n.failing_checks === 1 ? "" : "s"} · {n.open_exceptions} open
+                          exception{n.open_exceptions === 1 ? "" : "s"}
+                        </div>
+                        {n.dataset_id !== null && (
+                          <div style={{ display: "flex", gap: 12, marginTop: 6, fontSize: 12 }}>
+                            <Link to={`/datasets/${n.dataset_id}`} onClick={(e) => e.stopPropagation()}>
+                              Open profile
+                            </Link>
+                            <Link to={`/datasets/${n.dataset_id}/lineage`} onClick={(e) => e.stopPropagation()}>
+                              Open lineage
+                            </Link>
+                          </div>
+                        )}
                       </div>
-                      <div className="meta">
-                        {n.failing_checks} failing check{n.failing_checks === 1 ? "" : "s"} · {n.open_exceptions} open
-                        exception{n.open_exceptions === 1 ? "" : "s"}
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -168,9 +182,14 @@ export default function LineagePage() {
                           <td>
                             <StatusPill value={target?.health ?? "unknown"} />
                           </td>
-                          <td>
+                          <td style={{ whiteSpace: "nowrap" }}>
                             {target?.dataset_id != null && (
-                              <Link to={`/datasets/${target.dataset_id}`}>open dataset</Link>
+                              <>
+                                <Link to={`/datasets/${target.dataset_id}`} style={{ marginRight: 12 }}>
+                                  Open profile
+                                </Link>
+                                <Link to={`/datasets/${target.dataset_id}/lineage`}>Open lineage</Link>
+                              </>
                             )}
                           </td>
                         </tr>

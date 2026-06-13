@@ -53,7 +53,7 @@ export default function RcaTab({ datasetId }: { datasetId: number }) {
               style={{ marginTop: 0, flex: 1 }}
             />
             <button className="primary" onClick={() => start.mutate()} disabled={!question.trim() || start.isPending}>
-              <Icon name="bolt" size={14} /> Investigate
+              <Icon name="bolt" size={14} /> Run RCA
             </button>
           </div>
           <ErrorBox error={start.error} />
