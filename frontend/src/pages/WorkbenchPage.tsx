@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { useSearchParams } from "react-router";
 import { api } from "../api/client";
@@ -17,23 +17,52 @@ import PanelChart from "../components/PanelChart";
 import { EmptyState, ErrorBox, Icon, Modal, Spinner } from "../components/ui";
 import { fmtNum, fmtValue } from "../lib/format";
 
+const BACKTICK_QUOTE_KINDS = new Set(["mysql", "mariadb", "bigquery", "clickhouse"]);
+const BRACKET_QUOTE_KINDS = new Set(["mssql", "sqlserver", "sql_server"]);
+
+function quoteIdentifier(identifier: string, connectionKind?: string | null): string {
+  const kind = connectionKind?.toLowerCase();
+  if (kind && BRACKET_QUOTE_KINDS.has(kind)) {
+    return `[${identifier.replaceAll("]", "]]")}]`;
+  }
+  if (kind && BACKTICK_QUOTE_KINDS.has(kind)) {
+    return `\`${identifier.replaceAll("`", "``")}\``;
+  }
+  return `"${identifier.replaceAll("\"", "\"\"")}"`;
+}
+
+function quoteTableIdentifier(table: SchemaTable, connectionKind?: string | null): string {
+  const parts = table.schema_name ? [table.schema_name, table.table_name] : [table.table_name];
+  return parts.map((part) => quoteIdentifier(part, connectionKind)).join(".");
+}
+
+function tableLabel(table: Pick<SchemaTable, "schema_name" | "table_name">): string {
+  return table.schema_name ? `${table.schema_name}.${table.table_name}` : table.table_name;
+}
+
 function SchemaSidebar({
   connectionId,
+  connectionKind,
   onInsert,
 }: {
   connectionId: number;
+  connectionKind?: string | null;
   onInsert: (text: string) => void;
 }) {
   const [open, setOpen] = useState<Set<string>>(new Set());
-  const [ddlTable, setDdlTable] = useState<string | null>(null);
+  const [ddlTable, setDdlTable] = useState<Pick<SchemaTable, "schema_name" | "table_name"> | null>(null);
   const { data, isLoading } = useQuery({
     queryKey: ["schema", connectionId],
     queryFn: () => api.get<SchemaTable[]>(`/connections/${connectionId}/schema`),
     staleTime: 120_000,
   });
   const ddl = useQuery({
-    queryKey: ["ddl", connectionId, ddlTable],
-    queryFn: () => api.get<Ddl>(`/connections/${connectionId}/ddl?table=${encodeURIComponent(ddlTable!)}`),
+    queryKey: ["ddl", connectionId, ddlTable?.schema_name, ddlTable?.table_name],
+    queryFn: () => {
+      const qs = new URLSearchParams({ table: ddlTable!.table_name });
+      if (ddlTable!.schema_name) qs.set("schema", ddlTable!.schema_name);
+      return api.get<Ddl>(`/connections/${connectionId}/ddl?${qs.toString()}`);
+    },
     enabled: !!ddlTable,
   });
 
@@ -41,8 +70,9 @@ function SchemaSidebar({
   return (
     <div style={{ fontSize: 12.5, maxHeight: "70vh", overflowY: "auto" }}>
       {(data ?? []).map((t) => {
-        const key = t.table_name;
+        const key = tableLabel(t);
         const expanded = open.has(key);
+        const displayName = tableLabel(t);
         return (
           <div key={key} style={{ marginBottom: 2 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -57,13 +87,13 @@ function SchemaSidebar({
                 }}
                 title={`${t.kind} — click to ${expanded ? "collapse" : "expand"}`}
               >
-                {expanded ? "▾" : "▸"} {t.table_name}
+                {expanded ? "▾" : "▸"} {displayName}
                 {t.kind === "view" && <span className="badge kind" style={{ marginLeft: 4 }}>view</span>}
               </button>
-              <button className="ghost small" title="Insert name" onClick={() => onInsert(t.table_name)}>
+              <button className="ghost small" title="Insert quoted table name" onClick={() => onInsert(quoteTableIdentifier(t, connectionKind))}>
                 <Icon name="plus" size={11} />
               </button>
-              <button className="ghost small" title="View definition (DDL)" onClick={() => setDdlTable(t.table_name)}>
+              <button className="ghost small" title="View definition (DDL)" onClick={() => setDdlTable({ schema_name: t.schema_name, table_name: t.table_name })}>
                 <Icon name="book" size={11} />
               </button>
             </div>
@@ -74,8 +104,8 @@ function SchemaSidebar({
                     key={c.name}
                     className="clickable"
                     style={{ display: "flex", justifyContent: "space-between", padding: "1.5px 4px", cursor: "pointer", borderRadius: 4 }}
-                    onClick={() => onInsert(c.name)}
-                    title="Click to insert"
+                    onClick={() => onInsert(quoteIdentifier(c.name, connectionKind))}
+                    title="Click to insert quoted column name"
                   >
                     <span style={{ fontFamily: "var(--mono)", fontSize: 11.5 }}>{c.name}</span>
                     <span style={{ color: "var(--text-light)", fontSize: 10.5 }}>{c.dtype.toLowerCase().slice(0, 12)}</span>
@@ -87,7 +117,7 @@ function SchemaSidebar({
         );
       })}
       {ddlTable && (
-        <Modal title={`Definition of ${ddlTable}`} onClose={() => setDdlTable(null)} wide>
+        <Modal title={`Definition of ${tableLabel(ddlTable)}`} onClose={() => setDdlTable(null)} wide>
           {ddl.isLoading ? (
             <Spinner />
           ) : (
@@ -123,6 +153,7 @@ export default function WorkbenchPage() {
   const [chartType, setChartType] = useState<VizType>("bar");
   const [chartX, setChartX] = useState<string>("");
   const [chartY, setChartY] = useState<string>("");
+  const activeConnectionId = useRef<number | null>(connectionId);
 
   const { data: connections } = useQuery({
     queryKey: ["connections"],
@@ -139,6 +170,15 @@ export default function WorkbenchPage() {
     else if (!connectionId && !datasetId && connections?.length) setConnectionId(connections[0].id);
   }, [dataset, connections, connectionId, datasetId]);
 
+  useEffect(() => {
+    activeConnectionId.current = connectionId;
+  }, [connectionId]);
+
+  const activeConnection = useMemo(
+    () => connections?.find((c) => c.id === connectionId) ?? null,
+    [connections, connectionId],
+  );
+
   const suggest = useQuery({
     queryKey: ["suggest", { connectionId, datasetId, runId, exceptionId, checkId }],
     queryFn: () =>
@@ -154,19 +194,34 @@ export default function WorkbenchPage() {
   });
 
   const run = useMutation({
-    mutationFn: (q: string) =>
-      api.post<QueryRunResult>("/query/run", { connection_id: connectionId, sql: q, limit }),
-    onSuccess: (r) => {
+    mutationFn: ({ connectionId: runConnectionId, sql: q, rowLimit }: { connectionId: number; sql: string; rowLimit: number }) =>
+      api.post<QueryRunResult>("/query/run", { connection_id: runConnectionId, sql: q, limit: rowLimit }),
+    onSuccess: (r, variables) => {
+      if (variables.connectionId !== activeConnectionId.current) return;
       setResult(r);
       setChartX(r.columns[0] ?? "");
       setChartY(r.columns[r.columns.length - 1] ?? "");
     },
   });
 
+  const resetQueryState = (clearSql: boolean) => {
+    if (clearSql) setSql("");
+    setResult(null);
+    setChart(false);
+    setChartX("");
+    setChartY("");
+    run.reset();
+  };
+
+  const runSql = (q: string) => {
+    if (!connectionId) return;
+    run.mutate({ connectionId, sql: q, rowLimit: limit });
+  };
+
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && editable && sql.trim()) {
       e.preventDefault();
-      run.mutate(sql);
+      runSql(sql);
     }
   };
 
@@ -194,7 +249,13 @@ export default function WorkbenchPage() {
         <div className="header-actions">
           <select
             value={connectionId ?? ""}
-            onChange={(e) => setConnectionId(Number(e.target.value))}
+            onChange={(e) => {
+              const nextConnectionId = e.target.value ? Number(e.target.value) : null;
+              if (nextConnectionId === connectionId) return;
+              setConnectionId(nextConnectionId);
+              activeConnectionId.current = nextConnectionId;
+              resetQueryState(true);
+            }}
             style={{ marginTop: 0, width: 220 }}
           >
             {connections?.map((c) => (
@@ -208,7 +269,7 @@ export default function WorkbenchPage() {
         <div className="card card-pad">
           <h3>Schema</h3>
           {connectionId ? (
-            <SchemaSidebar connectionId={connectionId} onInsert={insert} />
+            <SchemaSidebar connectionId={connectionId} connectionKind={activeConnection?.kind} onInsert={insert} />
           ) : (
             <div className="empty">Pick a connection</div>
           )}
@@ -229,7 +290,7 @@ export default function WorkbenchPage() {
               <button
                 className="primary"
                 disabled={!editable || !sql.trim() || !connectionId || run.isPending}
-                onClick={() => run.mutate(sql)}
+                onClick={() => runSql(sql)}
                 title="Ctrl+Enter"
               >
                 {run.isPending ? <span className="spinner" style={{ width: 13, height: 13 }} /> : <Icon name="play" size={13} />}
@@ -331,7 +392,7 @@ export default function WorkbenchPage() {
                     className="primary small"
                     onClick={() => {
                       setSql(s.sql);
-                      run.mutate(s.sql);
+                      runSql(s.sql);
                     }}
                   >
                     Run
