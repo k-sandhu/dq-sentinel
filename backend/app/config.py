@@ -97,6 +97,10 @@ class Settings(BaseSettings):
     smtp_starttls: bool = True
     base_url: str = "http://localhost:3000"  # for building links in notification bodies
 
+    # Audit log retention (issue #30): rows older than this are purged by a
+    # daily pass in the worker. 0 disables purging (keep everything).
+    audit_retention_days: int = 365
+
     # Observability
     log_format: str = "text"  # text | json
     log_level: str = "INFO"

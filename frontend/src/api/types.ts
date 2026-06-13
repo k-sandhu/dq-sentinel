@@ -469,3 +469,24 @@ export type ChatWsEvent =
   | { type: "assistant_message"; message: ChatMessage }
   | { type: "error"; detail: string }
   | { type: "done" };
+
+// ---- audit log (issue #30) ----
+export interface AuditEntry {
+  id: number;
+  user_id: number | null;
+  user: string | null; // resolved display name; null = system/anonymous
+  action: string;
+  entity_type: string;
+  entity_id: number | null;
+  detail: Record<string, unknown>;
+  request_id: string;
+  client_ip: string;
+  created_at: string;
+}
+
+export interface AuditPage {
+  items: AuditEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+}

@@ -285,6 +285,33 @@ class NotificationRule(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class AuditEntry(Base):
+    """Append-only audit trail of security/config-relevant actions (issue #30).
+
+    Distinct from ``ExceptionEvent`` (#56): that is the per-exception user-facing
+    timeline; this is the global admin/compliance surface. NEVER store secrets,
+    DSNs, password hashes, or source row data in ``detail``.
+    """
+
+    __tablename__ = "audit_log"
+    __table_args__ = (
+        Index("ix_audit_entity", "entity_type", "entity_id"),
+        Index("ix_audit_created", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )  # None = system/anonymous (e.g. failed login)
+    action: Mapped[str] = mapped_column(String(50))  # e.g. "login.success", "check.update"
+    entity_type: Mapped[str] = mapped_column(String(30))  # user|connection|dataset|check|exception|...
+    entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)  # diffs/params — NEVER secrets or row data
+    request_id: Mapped[str] = mapped_column(String(16), default="")  # joins to request logs
+    client_ip: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class RcaSession(Base):
     __tablename__ = "rca_sessions"
 
