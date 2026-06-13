@@ -239,6 +239,29 @@ class ChatMessage(Base):
     session: Mapped[ChatSession] = relationship(back_populates="messages")
 
 
+class SavedQuery(Base):
+    """A workbench query saved to the shared team library (issue #41). Optionally
+    pinned to a dataset (dataset_id set) so it surfaces where investigations start.
+    SQL is validated through guard_sql() at save time, so the library stays runnable."""
+
+    __tablename__ = "saved_queries"
+    __table_args__ = (Index("ix_savedq_conn", "connection_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    connection_id: Mapped[int] = mapped_column(ForeignKey("connections.id"))
+    dataset_id: Mapped[int | None] = mapped_column(
+        ForeignKey("datasets.id"), nullable=True
+    )  # set => pinned to that dataset
+    name: Mapped[str] = mapped_column(String(255))
+    description: Mapped[str] = mapped_column(Text, default="")
+    sql: Mapped[str] = mapped_column(Text)
+    tags: Mapped[list] = mapped_column(JSON, default=list)  # list[str]
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class RcaSession(Base):
     __tablename__ = "rca_sessions"
 

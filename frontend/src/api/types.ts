@@ -312,6 +312,22 @@ export interface ConnectionHealth {
   latency_ms: number | null;
 }
 
+// ---- saved queries (team snippet library) ----
+export interface SavedQuery {
+  id: number;
+  connection_id: number;
+  dataset_id: number | null;
+  name: string;
+  description: string;
+  sql: string;
+  tags: string[];
+  created_by_id: number | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  last_run_at: string | null;
+}
+
 // ---- MCP ----
 export interface McpServer {
   id: number;
