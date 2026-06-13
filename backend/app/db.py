@@ -3,7 +3,7 @@
 import logging
 from collections.abc import Generator
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -51,6 +51,58 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
+def _ensure_columns(engine: Engine) -> None:
+    """Poor-man's migration until Alembic lands (#23): add missing columns in place.
+
+    `init_db()` only calls `create_all`, which will NOT add columns to existing
+    tables — and the standing Docker demo runs Postgres with a persistent volume.
+    So new ORM columns on existing tables need an explicit ALTER. Sibling issues
+    (snooze, RCA report_json, ...) extend the `wanted` dict here.
+    """
+    wanted: dict[str, dict[str, str]] = {
+        "exception_records": {
+            # --- exceptions workbench: identity & recurrence (#55) ---
+            "fingerprint": "VARCHAR(64)",
+            "first_seen_at": "TIMESTAMP",  # TIMESTAMP (not DATETIME): valid on SQLite + Postgres
+            "last_seen_at": "TIMESTAMP",
+            "last_run_id": "INTEGER",
+            "occurrence_count": "INTEGER DEFAULT 1",
+            # --- exceptions workbench: triage workflow (#56) ---
+            "assigned_to_id": "INTEGER",
+        },
+    }
+    insp = inspect(engine)
+    with engine.begin() as conn:
+        for table, cols in wanted.items():
+            if not insp.has_table(table):
+                continue
+            existing = {c["name"] for c in insp.get_columns(table)}
+            for name, ddl in cols.items():
+                if name not in existing:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+        # Backfill idempotently: historical rows predate these columns. Leave
+        # `fingerprint` NULL (the runner only matches non-NULL fingerprints).
+        if insp.has_table("exception_records"):
+            conn.execute(
+                text(
+                    "UPDATE exception_records SET first_seen_at = created_at "
+                    "WHERE first_seen_at IS NULL"
+                )
+            )
+            conn.execute(
+                text(
+                    "UPDATE exception_records SET last_seen_at = created_at "
+                    "WHERE last_seen_at IS NULL"
+                )
+            )
+            conn.execute(
+                text(
+                    "UPDATE exception_records SET occurrence_count = 1 "
+                    "WHERE occurrence_count IS NULL"
+                )
+            )
+
+
 def init_db() -> None:
     """Create tables and seed the bootstrap admin if no users exist."""
     from app import models
@@ -58,6 +110,7 @@ def init_db() -> None:
 
     engine = get_engine()
     models.Base.metadata.create_all(engine)
+    _ensure_columns(engine)
 
     settings = get_settings()
     with session_factory()() as db:

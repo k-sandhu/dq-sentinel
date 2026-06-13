@@ -15,7 +15,7 @@ export default function ExceptionsPage() {
   });
 
   return (
-    <div className="page">
+    <div className="page wide">
       <div className="page-header">
         <div>
           <h1>Exceptions</h1>

@@ -162,7 +162,11 @@ def _make_source(tmp_dir: Path, name: str, columns: dict[str, list]) -> str:
 def _drift_ctx(db, dsn: str, column: str, params: dict, baseline_dsn: str | None = None):
     """Persist a Connection/Dataset, profile `baseline_dsn` (default = dsn) into a
     Profile row, create a Check, and return a db-aware CheckContext over `dsn`."""
-    conn = Connection(name=f"c-{column}-{id(params)}", kind="sqlite", dsn=dsn)
+    # Monotonic per-process counter — the session-shared app DB requires a globally
+    # unique connection name, and id(params) is unreliable (CPython reuses the id of a
+    # short-lived dict after GC, so consecutive drift tests collided on CI).
+    _drift_ctx.seq = getattr(_drift_ctx, "seq", 0) + 1
+    conn = Connection(name=f"c-{column}-{_drift_ctx.seq}", kind="sqlite", dsn=dsn)
     db.add(conn)
     db.flush()
     ds = Dataset(connection_id=conn.id, schema_name=None, table_name="t")

@@ -1,5 +1,6 @@
 /**
- * Typed client-side user preferences (favorites, recently-viewed, default landing).
+ * Typed client-side user preferences (favorites, recently-viewed, default
+ * landing, plus the exceptions workspace's saved views / hidden columns).
  *
  * ── v1 storage backend: localStorage ──────────────────────────────────────────
  * Everything is persisted in localStorage, namespaced under the PREF_KEYS below.
@@ -13,13 +14,24 @@
  * contract: a future server-backed implementation (a `user_prefs` table behind
  * `GET/PUT /auth/me/prefs`) can replace the *bodies* of `getPref`/`setPref`
  * (e.g. read from an in-memory cache hydrated on login, write-through to the API)
- * without touching a single call site.
+ * without touching a single call site. Saved views are shaped `{name, params}[]`
+ * so they ingest into a future `user_views` table unchanged.
  *
  * ── privacy ───────────────────────────────────────────────────────────────────
  * Store dataset IDs only — never names or row data. Prefs then carry nothing
  * meaningful without API access, so they share (and never exceed) the exposure
  * surface of the JWT that already lives in this same localStorage.
  */
+
+export const PREF_KEYS = {
+  favorites: "dq_favs", // number[] dataset ids, most-recently-starred first
+  recents: "dq_recent", // {id: number, at: string}[] capped at RECENTS_CAP
+  landing: "dq_landing", // LandingPref
+  views: "dq_views_v1", // SavedView[] (exceptions workspace, #63)
+  cols: "dq_cols_v1", // string[] of hidden column ids (exceptions table, #63)
+} as const;
+
+export type PrefKey = (typeof PREF_KEYS)[keyof typeof PREF_KEYS];
 
 /** Read a JSON-serialized preference. Returns `fallback` on miss or any error. */
 export function getPref<T>(key: string, fallback: T): T {
@@ -50,12 +62,6 @@ export function setPref<T>(key: string, value: T): void {
   }
 }
 
-export const PREF_KEYS = {
-  favorites: "dq_favs", // number[] dataset ids, most-recently-starred first
-  recents: "dq_recent", // {id: number, at: string}[] capped at RECENTS_CAP
-  landing: "dq_landing", // LandingPref
-} as const;
-
 /** Window event fired by `setPref`; lets live components stay in sync. */
 export const PREFS_EVENT = "dq:prefs";
 
@@ -63,6 +69,14 @@ export const PREFS_EVENT = "dq:prefs";
 export function subscribePrefs(handler: () => void): () => void {
   window.addEventListener(PREFS_EVENT, handler);
   return () => window.removeEventListener(PREFS_EVENT, handler);
+}
+
+// ── saved views (exceptions workspace, #63) ────────────────────────────────────
+
+/** A persisted saved view: a name + a URL search-param string. */
+export interface SavedView {
+  name: string;
+  params: string;
 }
 
 // ── landing page ──────────────────────────────────────────────────────────────

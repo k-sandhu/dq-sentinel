@@ -94,7 +94,8 @@ def test_triage_writes_one_batch_row(client, admin_headers, source_db):
         headers=h,
     ).json()
     run = client.post(f"/api/v1/checks/{check['id']}/run", headers=h).json()
-    excs = client.get(f"/api/v1/exceptions?run_id={run['id']}", headers=h).json()
+    # Exceptions API v2 (#57) returns a paged envelope, not a bare list.
+    excs = client.get(f"/api/v1/exceptions?run_id={run['id']}", headers=h).json()["items"]
     assert len(excs) >= 2
     ids = [e["id"] for e in excs]
 
