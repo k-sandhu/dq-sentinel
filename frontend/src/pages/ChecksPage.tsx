@@ -3,13 +3,17 @@ import { useState } from "react";
 import { api } from "../api/client";
 import type { Check } from "../api/types";
 import ChecksTable from "../components/ChecksTable";
-import { EmptyState, ErrorBox, Spinner } from "../components/ui";
+import NewCheckModal from "../components/NewCheckModal";
+import { canEdit, useAuth } from "../auth";
+import { EmptyState, ErrorBox, Icon, Spinner } from "../components/ui";
 
 const FILTERS = ["all", "active", "proposed", "disabled"] as const;
 
 export default function ChecksPage() {
+  const { user } = useAuth();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("all");
   const [search, setSearch] = useState("");
+  const [creating, setCreating] = useState(false);
   const { data, isLoading, error } = useQuery({
     queryKey: ["checks", { filter }],
     queryFn: () => api.get<Check[]>(`/checks${filter === "all" ? "" : `?status=${filter}`}`),
@@ -35,6 +39,11 @@ export default function ChecksPage() {
             {data ? ` · ${shown.length} of ${data.length} shown` : ""}
           </div>
         </div>
+        {canEdit(user) && (
+          <button className="primary" onClick={() => setCreating(true)}>
+            <Icon name="plus" size={14} /> New check
+          </button>
+        )}
       </div>
       <div className="toolbar">
         <input
@@ -69,6 +78,7 @@ export default function ChecksPage() {
       ) : (
         <ChecksTable checks={shown} />
       )}
+      {creating && <NewCheckModal onClose={() => setCreating(false)} />}
     </div>
   );
 }

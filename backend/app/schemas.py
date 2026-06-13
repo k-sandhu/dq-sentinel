@@ -57,6 +57,10 @@ class ConnectionIn(BaseModel):
     dsn: str = Field(description="SQLAlchemy URL, e.g. sqlite:///C:/data/shop.sqlite")
 
 
+class ConnectionUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+
+
 class ConnectionOut(ORMModel):
     id: int
     name: str

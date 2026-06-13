@@ -35,9 +35,11 @@ class Settings(BaseSettings):
     # "auto" picks anthropic if ANTHROPIC_API_KEY is set, else openai if
     # DQ_LLM_API_KEY is set.
     llm_provider: str = "auto"  # auto | anthropic | openai | openrouter
-    anthropic_api_key: str = Field(default="", validation_alias="ANTHROPIC_API_KEY")
+    anthropic_api_key: str = Field(
+        default="", validation_alias=AliasChoices("anthropic_api_key", "ANTHROPIC_API_KEY")
+    )
     llm_api_key: str = Field(
-        default="", validation_alias=AliasChoices("DQ_LLM_API_KEY", "OPENROUTER_API_KEY")
+        default="", validation_alias=AliasChoices("llm_api_key", "DQ_LLM_API_KEY", "OPENROUTER_API_KEY")
     )
     llm_base_url: str = "https://openrouter.ai/api/v1"
     llm_model: str = ""  # default per provider: anthropic -> claude-opus-4-8; openai -> required

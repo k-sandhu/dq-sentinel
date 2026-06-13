@@ -118,6 +118,32 @@ def test_connection(
     return schemas.ConnectionTestOut(ok=ok, message=message, table_count=table_count)
 
 
+@router.patch("/{connection_id}", response_model=schemas.ConnectionOut)
+def update_connection(
+    connection_id: int,
+    body: schemas.ConnectionUpdate,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_role("admin")),
+):
+    conn = db.get(models.Connection, connection_id)
+    if conn is None:
+        raise HTTPException(404, "Connection not found")
+    data = body.model_dump(exclude_unset=True)
+    if "name" in data and data["name"] is not None and data["name"] != conn.name:
+        exists = (
+            db.query(models.Connection)
+            .filter(models.Connection.name == data["name"], models.Connection.id != conn.id)
+            .first()
+        )
+        if exists:
+            raise HTTPException(409, "A connection with this name already exists")
+        conn.name = data["name"]
+    db.commit()
+    db.refresh(conn)
+    count = db.query(models.Dataset).filter(models.Dataset.connection_id == conn.id).count()
+    return connection_out(conn, count)
+
+
 @router.get("/{connection_id}/tables", response_model=list[schemas.TableInfo])
 def list_tables(
     connection_id: int,

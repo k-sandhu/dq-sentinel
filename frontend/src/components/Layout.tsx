@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
+import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { api } from "../api/client";
 import type { ConnectionHealth, Dataset } from "../api/types";
 import { useAuth } from "../auth";
@@ -209,12 +209,12 @@ export default function Layout() {
   return (
     <div className="app">
       <aside className="sidebar">
-        <div className="logo">
+        <Link to="/" className="logo" aria-label="DQ Sentinel home">
           <span className="logo-mark">
             <Icon name="shield" size={16} />
           </span>
           DQ Sentinel
-        </div>
+        </Link>
         {NAV_GROUPS.map((group) => (
           <div className="nav-group" key={group.label}>
             <div className="nav-section">{group.label}</div>

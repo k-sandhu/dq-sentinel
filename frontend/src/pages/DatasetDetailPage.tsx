@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { api } from "../api/client";
 import type { Dataset, Profile } from "../api/types";
 import { canEdit, useAuth } from "../auth";
+import Breadcrumbs from "../components/Breadcrumbs";
 import { ErrorBox, Icon, Pill, Spinner } from "../components/ui";
 import { fmtNum, timeAgo } from "../lib/format";
 import ChecksTab from "./dataset/ChecksTab";
@@ -48,13 +49,15 @@ export default function DatasetDetailPage() {
   if (error) return <div className="page"><ErrorBox error={error} /></div>;
   if (!dataset) return <Spinner label="Loading dataset…" />;
 
+  const datasetName = `${dataset.schema_name ? `${dataset.schema_name}.` : ""}${dataset.table_name}`;
+
   return (
     <div className="page">
+      <Breadcrumbs items={[{ label: "Datasets", to: "/datasets" }, { label: datasetName }]} />
       <div className="page-header">
         <div>
           <h1>
-            {dataset.schema_name ? `${dataset.schema_name}.` : ""}
-            {dataset.table_name} <Pill value={dataset.health} />
+            {datasetName} <Pill value={dataset.health} />
           </h1>
           <div className="sub">
             {dataset.connection_name} · {fmtNum(dataset.row_count)} rows · profiled {timeAgo(dataset.last_profiled_at)} ·{" "}
