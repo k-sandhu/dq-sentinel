@@ -3,6 +3,7 @@ import { useState } from "react";
 import { api } from "../../api/client";
 import type { AdhocDashboard, AdhocDashboardMeta, Health, Panel } from "../../api/types";
 import { canEdit, useAuth } from "../../auth";
+import { useConfirm } from "../../components/confirm";
 import ErrorBoundary from "../../components/ErrorBoundary";
 import PanelChart from "../../components/PanelChart";
 import { EmptyState, ErrorBox, Icon, Spinner } from "../../components/ui";
@@ -38,6 +39,7 @@ function PanelCard({ panel }: { panel: Panel }) {
 export default function DashboardsTab({ datasetId, hasProfile }: { datasetId: number; hasProfile: boolean }) {
   const { user } = useAuth();
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const [focus, setFocus] = useState("");
   const [openId, setOpenId] = useState<number | null>(null);
 
@@ -161,7 +163,26 @@ export default function DashboardsTab({ datasetId, hasProfile }: { datasetId: nu
                     <Icon name="refresh" size={12} /> Refresh
                   </button>
                   {canEdit(user) && (
-                    <button className="small danger" onClick={() => remove.mutate(openId)}>
+                    <button
+                      className="small danger"
+                      onClick={async () => {
+                        if (openId == null) return;
+                        if (
+                          await confirm({
+                            title: "Delete dashboard",
+                            danger: true,
+                            confirmLabel: "Delete",
+                            body: (
+                              <>
+                                Delete <strong>{dashboard.data?.title}</strong>? Its saved panels will be
+                                removed.
+                              </>
+                            ),
+                          })
+                        )
+                          remove.mutate(openId);
+                      }}
+                    >
                       Delete
                     </button>
                   )}

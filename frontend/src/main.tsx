@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router";
 import App from "./App";
 import { AuthProvider } from "./auth";
+import { ConfirmProvider } from "./components/confirm";
 import ErrorBoundary from "./components/ErrorBoundary";
 import "./styles.css";
 
@@ -18,9 +19,11 @@ createRoot(document.getElementById("root")!).render(
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
-          <BrowserRouter>
-            <App />
-          </BrowserRouter>
+          <ConfirmProvider>
+            <BrowserRouter>
+              <App />
+            </BrowserRouter>
+          </ConfirmProvider>
         </AuthProvider>
       </QueryClientProvider>
     </ErrorBoundary>

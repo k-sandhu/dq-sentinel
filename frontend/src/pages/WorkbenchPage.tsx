@@ -14,7 +14,7 @@ import type {
 } from "../api/types";
 import { canEdit, useAuth } from "../auth";
 import PanelChart from "../components/PanelChart";
-import { EmptyState, ErrorBox, Icon, Modal, Spinner } from "../components/ui";
+import { Breadcrumbs, EmptyState, ErrorBox, Icon, Modal, Spinner } from "../components/ui";
 import { fmtNum, fmtValue } from "../lib/format";
 
 function SchemaSidebar({
@@ -182,6 +182,15 @@ export default function WorkbenchPage() {
 
   return (
     <div className="page" style={{ maxWidth: 1500 }}>
+      {dataset && (
+        <Breadcrumbs
+          items={[
+            { label: "Datasets", to: "/datasets" },
+            { label: dataset.table_name, to: `/datasets/${dataset.id}` },
+            { label: "Workbench" },
+          ]}
+        />
+      )}
       <div className="page-header">
         <div>
           <h1>Workbench</h1>

@@ -6,6 +6,7 @@ import type { Check, Run } from "../api/types";
 import { canEdit, useAuth } from "../auth";
 import { checkTypeLabel, originLabel } from "../lib/checkMeta";
 import { describeSchedule, timeAgo } from "../lib/format";
+import { useConfirm } from "./confirm";
 import { EmptyState, ErrorBox, Icon, Modal, Pill, SeverityDot } from "./ui";
 
 function paramsSummary(c: Check): string {
@@ -23,6 +24,13 @@ function EditCheckModal({ check, onClose }: { check: Check; onClose: () => void 
   const [scheduleKind, setScheduleKind] = useState(check.schedule_kind ?? "interval");
   const [scheduleExpr, setScheduleExpr] = useState(check.schedule_expr ?? "1440");
   const [paramsText, setParamsText] = useState(JSON.stringify(check.params ?? {}, null, 2));
+
+  const dirty =
+    name !== check.name ||
+    severity !== check.severity ||
+    scheduleKind !== (check.schedule_kind ?? "interval") ||
+    scheduleExpr !== (check.schedule_expr ?? "1440") ||
+    paramsText !== JSON.stringify(check.params ?? {}, null, 2);
 
   const save = useMutation({
     mutationFn: async () => {
@@ -45,6 +53,7 @@ function EditCheckModal({ check, onClose }: { check: Check; onClose: () => void 
     <Modal
       title="Edit check"
       onClose={onClose}
+      dirty={dirty}
       footer={
         <>
           <button onClick={onClose}>Cancel</button>
@@ -111,6 +120,7 @@ export default function ChecksTable({
 }) {
   const { user } = useAuth();
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const editable = canEdit(user);
   const [editing, setEditing] = useState<Check | null>(null);
   const [runningId, setRunningId] = useState<number | null>(null);
@@ -204,7 +214,31 @@ export default function ChecksTable({
                         <button className="small" onClick={() => setEditing(c)}>
                           Edit
                         </button>{" "}
-                        <button className="small danger" onClick={() => archive.mutate(c.id)}>
+                        <button
+                          className="small danger"
+                          onClick={async () => {
+                            if (
+                              await confirm({
+                                title: "Dismiss proposed check",
+                                danger: true,
+                                confirmLabel: "Dismiss",
+                                body: (
+                                  <>
+                                    Dismiss the proposed <strong>{checkTypeLabel(c.check_type)}</strong>
+                                    {c.column_name ? (
+                                      <>
+                                        {" "}
+                                        on <code>{c.column_name}</code>
+                                      </>
+                                    ) : null}{" "}
+                                    check? It will be removed from proposals.
+                                  </>
+                                ),
+                              })
+                            )
+                              archive.mutate(c.id);
+                          }}
+                        >
                           Dismiss
                         </button>
                       </td>
@@ -292,7 +326,25 @@ export default function ChecksTable({
                         <button className="small" onClick={() => setEditing(c)}>
                           Edit
                         </button>{" "}
-                        <button className="small danger" onClick={() => archive.mutate(c.id)}>
+                        <button
+                          className="small danger"
+                          onClick={async () => {
+                            if (
+                              await confirm({
+                                title: "Archive check",
+                                danger: true,
+                                confirmLabel: "Archive",
+                                body: (
+                                  <>
+                                    Archive <strong>{c.name}</strong>? It stops running and leaves the
+                                    active list.
+                                  </>
+                                ),
+                              })
+                            )
+                              archive.mutate(c.id);
+                          }}
+                        >
                           Archive
                         </button>
                       </td>

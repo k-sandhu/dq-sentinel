@@ -339,6 +339,25 @@ button.primary:hover, .btn.primary:hover { background: var(--brand-dark); border
 button.danger { color: var(--danger-dark); }
 button.danger:hover { border-color: var(--danger); }
 button.small, .btn.small { padding: 4px 10px; font-size: 12px; min-height: 26px; }
+button.danger-solid, .btn.danger-solid { background: var(--danger); border-color: var(--danger); color: #fff; }
+button.danger-solid:hover, .btn.danger-solid:hover { background: var(--danger-dark); border-color: var(--danger-dark); color: #fff; }
+
+/* clickable sidebar logo (BF-1) */
+.sidebar a.logo { cursor: pointer; }
+.sidebar a.logo:hover { text-decoration: none; opacity: 0.82; }
+
+/* breadcrumbs on deep screens (BF-1) */
+.breadcrumbs { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: 12.5px; margin-bottom: 10px; }
+.breadcrumbs .crumb { color: var(--text-light); }
+.breadcrumbs a.crumb:hover { color: var(--brand-dark); text-decoration: none; }
+.breadcrumbs .crumb.current { color: var(--text-dark); font-weight: 700; }
+.breadcrumbs .crumb-sep { color: var(--text-light); opacity: 0.55; }
+
+/* removable active-filter tags (BF-2) */
+.active-filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.filter-tag { display: inline-flex; align-items: center; gap: 4px; background: var(--hover); border: 1px solid var(--border); border-radius: 99px; padding: 3px 5px 3px 11px; font-size: 12px; font-weight: 600; color: var(--text-dark); }
+.filter-tag .tag-x { background: none; border: none; min-height: 0; padding: 0 4px; font-size: 15px; line-height: 1; color: var(--text-light); cursor: pointer; }
+.filter-tag .tag-x:hover { color: var(--danger-dark); border: none; background: none; }
 button.ghost { border-color: transparent; background: transparent; }
 button.ghost:hover { background: var(--bg); }
 button.icon-only { width: 30px; padding: 0; justify-content: center; }

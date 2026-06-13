@@ -23,6 +23,7 @@ function NewCheckModal({ datasetId, onClose }: { datasetId: number; onClose: () 
   const [paramsText, setParamsText] = useState("{}");
 
   const selected = types?.find((t) => t.key === checkType);
+  const dirty = checkType !== "not_null" || column !== "" || severity !== "error" || paramsText !== "{}";
 
   const create = useMutation({
     mutationFn: () =>
@@ -44,6 +45,7 @@ function NewCheckModal({ datasetId, onClose }: { datasetId: number; onClose: () 
     <Modal
       title="New check"
       onClose={onClose}
+      dirty={dirty}
       footer={
         <>
           <button onClick={onClose}>Cancel</button>

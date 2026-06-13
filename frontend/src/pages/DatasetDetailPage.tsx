@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRef } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api } from "../api/client";
 import type { Dataset, Profile } from "../api/types";
 import { canEdit, useAuth } from "../auth";
-import { ErrorBox, Icon, Pill, Spinner } from "../components/ui";
+import { Breadcrumbs, ErrorBox, Icon, Pill, Spinner } from "../components/ui";
 import { fmtNum, timeAgo } from "../lib/format";
 import ChecksTab from "./dataset/ChecksTab";
 import CodeTab from "./dataset/CodeTab";
@@ -25,6 +26,18 @@ export default function DatasetDetailPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
   const active: Tab = TABS.includes(tab as Tab) ? (tab as Tab) : "profile";
+  // The Knowledge tab reports unsaved edits here so a tab switch can warn first (BF-3).
+  const knowledgeDirty = useRef(false);
+
+  const goTab = (t: Tab) => {
+    if (
+      active === "knowledge" &&
+      knowledgeDirty.current &&
+      !window.confirm("You have unsaved changes to this table's knowledge. Leave without saving?")
+    )
+      return;
+    navigate(`/datasets/${datasetId}/${t}`);
+  };
 
   const { data: dataset, error } = useQuery({
     queryKey: ["datasets", datasetId],
@@ -48,8 +61,11 @@ export default function DatasetDetailPage() {
   if (error) return <div className="page"><ErrorBox error={error} /></div>;
   if (!dataset) return <Spinner label="Loading dataset…" />;
 
+  const datasetLabel = `${dataset.schema_name ? `${dataset.schema_name}.` : ""}${dataset.table_name}`;
+
   return (
     <div className="page">
+      <Breadcrumbs items={[{ label: "Datasets", to: "/datasets" }, { label: datasetLabel }]} />
       <div className="page-header">
         <div>
           <h1>
@@ -77,7 +93,7 @@ export default function DatasetDetailPage() {
 
       <div className="tabs">
         {TABS.map((t) => (
-          <button key={t} className={`tab${active === t ? " on" : ""}`} onClick={() => navigate(`/datasets/${datasetId}/${t}`)}>
+          <button key={t} className={`tab${active === t ? " on" : ""}`} onClick={() => goTab(t)}>
             {t === "rca" ? "Root cause" : t[0].toUpperCase() + t.slice(1)}
           </button>
         ))}
@@ -98,7 +114,7 @@ export default function DatasetDetailPage() {
       {active === "runs" && <RunsTab datasetId={datasetId} />}
       {active === "exceptions" && <ExceptionsTab datasetId={datasetId} />}
       {active === "dashboards" && <DashboardsTab datasetId={datasetId} hasProfile={!!profileQuery.data} />}
-      {active === "knowledge" && <KnowledgeTab datasetId={datasetId} />}
+      {active === "knowledge" && <KnowledgeTab datasetId={datasetId} dirtyRef={knowledgeDirty} />}
       {active === "rca" && <RcaTab datasetId={datasetId} />}
     </div>
   );

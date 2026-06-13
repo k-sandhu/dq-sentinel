@@ -4,6 +4,7 @@ import { Link } from "react-router";
 import { api } from "../api/client";
 import type { Connection, ConnectionHealth, ConnectionTest, EngineInfo } from "../api/types";
 import { isAdmin, useAuth } from "../auth";
+import { useConfirm } from "../components/confirm";
 import { EmptyState, ErrorBox, Icon, Modal, Spinner } from "../components/ui";
 import { fmtDateTime } from "../lib/format";
 
@@ -22,6 +23,7 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
     staleTime: Infinity,
   });
   const selected = (engines.data ?? []).find((e) => e.kind === kind);
+  const dirty = name.trim() !== "" || dsn.trim() !== "" || kind !== null;
 
   const test = useMutation({
     mutationFn: () => api.post<ConnectionTest>("/connections/test", { name: name || "test", dsn }),
@@ -51,6 +53,7 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
     <Modal
       title="Add a connection"
       onClose={onClose}
+      dirty={dirty}
       footer={
         <>
           <button onClick={() => test.mutate()} disabled={!dsn || test.isPending}>
@@ -154,6 +157,7 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
 export default function ConnectionsPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const [adding, setAdding] = useState(false);
   const { data, isLoading, error } = useQuery({
     queryKey: ["connections"],
@@ -257,8 +261,23 @@ export default function ConnectionsPage() {
                     {isAdmin(user) && (
                       <button
                         className="small danger"
-                        onClick={() => {
-                          if (confirm(`Delete connection "${c.name}" and its ${c.dataset_count} dataset(s), checks and history?`)) remove.mutate(c.id);
+                        onClick={async () => {
+                          if (
+                            await confirm({
+                              title: "Delete connection",
+                              danger: true,
+                              confirmLabel: "Delete connection",
+                              typeToConfirm: c.name,
+                              body: (
+                                <>
+                                  This permanently deletes <strong>{c.name}</strong> and its{" "}
+                                  {c.dataset_count} dataset(s), along with all their checks, runs and
+                                  exceptions. This cannot be undone.
+                                </>
+                              ),
+                            })
+                          )
+                            remove.mutate(c.id);
                         }}
                       >
                         Delete
