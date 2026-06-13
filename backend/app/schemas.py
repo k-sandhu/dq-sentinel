@@ -37,6 +37,18 @@ class TokenOut(BaseModel):
     user: UserOut
 
 
+class AssigneeOut(ORMModel):
+    """Minimal active-user shape for the triage assignee picker (#56).
+
+    Any authenticated user may list these; deliberately omits role/is_active so
+    a non-admin assignee dropdown doesn't leak authorization state.
+    """
+
+    id: int
+    name: str
+    email: str
+
+
 class UserCreate(BaseModel):
     email: EmailStr
     name: str = ""
@@ -265,7 +277,7 @@ class RunOut(ORMModel):
     exception_count: int = 0
 
 
-# ---- exceptions ----
+# ---- exceptions (workbench: #55 identity, #56 triage workflow, #57 API v2) ----
 class ExceptionOut(ORMModel):
     id: int
     run_id: int
@@ -283,12 +295,61 @@ class ExceptionOut(ORMModel):
     marked_by: str | None = None
     marked_at: datetime | None
     created_at: datetime
+    # --- identity & recurrence (#55) ---
+    fingerprint: str | None = None
+    first_seen_at: datetime | None = None
+    last_seen_at: datetime | None = None
+    last_run_id: int | None = None
+    occurrence_count: int = 1
+    # --- triage workflow (#56) ---
+    assigned_to_id: int | None = None
+    assigned_to: str | None = None  # resolved display name ("(inactive)" suffix when deactivated)
 
 
 class TriageIn(BaseModel):
-    ids: list[int]
-    status: ExceptionStatus
+    # Bulk cap (#56): bounds transaction size, payload, and event-write amplification.
+    ids: list[int] = Field(max_length=1000)
+    status: ExceptionStatus | None = None  # optional: comment/assign without a status change
     note: str = ""
+    assigned_to_id: int | None = None
+    clear_assignee: bool = False
+
+
+class ExceptionEventOut(ORMModel):
+    id: int
+    exception_id: int
+    kind: str  # status | comment | assign | system
+    from_status: str = ""
+    to_status: str = ""
+    comment: str = ""
+    user: str | None = None  # resolved display name; None = system action
+    created_at: datetime
+
+
+class CommentIn(BaseModel):
+    comment: str = Field(min_length=1)
+
+
+# ---- exceptions API v2 (#57) ----
+class FacetEntry(BaseModel):
+    id: int
+    name: str
+    count: int
+
+
+class ExceptionFacets(BaseModel):
+    status: dict[str, int]
+    severity: dict[str, int]
+    check_type: dict[str, int]
+    datasets: list[FacetEntry]  # {id, name, count}, ordered by count desc, top 20
+    total: int
+
+
+class ExceptionPage(BaseModel):
+    items: list[ExceptionOut]
+    total: int
+    limit: int
+    offset: int
 
 
 # ---- RCA ----

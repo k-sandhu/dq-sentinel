@@ -152,12 +152,26 @@ class CheckRun(Base):
     triggered_by: Mapped[str] = mapped_column(String(10), default="manual")  # manual | schedule
 
     check: Mapped[Check] = relationship(back_populates="runs")
-    exceptions: Mapped[list["ExceptionRecord"]] = relationship(back_populates="run", cascade="all, delete-orphan")
+    # ExceptionRecord has two FKs to check_runs (run_id = first capture,
+    # last_run_id = most recent sighting, #55); this collection tracks run_id.
+    exceptions: Mapped[list["ExceptionRecord"]] = relationship(
+        back_populates="run",
+        cascade="all, delete-orphan",
+        foreign_keys="ExceptionRecord.run_id",
+    )
 
 
 class ExceptionRecord(Base):
     __tablename__ = "exception_records"
-    __table_args__ = (Index("ix_exc_dataset_status", "dataset_id", "status"),)
+    __table_args__ = (
+        Index("ix_exc_dataset_status", "dataset_id", "status"),
+        # --- exceptions workbench (#55): identity + recurrence hot path ---
+        Index("ix_exc_check_fingerprint", "check_id", "fingerprint"),
+        # --- exceptions workbench (#57): faceted-search "recently seen" filter ---
+        Index("ix_exc_status_last_seen", "status", "last_seen_at"),
+        # --- exceptions workbench (#56): "assigned to me" queues ---
+        Index("ix_exc_assigned", "assigned_to_id", "status"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     run_id: Mapped[int] = mapped_column(ForeignKey("check_runs.id"), index=True)
@@ -168,12 +182,60 @@ class ExceptionRecord(Base):
     outlier_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     # open -> acknowledged | expected | resolved | muted
     status: Mapped[str] = mapped_column(String(20), default="open", index=True)
+    # NOTE: `note` is a *denormalized* "latest comment" convenience. The full,
+    # append-only history lives in ExceptionEvent (#56) — do not "fix" the
+    # duplication by removing this field; existing UI reads it as the last note.
     note: Mapped[str] = mapped_column(Text, default="")
     marked_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     marked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
-    run: Mapped[CheckRun] = relationship(back_populates="exceptions")
+    # --- exceptions workbench: identity & recurrence (#55) ---
+    # Stable per-row identity so reconciliation updates instead of re-inserting.
+    # `run_id` keeps meaning "run that first captured this row"; `last_run_id`
+    # is the most recent run that saw it. fingerprint is NULL for historical rows
+    # (the runner only matches non-NULL fingerprints).
+    # TODO: retention policy for resolved/muted records — see #30 retention pattern
+    fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_run_id: Mapped[int | None] = mapped_column(ForeignKey("check_runs.id"), nullable=True)
+    occurrence_count: Mapped[int] = mapped_column(Integer, default=1)
+
+    # --- exceptions workbench: triage workflow (#56) ---
+    # Existing assignments to deactivated users are preserved (display gets an
+    # "(inactive)" suffix); only NEW assignments to inactive users are blocked.
+    assigned_to_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+
+    run: Mapped[CheckRun] = relationship(
+        back_populates="exceptions", foreign_keys=[run_id]
+    )
+    # Append-only activity trail. Cascade so deleting a record cleans up events.
+    events: Mapped[list["ExceptionEvent"]] = relationship(
+        cascade="all, delete-orphan", order_by="ExceptionEvent.id"
+    )
+
+
+class ExceptionEvent(Base):
+    """Append-only triage activity for an exception (#56).
+
+    Events are the analyst team's institutional memory and (eventually)
+    compliance evidence. There are intentionally NO update/delete paths —
+    this table is write-once. `kind`: status | comment | assign | system
+    (user_id is None for machine actions: auto-resolve, regression reopen).
+    """
+
+    __tablename__ = "exception_events"
+    __table_args__ = (Index("ix_exc_events_exc", "exception_id", "id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    exception_id: Mapped[int] = mapped_column(ForeignKey("exception_records.id"))
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)  # None = system
+    kind: Mapped[str] = mapped_column(String(20))  # status | comment | assign | system
+    from_status: Mapped[str] = mapped_column(String(20), default="")
+    to_status: Mapped[str] = mapped_column(String(20), default="")
+    comment: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class McpServer(Base):
