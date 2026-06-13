@@ -457,6 +457,40 @@ class McpServerOut(ORMModel):
     created_at: datetime
 
 
+# ---- notification rules (issue #27) ----
+NotifyChannel = Literal["slack", "email"]
+
+
+class NotificationRuleIn(BaseModel):
+    dataset_id: int | None = None  # None = all datasets
+    min_severity: Severity = "error"
+    channel: NotifyChannel
+    target: str = ""  # webhook URL or comma-separated emails ("" = global Slack default)
+    on_error_runs: bool = True
+    enabled: bool = True
+
+
+class NotificationRuleUpdate(BaseModel):
+    dataset_id: int | None = None
+    min_severity: Severity | None = None
+    channel: NotifyChannel | None = None
+    target: str | None = None
+    on_error_runs: bool | None = None
+    enabled: bool | None = None
+
+
+class NotificationRuleOut(ORMModel):
+    id: int
+    dataset_id: int | None
+    dataset_name: str = ""  # "" when dataset_id is None (all datasets)
+    min_severity: Severity
+    channel: NotifyChannel
+    target: str
+    on_error_runs: bool
+    enabled: bool
+    created_at: datetime
+
+
 # ---- ad-hoc dashboards ----
 class PanelViz(BaseModel):
     type: Literal["number", "bar", "line", "area", "pie", "table"] = "table"

@@ -11,6 +11,7 @@ from app.api import (
     exceptions_api,
     knowledge,
     mcp,
+    notifications,
     query,
     rca,
     runs,
@@ -32,3 +33,4 @@ api_router.include_router(query.router)
 api_router.include_router(saved_queries.router)
 api_router.include_router(adhoc_dashboards.router)
 api_router.include_router(mcp.router)
+api_router.include_router(notifications.router)
