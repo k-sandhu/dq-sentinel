@@ -301,6 +301,41 @@ function ThemeToggle() {
   );
 }
 
+/** Density toggle: flips html[data-density] and persists to localStorage
+ *  "dq-density". index.html applies the stored density before first paint.
+ *  Personal (per-browser) setting, not a tenant/server pref — see issue #58. */
+function DensityToggle() {
+  const [density, setDensity] = useState<"comfortable" | "compact">(() =>
+    document.documentElement.dataset.density === "compact" ? "compact" : "comfortable",
+  );
+  function toggle() {
+    const next = density === "compact" ? "comfortable" : "compact";
+    if (next === "compact") {
+      document.documentElement.dataset.density = "compact";
+    } else {
+      delete document.documentElement.dataset.density;
+    }
+    try {
+      localStorage.setItem("dq-density", next);
+    } catch {
+      /* storage unavailable — density still applies for this session */
+    }
+    setDensity(next);
+  }
+  return (
+    <button
+      type="button"
+      className="small icon-only"
+      onClick={toggle}
+      title={density === "compact" ? "Switch to comfortable density" : "Switch to compact density"}
+      aria-label="Toggle row density"
+      aria-pressed={density === "compact"}
+    >
+      <Icon name="rows" size={14} />
+    </button>
+  );
+}
+
 export default function Layout() {
   const { user, logout } = useAuth();
   const location = useLocation();
@@ -353,6 +388,7 @@ export default function Layout() {
           <FleetHealthPill />
           <GlobalSearch />
           <div className="topbar-actions">
+            <DensityToggle />
             <ThemeToggle />
           </div>
         </div>

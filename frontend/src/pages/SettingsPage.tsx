@@ -13,7 +13,7 @@ import type {
   User,
 } from "../api/types";
 import { isAdmin, useAuth } from "../auth";
-import { EmptyState, ErrorBox, Icon, Modal, Pill, Spinner } from "../components/ui";
+import { EmptyState, ErrorBox, Icon, Modal, Spinner, StatusPill } from "../components/ui";
 import { fmtDateTime } from "../lib/format";
 
 const AUDIT_PAGE = 25;
@@ -262,7 +262,7 @@ function McpServersCard() {
                   <td style={{ fontWeight: 700, color: "var(--text-dark)" }}>{s.name}</td>
                   <td className="mono" style={{ maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.url}</td>
                   <td>{s.has_token ? <span className="badge">token set</span> : <span style={{ color: "var(--text-light)" }}>none</span>}</td>
-                  <td>{s.enabled ? <Pill value="active" /> : <Pill value="disabled" />}</td>
+                  <td>{s.enabled ? <StatusPill value="active" /> : <StatusPill value="disabled" />}</td>
                   <td style={{ fontSize: 12, color: "var(--text-light)" }}>{s.description || "—"}</td>
                   {admin && (
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
@@ -587,7 +587,7 @@ export default function SettingsPage() {
         <div className="card stat-card">
           <div className="label">API</div>
           <div className="value" style={{ fontSize: 18 }}>
-            {health ? <Pill value="pass" /> : <Pill value="unknown" />} v{health?.version ?? "…"}
+            {health ? <StatusPill value="pass" /> : <StatusPill value="unknown" />} v{health?.version ?? "…"}
           </div>
         </div>
         <div className="card stat-card">
@@ -659,7 +659,7 @@ export default function SettingsPage() {
                           <option value="admin">admin</option>
                         </select>
                       </td>
-                      <td>{u.is_active ? <Pill value="active" /> : <Pill value="disabled" />}</td>
+                      <td>{u.is_active ? <StatusPill value="active" /> : <StatusPill value="disabled" />}</td>
                       <td style={{ color: "var(--text-light)" }}>{fmtDateTime(u.created_at)}</td>
                       <td style={{ textAlign: "right" }}>
                         {u.id !== user?.id && (

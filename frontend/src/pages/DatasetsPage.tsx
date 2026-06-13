@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { api } from "../api/client";
 import type { Dataset } from "../api/types";
-import { EmptyState, ErrorBox, Pill, Spinner } from "../components/ui";
+import { EmptyState, ErrorBox, Spinner, StatusPill } from "../components/ui";
 import { fmtNum, timeAgo } from "../lib/format";
 
 const HEALTH_FILTERS = ["all", "fail", "warn", "pass", "unknown"] as const;
@@ -90,7 +90,7 @@ export default function DatasetsPage() {
             <tbody>
               {data.map((d) => (
                 <tr key={d.id} className="clickable" onClick={() => navigate(`/datasets/${d.id}`)}>
-                  <td><Pill value={d.health} /></td>
+                  <td><StatusPill value={d.health} /></td>
                   <td style={{ fontWeight: 700, color: "var(--text-dark)" }}>
                     {d.schema_name ? `${d.schema_name}.` : ""}
                     {d.table_name}
