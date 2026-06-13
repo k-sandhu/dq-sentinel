@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { api } from "../api/client";
-import type { ConnectionHealth, SearchHit, SearchOut } from "../api/types";
+import type { ConnectionHealth, Dataset, SearchHit, SearchOut } from "../api/types";
 import { useAuth } from "../auth";
 import { FAVORITES_SIDEBAR_CAP, getFavorites, pruneStalePrefs, subscribePrefs } from "../lib/prefs";
 import ErrorBoundary from "./ErrorBoundary";

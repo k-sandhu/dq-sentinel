@@ -13,7 +13,7 @@ import type {
   User,
 } from "../api/types";
 import { isAdmin, useAuth } from "../auth";
-import { EmptyState, ErrorBox, Icon, Modal, Spinner, StatusPill } from "../components/ui";
+import { EmptyState, ErrorBox, Icon, Modal, SeverityBadge, Spinner, StatusPill } from "../components/ui";
 import { fmtDateTime } from "../lib/format";
 import { getLanding, LANDING_OPTIONS, type LandingPref, setLanding } from "../lib/prefs";
 
@@ -453,13 +453,13 @@ function NotificationsCard() {
                   <td style={{ fontWeight: 600, color: "var(--text-dark)" }}>
                     {r.dataset_id === null ? <span className="badge">all datasets</span> : r.dataset_name || `#${r.dataset_id}`}
                   </td>
-                  <td><Pill value={r.min_severity} /></td>
+                  <td><SeverityBadge severity={r.min_severity} /></td>
                   <td>{r.channel}</td>
                   <td className="mono" style={{ maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {r.target || <span style={{ color: "var(--text-light)" }}>global default</span>}
                   </td>
                   <td>{r.on_error_runs ? "yes" : "no"}</td>
-                  <td>{r.enabled ? <Pill value="active" /> : <Pill value="disabled" />}</td>
+                  <td>{r.enabled ? <StatusPill value="active" /> : <StatusPill value="disabled" />}</td>
                   <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                     {tested[r.id] && <span style={{ fontSize: 11, color: "var(--text-light)", marginRight: 6 }}>{tested[r.id]}</span>}
                     <button className="small" onClick={() => test.mutate(r.id)} disabled={test.isPending}>Test</button>{" "}
