@@ -4,7 +4,7 @@ import { Link } from "react-router";
 import { api } from "../api/client";
 import type { Connection, ConnectionHealth, ConnectionTest, EngineInfo } from "../api/types";
 import { isAdmin, useAuth } from "../auth";
-import { EmptyState, ErrorBox, Icon, Modal, Spinner } from "../components/ui";
+import { ConfirmModal, EmptyState, ErrorBox, Icon, Modal, Spinner } from "../components/ui";
 import { fmtDateTime } from "../lib/format";
 
 const GENERIC_DSN_PLACEHOLDER = "dialect+driver://user:pass@host:port/dbname";
@@ -155,6 +155,7 @@ export default function ConnectionsPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
   const [adding, setAdding] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Connection | null>(null);
   const { data, isLoading, error } = useQuery({
     queryKey: ["connections"],
     queryFn: () => api.get<Connection[]>("/connections"),
@@ -257,9 +258,7 @@ export default function ConnectionsPage() {
                     {isAdmin(user) && (
                       <button
                         className="small danger"
-                        onClick={() => {
-                          if (confirm(`Delete connection "${c.name}" and its ${c.dataset_count} dataset(s), checks and history?`)) remove.mutate(c.id);
-                        }}
+                        onClick={() => setDeleteTarget(c)}
                       >
                         Delete
                       </button>
@@ -272,6 +271,27 @@ export default function ConnectionsPage() {
         </div>
       )}
       {adding && <AddConnectionModal onClose={() => setAdding(false)} />}
+      {deleteTarget && (
+        <ConfirmModal
+          title="Delete connection"
+          confirmLabel="Delete connection"
+          pending={remove.isPending}
+          requireText={deleteTarget.name}
+          requireTextLabel="Type the connection name to confirm"
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={() =>
+            remove.mutate(deleteTarget.id, {
+              onSuccess: () => setDeleteTarget(null),
+            })
+          }
+        >
+          <ErrorBox error={remove.error} />
+          <p>
+            Delete <strong>{deleteTarget.name}</strong> and its {deleteTarget.dataset_count} dataset(s), checks,
+            runs, exceptions, and history?
+          </p>
+        </ConfirmModal>
+      )}
     </div>
   );
 }

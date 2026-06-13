@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 export function Icon({ name, size = 16 }: { name: string; size?: number }) {
   const paths: Record<string, ReactNode> = {
@@ -151,6 +151,71 @@ export function Modal({
         {footer && <div className="modal-foot">{footer}</div>}
       </div>
     </div>
+  );
+}
+
+export function ConfirmModal({
+  title,
+  children,
+  confirmLabel = "Confirm",
+  cancelLabel = "Cancel",
+  tone = "danger",
+  pending = false,
+  requireText,
+  requireTextLabel,
+  onConfirm,
+  onClose,
+}: {
+  title: string;
+  children: ReactNode;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  tone?: "danger" | "primary";
+  pending?: boolean;
+  requireText?: string;
+  requireTextLabel?: string;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const [typed, setTyped] = useState("");
+  const blocked = pending || (requireText ? typed !== requireText : false);
+
+  return (
+    <Modal
+      title={title}
+      onClose={onClose}
+      footer={
+        <>
+          <button onClick={onClose} disabled={pending}>
+            {cancelLabel}
+          </button>
+          <button
+            className={tone === "danger" ? "primary danger" : "primary"}
+            onClick={onConfirm}
+            disabled={blocked}
+          >
+            {pending ? "Working..." : confirmLabel}
+          </button>
+        </>
+      }
+    >
+      <div className="confirm-copy">{children}</div>
+      {requireText && (
+        <label className="field confirm-field">
+          {requireTextLabel ?? "Type to confirm"}
+          <input
+            type="text"
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            placeholder={requireText}
+            autoFocus
+          />
+          <div className="field-hint">
+            Type <code>{requireText}</code> exactly to continue.
+          </div>
+        </label>
+      )}
+    </Modal>
   );
 }
 

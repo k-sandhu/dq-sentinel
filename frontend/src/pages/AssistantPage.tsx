@@ -7,7 +7,7 @@ import { canEdit, useAuth } from "../auth";
 import ErrorBoundary from "../components/ErrorBoundary";
 import Markdown from "../components/Markdown";
 import PanelChart from "../components/PanelChart";
-import { EmptyState, ErrorBox, Icon, Spinner } from "../components/ui";
+import { ConfirmModal, EmptyState, ErrorBox, Icon, Spinner } from "../components/ui";
 import { timeAgo } from "../lib/format";
 import { useChatSocket } from "../lib/useChatSocket";
 
@@ -108,6 +108,7 @@ export default function AssistantPage() {
   const [busy, setBusy] = useState(false);
   const [wsError, setWsError] = useState<string | null>(null);
   const [input, setInput] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<ChatSession | null>(null);
   const pendingRef = useRef<string | null>(null);
   const sendMessageRef = useRef<(text: string) => void>(() => {});
   const threadEndRef = useRef<HTMLDivElement | null>(null);
@@ -251,7 +252,7 @@ export default function AssistantPage() {
                   title="Delete conversation"
                   onClick={(e) => {
                     e.stopPropagation();
-                    deleteSession.mutate(s.id);
+                    setDeleteTarget(s);
                   }}
                 >
                   <Icon name="x" size={12} />
@@ -355,6 +356,25 @@ export default function AssistantPage() {
           )}
         </div>
       </section>
+      {deleteTarget && (
+        <ConfirmModal
+          title="Delete conversation"
+          confirmLabel="Delete conversation"
+          pending={deleteSession.isPending}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={() =>
+            deleteSession.mutate(deleteTarget.id, {
+              onSuccess: () => setDeleteTarget(null),
+            })
+          }
+        >
+          <ErrorBox error={deleteSession.error} />
+          <p>
+            Delete <strong>{deleteTarget.title || "New conversation"}</strong>? This removes the saved conversation
+            history.
+          </p>
+        </ConfirmModal>
+      )}
     </div>
   );
 }
