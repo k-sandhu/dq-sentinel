@@ -1,11 +1,12 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
 import { api } from "../api/client";
-import type { Check, Run } from "../api/types";
+import type { Check, CheckTypeInfo, Run } from "../api/types";
 import { canEdit, useAuth } from "../auth";
 import { checkTypeLabel, originLabel } from "../lib/checkMeta";
 import { describeSchedule, timeAgo } from "../lib/format";
+import CheckParamsForm, { validateParams } from "./CheckParamsForm";
 import { EmptyState, ErrorBox, Icon, Modal, Pill, SeverityDot } from "./ui";
 
 function paramsSummary(c: Check): string {
@@ -18,23 +19,29 @@ function paramsSummary(c: Check): string {
 
 function EditCheckModal({ check, onClose }: { check: Check; onClose: () => void }) {
   const qc = useQueryClient();
+  const { data: types } = useQuery({
+    queryKey: ["check-types"],
+    queryFn: () => api.get<CheckTypeInfo[]>("/checks/types"),
+  });
   const [name, setName] = useState(check.name);
   const [severity, setSeverity] = useState(check.severity);
   const [scheduleKind, setScheduleKind] = useState(check.schedule_kind ?? "interval");
   const [scheduleExpr, setScheduleExpr] = useState(check.schedule_expr ?? "1440");
-  const [paramsText, setParamsText] = useState(JSON.stringify(check.params ?? {}, null, 2));
+  const [params, setParams] = useState<Record<string, unknown>>(check.params ?? {});
+
+  const selected = types?.find((t) => t.key === check.check_type);
+  const paramErrors = validateParams(selected?.params ?? [], params);
+  const hasParamErrors = Object.keys(paramErrors).length > 0;
 
   const save = useMutation({
-    mutationFn: async () => {
-      const params = JSON.parse(paramsText);
-      return api.patch<Check>(`/checks/${check.id}`, {
+    mutationFn: async () =>
+      api.patch<Check>(`/checks/${check.id}`, {
         name,
         severity,
         schedule_kind: scheduleKind,
         schedule_expr: scheduleExpr,
         params,
-      });
-    },
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["checks"] });
       onClose();
@@ -48,7 +55,11 @@ function EditCheckModal({ check, onClose }: { check: Check; onClose: () => void 
       footer={
         <>
           <button onClick={onClose}>Cancel</button>
-          <button className="primary" onClick={() => save.mutate()} disabled={save.isPending}>
+          <button
+            className="primary"
+            onClick={() => save.mutate()}
+            disabled={save.isPending || hasParamErrors}
+          >
             Save
           </button>
         </>
@@ -84,18 +95,14 @@ function EditCheckModal({ check, onClose }: { check: Check; onClose: () => void 
           </div>
         </label>
       </div>
-      <label className="field">
-        Params (JSON)
-        <textarea
-          rows={6}
-          value={paramsText}
-          onChange={(e) => setParamsText(e.target.value)}
-          style={{ fontFamily: "var(--mono)", fontSize: 12 }}
-        />
-        <div className="field-hint">
-          Add {"{"}"tolerance": N{"}"} to allow up to N violations before the check fails.
-        </div>
-      </label>
+      <div className="field-group-label">
+        Parameters
+        <span className="field-hint" style={{ fontWeight: 400, marginLeft: 6 }}>
+          {checkTypeLabel(check.check_type)}
+          {check.column_name ? ` · ${check.column_name}` : ""}
+        </span>
+      </div>
+      <CheckParamsForm specs={selected?.params} params={params} onChange={setParams} errors={paramErrors} />
     </Modal>
   );
 }
