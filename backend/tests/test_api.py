@@ -153,9 +153,11 @@ def test_full_flow(client, admin_headers, source_db):
     )
     assert resp.status_code == 422
 
-    # exceptions + triage
+    # exceptions + triage (API v2 paged envelope, #57)
     resp = client.get(f"/api/v1/exceptions?run_id={run['id']}", headers=h)
-    excs = resp.json()
+    page = resp.json()
+    assert page["total"] == NULL_EMAILS
+    excs = page["items"]
     assert len(excs) == NULL_EMAILS
     assert excs[0]["status"] == "open"
     ids = [e["id"] for e in excs[:2]]

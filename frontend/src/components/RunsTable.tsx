@@ -2,7 +2,7 @@ import { Link } from "react-router";
 import type { Run } from "../api/types";
 import { checkTypeLabel } from "../lib/checkMeta";
 import { fmtDateTime, fmtNum } from "../lib/format";
-import { EmptyState, Pill } from "./ui";
+import { EmptyState, StatusPill } from "./ui";
 
 export default function RunsTable({
   runs,
@@ -32,7 +32,7 @@ export default function RunsTable({
           {runs.map((r) => (
             <tr key={r.id}>
               <td>
-                <Pill value={r.status} />
+                <StatusPill value={r.status} />
               </td>
               <td>
                 <div style={{ fontWeight: 600, color: "var(--text-dark)" }}>{r.check_name}</div>

@@ -241,13 +241,13 @@ export default function ConnectionsPage() {
                   <td>
                     {healthById.has(c.id) ? (
                       <span
-                        className={`pill ${healthById.get(c.id)!.ok ? "pass" : "fail"}`}
+                        className={`pill tone-${healthById.get(c.id)!.ok ? "ok" : "danger"}`}
                         title={healthById.get(c.id)!.message}
                       >
                         {healthById.get(c.id)!.ok ? `up · ${healthById.get(c.id)!.latency_ms}ms` : "down"}
                       </span>
                     ) : (
-                      <span className="pill unknown">—</span>
+                      <span className="pill tone-neutral">—</span>
                     )}
                   </td>
                   <td><span className="badge kind">{c.kind}</span></td>

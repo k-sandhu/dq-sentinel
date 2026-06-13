@@ -178,14 +178,14 @@ def main() -> None:
     )
     run = c.post(f"/checks/{r.json()['id']}/run").json()
     ok("ml_outlier flags rows", run["violation_count"] > 0, f"{run['violation_count']} outliers")
-    excs = c.get(f"/exceptions?run_id={run['id']}&limit=200").json()
+    excs = c.get(f"/exceptions?run_id={run['id']}&limit=200").json()["items"]
     amounts = [e["row_data"].get("amount", 0) for e in excs]
     ok("planted 100x payment typos among top outliers", any(a and a > 5000 for a in amounts),
        f"max flagged amount={max(amounts) if amounts else 0}")
     ok("outlier scores attached", all(e["outlier_score"] is not None for e in excs))
 
     print("== exceptions triage ==")
-    open_excs = c.get(f"/exceptions?dataset_id={orders_id}&status=open&limit=50").json()
+    open_excs = c.get(f"/exceptions?dataset_id={orders_id}&status=open&limit=50").json()["items"]
     ok("open exceptions exist for orders", len(open_excs) > 0, f"{len(open_excs)} open")
     ids = [e["id"] for e in open_excs[:3]]
     r = c.post("/exceptions/triage", json={"ids": ids, "status": "expected", "note": "seeded demo issue"})

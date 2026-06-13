@@ -24,7 +24,7 @@ export default function ExceptionsPage() {
   };
 
   return (
-    <div className="page">
+    <div className="page wide">
       {datasetFilter && (
         <Breadcrumbs
           items={[

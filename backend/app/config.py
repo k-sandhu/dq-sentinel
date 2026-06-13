@@ -84,6 +84,23 @@ class Settings(BaseSettings):
     worker_concurrency: int = 4
     worker_metrics_port: int = 9100
 
+    # Notifications (issue #27 — Slack webhook + SMTP email). All optional:
+    # with nothing set there are zero sends and zero behaviour change. Rules in
+    # the DB (NotificationRule) decide *what* fires; these settings supply the
+    # transport (and a global Slack default for rules that leave target blank).
+    notify_slack_webhook_url: str = ""  # global default; a Slack rule may override per-target
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from_addr: str = ""
+    smtp_starttls: bool = True
+    base_url: str = "http://localhost:3000"  # for building links in notification bodies
+
+    # Audit log retention (issue #30): rows older than this are purged by a
+    # daily pass in the worker. 0 disables purging (keep everything).
+    audit_retention_days: int = 365
+
     # Observability
     log_format: str = "text"  # text | json
     log_level: str = "INFO"

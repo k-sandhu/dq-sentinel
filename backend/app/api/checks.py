@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from app.api.serialize import check_out, run_out
 from app.connectors.sa import connector_for
+from app.core.audit import audit
 from app.core.check_types import CHECK_TYPES, validate_check
 from app.core.generator import heuristic_proposals
 from app.core.profiler import summarize_profile_for_llm
@@ -86,6 +87,11 @@ def create_check(
         next_run_at=utcnow() if body.status == "active" else None,
     )
     db.add(check)
+    db.flush()  # assign check.id for the audit row
+    audit(
+        db, user, "check.create", "check", check.id,
+        check_type=check.check_type, column=check.column_name, status=check.status,
+    )
     db.commit()
     db.refresh(check)
     return check_out(check)
@@ -96,12 +102,14 @@ def update_check(
     check_id: int,
     body: schemas.CheckUpdate,
     db: Session = Depends(get_db),
-    _: models.User = Depends(require_role("editor")),
+    user: models.User = Depends(require_role("editor")),
 ):
     check = db.get(models.Check, check_id)
     if check is None:
         raise HTTPException(404, "Check not found")
 
+    old_params = dict(check.params or {})
+    old_status = check.status
     data = body.model_dump(exclude_unset=True)
     new_type_params = (
         ("params" in data and data["params"] is not None)
@@ -122,6 +130,13 @@ def update_check(
     if "status" in data and data["status"] is not None and data["status"] != check.status:
         check.status = data["status"]
         check.next_run_at = utcnow() if check.status == "active" else None
+    detail: dict = {"fields": [f for f in data if data[f] is not None]}
+    if check.params != old_params:
+        detail["params_before"] = old_params
+        detail["params_after"] = dict(check.params or {})
+    if check.status != old_status:
+        detail["status"] = {"before": old_status, "after": check.status}
+    audit(db, user, "check.update", "check", check.id, **detail)
     db.commit()
     db.refresh(check)
     return check_out(check)
@@ -131,12 +146,13 @@ def update_check(
 def run_now(
     check_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(require_role("editor")),
+    user: models.User = Depends(require_role("editor")),
 ):
     check = db.get(models.Check, check_id)
     if check is None:
         raise HTTPException(404, "Check not found")
-    run = run_check(db, check, triggered_by="manual")
+    audit(db, user, "check.run_manual", "check", check.id, check_type=check.check_type)
+    run = run_check(db, check, triggered_by="manual")  # commits the audit row in the same tx
     return run_out(db, run)
 
 
@@ -144,13 +160,14 @@ def run_now(
 def archive_check(
     check_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(require_role("editor")),
+    user: models.User = Depends(require_role("editor")),
 ):
     check = db.get(models.Check, check_id)
     if check is None:
         raise HTTPException(404, "Check not found")
     check.status = "archived"
     check.next_run_at = None
+    audit(db, user, "check.archive", "check", check.id, check_type=check.check_type)
     db.commit()
 
 
