@@ -152,4 +152,34 @@ def heuristic_proposals(
                 else f"IsolationForest across numeric columns ({', '.join(numeric_cols)})",
             )
         )
+
+    # distribution drift: PSI vs the profiling baseline. Cover the 3 highest-variance
+    # numeric columns (most likely to shift meaningfully) plus low-cardinality
+    # categoricals (a vanished/new category is a classic silent break).
+    if rows >= 500:
+        scored = [
+            (abs(float(c["stddev"])), c["name"])
+            for c in profile.get("columns", [])
+            if c["kind"] == "numeric" and isinstance(c.get("stddev"), (int, float)) and c["stddev"]
+        ]
+        for _var, name in sorted(scored, reverse=True)[:3]:
+            out.append(
+                _proposal(
+                    "distribution_drift", name, {"method": "psi", "threshold": 0.2}, "info",
+                    "Alert if this numeric column's distribution drifts from the profiling baseline (PSI)",
+                )
+            )
+        for col in profile.get("columns", []):
+            if (
+                col["kind"] == "string"
+                and 0 < col["distinct_count"] <= 20
+                and col.get("top_values")
+                and not any(h in col["name"].lower() for h in ID_HINTS)
+            ):
+                out.append(
+                    _proposal(
+                        "distribution_drift", col["name"], {"method": "psi", "threshold": 0.2}, "info",
+                        f"Alert if the category mix of {col['name']} drifts from the baseline (PSI)",
+                    )
+                )
     return out
