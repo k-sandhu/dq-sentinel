@@ -4,6 +4,7 @@ import { api } from "../../api/client";
 import type { Check, CheckTypeInfo, ColumnInfo, GenerateResult, Health } from "../../api/types";
 import { canEdit, useAuth } from "../../auth";
 import ChecksTable from "../../components/ChecksTable";
+import CheckParamsForm, { validateParams } from "../../components/CheckParamsForm";
 import { ErrorBox, Icon, Modal, Spinner } from "../../components/ui";
 
 function NewCheckModal({ datasetId, onClose }: { datasetId: number; onClose: () => void }) {
@@ -20,9 +21,11 @@ function NewCheckModal({ datasetId, onClose }: { datasetId: number; onClose: () 
   const [checkType, setCheckType] = useState("not_null");
   const [column, setColumn] = useState("");
   const [severity, setSeverity] = useState("error");
-  const [paramsText, setParamsText] = useState("{}");
+  const [params, setParams] = useState<Record<string, unknown>>({});
 
   const selected = types?.find((t) => t.key === checkType);
+  const paramErrors = validateParams(selected?.params ?? [], params);
+  const hasParamErrors = Object.keys(paramErrors).length > 0;
 
   const create = useMutation({
     mutationFn: () =>
@@ -31,7 +34,7 @@ function NewCheckModal({ datasetId, onClose }: { datasetId: number; onClose: () 
         check_type: checkType,
         column_name: selected?.needs_column ? column : null,
         severity,
-        params: JSON.parse(paramsText),
+        params,
         status: "active",
       }),
     onSuccess: () => {
@@ -47,7 +50,11 @@ function NewCheckModal({ datasetId, onClose }: { datasetId: number; onClose: () 
       footer={
         <>
           <button onClick={onClose}>Cancel</button>
-          <button className="primary" onClick={() => create.mutate()} disabled={create.isPending || (selected?.needs_column && !column)}>
+          <button
+            className="primary"
+            onClick={() => create.mutate()}
+            disabled={create.isPending || (selected?.needs_column && !column) || hasParamErrors}
+          >
             Create & activate
           </button>
         </>
@@ -56,7 +63,7 @@ function NewCheckModal({ datasetId, onClose }: { datasetId: number; onClose: () 
       <ErrorBox error={create.error} />
       <label className="field">
         Check type
-        <select value={checkType} onChange={(e) => { setCheckType(e.target.value); setParamsText("{}"); }}>
+        <select value={checkType} onChange={(e) => { setCheckType(e.target.value); setParams({}); }}>
           {types?.map((t) => (
             <option key={t.key} value={t.key}>{t.label}</option>
           ))}
@@ -82,19 +89,8 @@ function NewCheckModal({ datasetId, onClose }: { datasetId: number; onClose: () 
           <option value="error">error</option>
         </select>
       </label>
-      <label className="field">
-        Params (JSON)
-        <textarea rows={5} value={paramsText} onChange={(e) => setParamsText(e.target.value)} style={{ fontFamily: "var(--mono)", fontSize: 12 }} />
-        {selected && selected.params.length > 0 && (
-          <div className="field-hint">
-            {selected.params.map((p) => (
-              <div key={p.name}>
-                <code>{p.name}</code> ({p.type}{p.required ? ", required" : ""}) {p.description}
-              </div>
-            ))}
-          </div>
-        )}
-      </label>
+      <div className="field-group-label">Parameters</div>
+      <CheckParamsForm specs={selected?.params} params={params} onChange={setParams} errors={paramErrors} />
     </Modal>
   );
 }

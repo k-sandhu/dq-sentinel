@@ -50,3 +50,32 @@ def test_accepted_values_only_for_small_domains():
     accepted = [p for p in proposals if p["check_type"] == "accepted_values"]
     assert len(accepted) == 1
     assert set(accepted[0]["params"]["values"]) == {"a", "b", "c"}
+
+
+def test_distribution_drift_proposals():
+    def numeric(name, std):
+        return {
+            "name": name, "dtype": "REAL", "kind": "numeric", "null_count": 0, "null_pct": 0.0,
+            "distinct_count": 900, "distinct_pct": 0.9, "stddev": std, "quantiles": {"0.5": 1.0},
+            "patterns": {}, "top_values": [], "min": 0, "max": 10,
+        }
+
+    profile = {
+        "row_count": 1000, "sampled_rows": 1000, "table_facts": {},
+        "columns": [
+            numeric("a", 5.0), numeric("b", 50.0), numeric("c", 0.5), numeric("d", 500.0),
+            {
+                "name": "region", "dtype": "TEXT", "kind": "string", "null_count": 0,
+                "null_pct": 0.0, "distinct_count": 4, "distinct_pct": 0.004,
+                "top_values": [{"value": "us", "count": 700}, {"value": "eu", "count": 300}],
+                "patterns": {}, "quantiles": {},
+            },
+        ],
+    }
+    drift = [p for p in heuristic_proposals(profile) if p["check_type"] == "distribution_drift"]
+    cols = {p["column_name"] for p in drift}
+    # top-3 variance numerics (d, b, a) — not the low-variance 'c'
+    assert {"d", "b", "a"} <= cols and "c" not in cols
+    # low-cardinality categorical covered too
+    assert "region" in cols
+    assert all(p["severity"] == "info" and p["params"]["method"] == "psi" for p in drift)

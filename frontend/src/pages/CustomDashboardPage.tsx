@@ -20,7 +20,7 @@ import WidgetGrid from "../components/dashboards/WidgetGrid";
 import { useAuth } from "../auth";
 import { EmptyState, ErrorBox, Icon, Modal, Spinner } from "../components/ui";
 import { timeAgo } from "../lib/format";
-import { PREF_KEYS, getPref, setPref } from "../lib/prefs";
+import { clearLanding, getLanding, setLanding } from "../lib/prefs";
 
 const WIDGET_TYPES: { type: WidgetType; label: string; desc: string }[] = [
   { type: "metric", label: "Metric", desc: "A single count from the exceptions queue, with tone thresholds." },
@@ -62,7 +62,7 @@ export default function CustomDashboardPage() {
   const [configuring, setConfiguring] = useState<{ widget: Widget; isNew: boolean } | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [isLanding, setIsLanding] = useState(() => getPref(PREF_KEYS.landing) === `/dashboards/${dashboardId}`);
+  const [isLanding, setIsLanding] = useState(() => getLanding() === `/dashboards/${dashboardId}`);
 
   // Enter builder when ?edit=1 and the user may edit (e.g. straight after create).
   useEffect(() => {
@@ -143,7 +143,7 @@ export default function CustomDashboardPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["custom-dashboards"] });
       // if this was the landing page, clear that pref so we don't loop into a 404
-      if (getPref(PREF_KEYS.landing) === `/dashboards/${dashboardId}`) setPref(PREF_KEYS.landing, null);
+      if (getLanding() === `/dashboards/${dashboardId}`) clearLanding();
       navigate("/dashboards");
     },
   });
@@ -211,10 +211,10 @@ export default function CustomDashboardPage() {
 
   function toggleLanding() {
     if (isLanding) {
-      setPref(PREF_KEYS.landing, null);
+      clearLanding();
       setIsLanding(false);
     } else {
-      setPref(PREF_KEYS.landing, `/dashboards/${dashboardId}`);
+      setLanding(`/dashboards/${dashboardId}`);
       setIsLanding(true);
     }
   }

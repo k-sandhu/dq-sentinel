@@ -187,12 +187,14 @@ export interface Run {
   exception_count: number;
 }
 
+// ---- exceptions (workbench: #55 identity, #56 triage workflow, #57 API v2) ----
 export interface ExceptionRecord {
   id: number;
   run_id: number;
   check_id: number;
   check_name: string;
   check_type: string;
+  check_severity: Severity;
   column_name: string | null;
   dataset_id: number;
   dataset_name: string;
@@ -204,6 +206,54 @@ export interface ExceptionRecord {
   marked_by: string | null;
   marked_at: string | null;
   created_at: string;
+  // identity & recurrence (#55)
+  fingerprint: string | null;
+  first_seen_at: string | null;
+  last_seen_at: string | null;
+  last_run_id: number | null;
+  occurrence_count: number;
+  // triage workflow (#56)
+  assigned_to_id: number | null;
+  assigned_to: string | null;
+}
+
+export interface ExceptionEvent {
+  id: number;
+  exception_id: number;
+  kind: string; // status | comment | assign | system
+  from_status: string;
+  to_status: string;
+  comment: string;
+  user: string | null; // resolved display name; null = system action
+  created_at: string;
+}
+
+export interface Assignee {
+  id: number;
+  name: string;
+  email: string;
+}
+
+// ---- exceptions API v2 (#57) ----
+export interface FacetEntry {
+  id: number;
+  name: string;
+  count: number;
+}
+
+export interface ExceptionFacets {
+  status: Record<string, number>;
+  severity: Record<string, number>;
+  check_type: Record<string, number>;
+  datasets: FacetEntry[];
+  total: number;
+}
+
+export interface ExceptionPage {
+  items: ExceptionRecord[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export interface RcaSession {
@@ -312,6 +362,22 @@ export interface ConnectionHealth {
   latency_ms: number | null;
 }
 
+// ---- saved queries (team snippet library) ----
+export interface SavedQuery {
+  id: number;
+  connection_id: number;
+  dataset_id: number | null;
+  name: string;
+  description: string;
+  sql: string;
+  tags: string[];
+  created_by_id: number | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  last_run_at: string | null;
+}
+
 // ---- MCP ----
 export interface McpServer {
   id: number;
@@ -320,6 +386,21 @@ export interface McpServer {
   description: string;
   enabled: boolean;
   has_token: boolean;
+  created_at: string;
+}
+
+// ---- notification rules (issue #27) ----
+export type NotifyChannel = "slack" | "email";
+
+export interface NotificationRule {
+  id: number;
+  dataset_id: number | null; // null = all datasets
+  dataset_name: string; // "" when dataset_id is null
+  min_severity: Severity;
+  channel: NotifyChannel;
+  target: string; // webhook URL or comma-separated emails ("" = global Slack default)
+  on_error_runs: boolean;
+  enabled: boolean;
   created_at: string;
 }
 
@@ -450,6 +531,27 @@ export interface ExceptionPage {
   offset: number;
 }
 
+// ---- audit log (issue #30) ----
+export interface AuditEntry {
+  id: number;
+  user_id: number | null;
+  user: string | null; // resolved display name; null = system/anonymous
+  action: string;
+  entity_type: string;
+  entity_id: number | null;
+  detail: Record<string, unknown>;
+  request_id: string;
+  client_ip: string;
+  created_at: string;
+}
+
+export interface AuditPage {
+  items: AuditEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 // --- custom dashboards (issues #67/#68) ---
 // This Widget union mirrors backend/app/schemas.py (the authoritative contract).
 export type Visibility = "private" | "team";
@@ -523,4 +625,17 @@ export interface CustomDashboardMeta {
 export interface CustomDashboard extends CustomDashboardMeta {
   layout: DashboardLayout;
   can_edit: boolean;
+}
+
+// ---- global search (issue #43) ----
+export interface SearchHit {
+  type: "dataset" | "check" | "connection" | "saved_query";
+  id: number;
+  title: string;
+  subtitle: string;
+  url: string;
+}
+
+export interface SearchOut {
+  hits: SearchHit[];
 }

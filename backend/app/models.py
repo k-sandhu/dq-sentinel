@@ -152,12 +152,26 @@ class CheckRun(Base):
     triggered_by: Mapped[str] = mapped_column(String(10), default="manual")  # manual | schedule
 
     check: Mapped[Check] = relationship(back_populates="runs")
-    exceptions: Mapped[list["ExceptionRecord"]] = relationship(back_populates="run", cascade="all, delete-orphan")
+    # ExceptionRecord has two FKs to check_runs (run_id = first capture,
+    # last_run_id = most recent sighting, #55); this collection tracks run_id.
+    exceptions: Mapped[list["ExceptionRecord"]] = relationship(
+        back_populates="run",
+        cascade="all, delete-orphan",
+        foreign_keys="ExceptionRecord.run_id",
+    )
 
 
 class ExceptionRecord(Base):
     __tablename__ = "exception_records"
-    __table_args__ = (Index("ix_exc_dataset_status", "dataset_id", "status"),)
+    __table_args__ = (
+        Index("ix_exc_dataset_status", "dataset_id", "status"),
+        # --- exceptions workbench (#55): identity + recurrence hot path ---
+        Index("ix_exc_check_fingerprint", "check_id", "fingerprint"),
+        # --- exceptions workbench (#57): faceted-search "recently seen" filter ---
+        Index("ix_exc_status_last_seen", "status", "last_seen_at"),
+        # --- exceptions workbench (#56): "assigned to me" queues ---
+        Index("ix_exc_assigned", "assigned_to_id", "status"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     run_id: Mapped[int] = mapped_column(ForeignKey("check_runs.id"), index=True)
@@ -168,12 +182,60 @@ class ExceptionRecord(Base):
     outlier_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     # open -> acknowledged | expected | resolved | muted
     status: Mapped[str] = mapped_column(String(20), default="open", index=True)
+    # NOTE: `note` is a *denormalized* "latest comment" convenience. The full,
+    # append-only history lives in ExceptionEvent (#56) — do not "fix" the
+    # duplication by removing this field; existing UI reads it as the last note.
     note: Mapped[str] = mapped_column(Text, default="")
     marked_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     marked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
-    run: Mapped[CheckRun] = relationship(back_populates="exceptions")
+    # --- exceptions workbench: identity & recurrence (#55) ---
+    # Stable per-row identity so reconciliation updates instead of re-inserting.
+    # `run_id` keeps meaning "run that first captured this row"; `last_run_id`
+    # is the most recent run that saw it. fingerprint is NULL for historical rows
+    # (the runner only matches non-NULL fingerprints).
+    # TODO: retention policy for resolved/muted records — see #30 retention pattern
+    fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_run_id: Mapped[int | None] = mapped_column(ForeignKey("check_runs.id"), nullable=True)
+    occurrence_count: Mapped[int] = mapped_column(Integer, default=1)
+
+    # --- exceptions workbench: triage workflow (#56) ---
+    # Existing assignments to deactivated users are preserved (display gets an
+    # "(inactive)" suffix); only NEW assignments to inactive users are blocked.
+    assigned_to_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+
+    run: Mapped[CheckRun] = relationship(
+        back_populates="exceptions", foreign_keys=[run_id]
+    )
+    # Append-only activity trail. Cascade so deleting a record cleans up events.
+    events: Mapped[list["ExceptionEvent"]] = relationship(
+        cascade="all, delete-orphan", order_by="ExceptionEvent.id"
+    )
+
+
+class ExceptionEvent(Base):
+    """Append-only triage activity for an exception (#56).
+
+    Events are the analyst team's institutional memory and (eventually)
+    compliance evidence. There are intentionally NO update/delete paths —
+    this table is write-once. `kind`: status | comment | assign | system
+    (user_id is None for machine actions: auto-resolve, regression reopen).
+    """
+
+    __tablename__ = "exception_events"
+    __table_args__ = (Index("ix_exc_events_exc", "exception_id", "id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    exception_id: Mapped[int] = mapped_column(ForeignKey("exception_records.id"))
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)  # None = system
+    kind: Mapped[str] = mapped_column(String(20))  # status | comment | assign | system
+    from_status: Mapped[str] = mapped_column(String(20), default="")
+    to_status: Mapped[str] = mapped_column(String(20), default="")
+    comment: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class McpServer(Base):
@@ -262,6 +324,79 @@ class ChatMessage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     session: Mapped[ChatSession] = relationship(back_populates="messages")
+
+
+class SavedQuery(Base):
+    """A workbench query saved to the shared team library (issue #41). Optionally
+    pinned to a dataset (dataset_id set) so it surfaces where investigations start.
+    SQL is validated through guard_sql() at save time, so the library stays runnable."""
+
+    __tablename__ = "saved_queries"
+    __table_args__ = (Index("ix_savedq_conn", "connection_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    connection_id: Mapped[int] = mapped_column(ForeignKey("connections.id"))
+    dataset_id: Mapped[int | None] = mapped_column(
+        ForeignKey("datasets.id"), nullable=True
+    )  # set => pinned to that dataset
+    name: Mapped[str] = mapped_column(String(255))
+    description: Mapped[str] = mapped_column(Text, default="")
+    sql: Mapped[str] = mapped_column(Text)
+    tags: Mapped[list] = mapped_column(JSON, default=list)  # list[str]
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class NotificationRule(Base):
+    """Routing rule for failure/recovery notifications (issue #27).
+
+    Firing decision lives in core/runner.py (transition-based); this row only
+    decides *where* a fired event goes. ``dataset_id is None`` matches every
+    dataset; ``min_severity`` gates on the check's severity; ``target`` is the
+    Slack webhook URL or comma-separated emails (empty Slack target falls back
+    to the global ``notify_slack_webhook_url`` setting)."""
+
+    __tablename__ = "notification_rules"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_id: Mapped[int | None] = mapped_column(
+        ForeignKey("datasets.id"), nullable=True, index=True
+    )  # None = all datasets
+    min_severity: Mapped[str] = mapped_column(String(10), default="error")  # info | warn | error
+    channel: Mapped[str] = mapped_column(String(10))  # slack | email
+    target: Mapped[str] = mapped_column(Text, default="")  # webhook URL or comma-separated emails
+    on_error_runs: Mapped[bool] = mapped_column(Boolean, default=True)  # also fire on status == "error"
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class AuditEntry(Base):
+    """Append-only audit trail of security/config-relevant actions (issue #30).
+
+    Distinct from ``ExceptionEvent`` (#56): that is the per-exception user-facing
+    timeline; this is the global admin/compliance surface. NEVER store secrets,
+    DSNs, password hashes, or source row data in ``detail``.
+    """
+
+    __tablename__ = "audit_log"
+    __table_args__ = (
+        Index("ix_audit_entity", "entity_type", "entity_id"),
+        Index("ix_audit_created", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )  # None = system/anonymous (e.g. failed login)
+    action: Mapped[str] = mapped_column(String(50))  # e.g. "login.success", "check.update"
+    entity_type: Mapped[str] = mapped_column(String(30))  # user|connection|dataset|check|exception|...
+    entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)  # diffs/params — NEVER secrets or row data
+    request_id: Mapped[str] = mapped_column(String(16), default="")  # joins to request logs
+    client_ip: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class RcaSession(Base):

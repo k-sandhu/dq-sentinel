@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app import models, schemas
+from app.core.audit import audit
 from app.db import get_db
 from app.security import get_current_user, require_role
 
@@ -26,7 +27,7 @@ def list_servers(db: Session = Depends(get_db), _: models.User = Depends(get_cur
 def create_server(
     body: schemas.McpServerIn,
     db: Session = Depends(get_db),
-    _: models.User = Depends(require_role("admin")),
+    user: models.User = Depends(require_role("admin")),
 ):
     if not body.url.startswith(("https://", "http://")):
         raise HTTPException(422, "URL must be http(s)")
@@ -40,6 +41,8 @@ def create_server(
         enabled=body.enabled,
     )
     db.add(server)
+    db.flush()  # assign server.id for the audit row
+    audit(db, user, "mcp.create", "mcp", server.id, name=server.name)  # never the token
     db.commit()
     db.refresh(server)
     return _out(server)
@@ -50,7 +53,7 @@ def update_server(
     server_id: int,
     body: schemas.McpServerUpdate,
     db: Session = Depends(get_db),
-    _: models.User = Depends(require_role("admin")),
+    user: models.User = Depends(require_role("admin")),
 ):
     server = db.get(models.McpServer, server_id)
     if server is None:
@@ -59,6 +62,8 @@ def update_server(
     for field in ("name", "url", "description", "enabled", "auth_token"):
         if field in data and data[field] is not None:
             setattr(server, field, data[field])
+    # Record which fields changed by name only — never the token value.
+    audit(db, user, "mcp.update", "mcp", server.id, fields=sorted(data.keys()))
     db.commit()
     db.refresh(server)
     return _out(server)
@@ -68,10 +73,11 @@ def update_server(
 def delete_server(
     server_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(require_role("admin")),
+    user: models.User = Depends(require_role("admin")),
 ):
     server = db.get(models.McpServer, server_id)
     if server is None:
         raise HTTPException(404, "MCP server not found")
+    audit(db, user, "mcp.delete", "mcp", server.id, name=server.name)
     db.delete(server)
     db.commit()

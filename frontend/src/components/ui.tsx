@@ -90,6 +90,15 @@ export function Icon({ name, size = 16 }: { name: string; size?: number }) {
         <path d="M12 6v12" />
       </>
     ),
+    rows: <path d="M4 6h16M4 12h16M4 18h16" />,
+    // Personalization (#59): outline + filled star for favorites toggles.
+    star: <path d="M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.6 9.7l5.8-.8L12 3.6z" />,
+    "star-filled": (
+      <path
+        d="M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.6 9.7l5.8-.8L12 3.6z"
+        fill="currentColor"
+      />
+    ),
   };
   return (
     <svg
@@ -108,10 +117,41 @@ export function Icon({ name, size = 16 }: { name: string; size?: number }) {
   );
 }
 
-export function Pill({ value }: { value: string | null | undefined }) {
-  if (!value) return <span className="pill unknown">—</span>;
-  return <span className={`pill ${value}`}>{value}</span>;
+/** Semantic status tone. Backgrounds/foregrounds live in styles.css (.pill.tone-*),
+ *  defined once for light and once for dark — so a status's meaning is centralized
+ *  here instead of scattered across ~20 per-status CSS selectors. */
+type Tone = "ok" | "warn" | "danger" | "info" | "neutral" | "accent";
+
+/** Maps every status string used across the app to one of six tones. Unknown
+ *  values fall back to "neutral" (rather than rendering unstyled). */
+const STATUS_TONES: Record<string, Tone> = {
+  // run + check last_status
+  pass: "ok", warn: "warn", fail: "danger", error: "danger",
+  // check lifecycle
+  proposed: "accent", active: "ok", disabled: "neutral", archived: "neutral",
+  // exception lifecycle
+  open: "danger", acknowledged: "warn", expected: "info", resolved: "ok", muted: "neutral",
+  // misc statuses used across pages
+  running: "info", complete: "ok", failed: "danger", unknown: "neutral",
+  review: "accent", approved: "ok", monitoring: "info", dismissed: "neutral",
+};
+
+/** Status chip with centralized tone mapping. Always renders the value as a text
+ *  label (never color-only) so it stays legible for color-vision-deficient users. */
+export function StatusPill({ value }: { value: string | null | undefined }) {
+  if (!value) return <span className="pill tone-neutral">—</span>;
+  const tone = STATUS_TONES[value] ?? "neutral";
+  return <span className={`pill tone-${tone}`}>{value}</span>;
 }
+
+/** Outlined severity chip (info/warn/error). Keeps the word, not just a color. */
+export function SeverityBadge({ severity }: { severity: string }) {
+  const tone = severity === "error" ? "danger" : severity === "warn" ? "warn" : "info";
+  return <span className={`pill tone-${tone} pill-outline`}>{severity}</span>;
+}
+
+/** @deprecated Use {@link StatusPill}. Kept as an alias while call sites migrate. */
+export const Pill = StatusPill;
 
 export function SeverityDot({ severity }: { severity: string }) {
   return (

@@ -13,6 +13,7 @@ export const CHECK_TYPE_LABELS: Record<string, string> = {
   row_count_anomaly: "Row count anomaly",
   custom_sql: "Custom SQL",
   ml_outlier: "ML outlier",
+  distribution_drift: "Distribution drift",
 };
 
 export function checkTypeLabel(key: string): string {

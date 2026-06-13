@@ -4,7 +4,7 @@ import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recha
 import { api } from "../api/client";
 import type { Dashboard } from "../api/types";
 import RunsTable from "../components/RunsTable";
-import { EmptyState, ErrorBox, Icon, Pill, Spinner, StatCard } from "../components/ui";
+import { EmptyState, ErrorBox, Icon, Spinner, StatCard, StatusPill } from "../components/ui";
 import { fmtNum, fmtPct } from "../lib/format";
 
 const TOOLTIP_STYLE = {
@@ -138,7 +138,7 @@ export default function HomePage() {
                       </div>
                       <div className="meta">{d.connection_name}</div>
                     </div>
-                    <Pill value={d.health} />
+                    <StatusPill value={d.health} />
                   </div>
                   <div className="metric-row" style={{ marginTop: 8 }}>
                     <span className="big">{fmtNum(d.open_exceptions)}</span>

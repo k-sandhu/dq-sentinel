@@ -42,12 +42,22 @@ def run_out(db: Session, run: models.CheckRun) -> schemas.RunOut:
     return out
 
 
+def _display_name(user: models.User | None) -> str | None:
+    """Display name (fall back to email when name is empty), '(inactive)' suffix
+    for deactivated users so reassignment need is visible (#56)."""
+    if user is None:
+        return None
+    name = user.name or user.email
+    return f"{name} (inactive)" if not user.is_active else name
+
+
 def exception_out(db: Session, exc: models.ExceptionRecord) -> schemas.ExceptionOut:
     out = schemas.ExceptionOut.model_validate(exc)
     check = db.get(models.Check, exc.check_id)
     if check:
         out.check_name = check.name
         out.check_type = check.check_type
+        out.check_severity = check.severity
         out.column_name = check.column_name
     dataset = db.get(models.Dataset, exc.dataset_id)
     if dataset:
@@ -55,6 +65,15 @@ def exception_out(db: Session, exc: models.ExceptionRecord) -> schemas.Exception
     if exc.marked_by_id:
         user = db.get(models.User, exc.marked_by_id)
         out.marked_by = user.name or user.email if user else None
+    if exc.assigned_to_id:
+        out.assigned_to = _display_name(db.get(models.User, exc.assigned_to_id))
+    return out
+
+
+def exception_event_out(db: Session, ev: models.ExceptionEvent) -> schemas.ExceptionEventOut:
+    out = schemas.ExceptionEventOut.model_validate(ev)
+    # Surface display names only (no emails in event payloads — privacy, #56).
+    out.user = _display_name(db.get(models.User, ev.user_id)) if ev.user_id else None
     return out
 
 

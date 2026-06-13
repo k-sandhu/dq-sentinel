@@ -1,8 +1,8 @@
-import { Navigate, Route, Routes } from "react-router";
+import { Navigate, Route, Routes, useLocation } from "react-router";
 import { useAuth } from "./auth";
 import Layout from "./components/Layout";
 import { Spinner } from "./components/ui";
-import { PREF_KEYS, getPref } from "./lib/prefs";
+import { getLanding } from "./lib/prefs";
 import AssistantPage from "./pages/AssistantPage";
 import ChecksPage from "./pages/ChecksPage";
 import ConnectionBrowsePage from "./pages/ConnectionBrowsePage";
@@ -19,12 +19,38 @@ import RunsPage from "./pages/RunsPage";
 import SettingsPage from "./pages/SettingsPage";
 import WorkbenchPage from "./pages/WorkbenchPage";
 
-/** Honour the user's "default landing page" preference (#59/#68) on the "/" route:
- *  redirect once to the saved path when it points somewhere other than home. */
-function HomeOrLanding() {
-  const landing = getPref(PREF_KEYS.landing);
-  if (landing && landing !== "/") return <Navigate to={landing} replace />;
-  return <HomePage />;
+const SESSION_LANDED_KEY = "dq_landed";
+
+/**
+ * Default-landing redirect (#59) wrapping the index route. On the FIRST visit to
+ * "/" per browser session it sends the user to their configured landing page;
+ * after that the session guard lets explicit "Home" navigation through. It never
+ * traps the user:
+ *   - deep links win — any query (or non-"/" path) bypasses the redirect entirely,
+ *     so notification-email / Slack links land where they point;
+ *   - the redirect is `replace`, so Back doesn't bounce off "/".
+ */
+function LandingRedirect({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
+
+  // Deep-link bypass: a query string (or any path beyond "/") always wins over
+  // the landing preference. Evaluate before touching the session guard so a deep
+  // link doesn't consume the once-per-session redirect.
+  const isBareRoot = location.pathname === "/" && location.search === "";
+  if (!isBareRoot) return <>{children}</>;
+
+  let landed = false;
+  try {
+    landed = sessionStorage.getItem(SESSION_LANDED_KEY) === "1";
+    sessionStorage.setItem(SESSION_LANDED_KEY, "1");
+  } catch {
+    // sessionStorage unavailable — treat as "already landed" so we never loop.
+    landed = true;
+  }
+
+  const landing = getLanding();
+  if (!landed && landing !== "/") return <Navigate to={landing} replace />;
+  return <>{children}</>;
 }
 
 export default function App() {
@@ -44,7 +70,14 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Navigate to="/" replace />} />
       <Route element={<Layout />}>
-        <Route path="/" element={<HomeOrLanding />} />
+        <Route
+          path="/"
+          element={
+            <LandingRedirect>
+              <HomePage />
+            </LandingRedirect>
+          }
+        />
         <Route path="/dashboards" element={<DashboardsListPage />} />
         <Route path="/dashboards/:id" element={<CustomDashboardPage />} />
         <Route path="/connections" element={<ConnectionsPage />} />
