@@ -66,6 +66,11 @@ LLM_LATENCY = Histogram(
 LLM_TOKENS = Counter(
     "dq_llm_tokens_total", "LLM tokens used", ["provider", "model", "direction"]
 )
+NOTIFICATIONS_SENT = Counter(
+    "dq_notifications_sent_total",
+    "Notification deliveries by channel and outcome (issue #27)",
+    ["channel", "outcome"],  # channel: slack|email ; outcome: success|failure
+)
 
 
 # ---------------------------------------------------------------- logging

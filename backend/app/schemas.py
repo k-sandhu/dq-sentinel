@@ -396,6 +396,40 @@ class ConnectionHealth(BaseModel):
     latency_ms: int | None = None
 
 
+# ---- saved queries (team snippet library) ----
+class SavedQueryIn(BaseModel):
+    connection_id: int
+    dataset_id: int | None = None  # set => pin to this dataset
+    name: str = Field(min_length=1, max_length=255)
+    description: str = ""
+    sql: str = Field(min_length=1)
+    tags: list[str] = []
+
+
+class SavedQueryUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = None
+    sql: str | None = Field(default=None, min_length=1)
+    tags: list[str] | None = None
+    dataset_id: int | None = None  # null leaves the pin unchanged; use unpin=True to clear
+    unpin: bool = False  # explicitly clear the dataset pin
+
+
+class SavedQueryOut(ORMModel):
+    id: int
+    connection_id: int
+    dataset_id: int | None
+    name: str
+    description: str
+    sql: str
+    tags: list[str]
+    created_by_id: int | None
+    created_by: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    last_run_at: datetime | None
+
+
 # ---- MCP servers ----
 class McpServerIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
@@ -421,6 +455,61 @@ class McpServerOut(ORMModel):
     enabled: bool
     has_token: bool = False
     created_at: datetime
+
+
+# ---- notification rules (issue #27) ----
+NotifyChannel = Literal["slack", "email"]
+
+
+class NotificationRuleIn(BaseModel):
+    dataset_id: int | None = None  # None = all datasets
+    min_severity: Severity = "error"
+    channel: NotifyChannel
+    target: str = ""  # webhook URL or comma-separated emails ("" = global Slack default)
+    on_error_runs: bool = True
+    enabled: bool = True
+
+
+class NotificationRuleUpdate(BaseModel):
+    dataset_id: int | None = None
+    min_severity: Severity | None = None
+    channel: NotifyChannel | None = None
+    target: str | None = None
+    on_error_runs: bool | None = None
+    enabled: bool | None = None
+
+
+class NotificationRuleOut(ORMModel):
+    id: int
+    dataset_id: int | None
+    dataset_name: str = ""  # "" when dataset_id is None (all datasets)
+    min_severity: Severity
+    channel: NotifyChannel
+    target: str
+    on_error_runs: bool
+    enabled: bool
+    created_at: datetime
+
+
+# ---- audit log (issue #30) ----
+class AuditEntryOut(ORMModel):
+    id: int
+    user_id: int | None
+    user: str | None = None  # resolved display name (name or email), None = system/anonymous
+    action: str
+    entity_type: str
+    entity_id: int | None
+    detail: dict[str, Any]
+    request_id: str
+    client_ip: str
+    created_at: datetime
+
+
+class AuditPage(BaseModel):
+    items: list[AuditEntryOut]
+    total: int
+    limit: int
+    offset: int
 
 
 # ---- ad-hoc dashboards ----
@@ -522,3 +611,16 @@ class LineageGraph(BaseModel):
     edges: list[LineageEdge] = []
     parse_errors: int = 0  # view definitions sqlglot could not parse
     truncated: bool = False  # graph exceeded the node cap and was cut off
+
+
+# --- global search (issue #43) ---
+class SearchHit(BaseModel):
+    type: Literal["dataset", "check", "connection", "saved_query"]
+    id: int
+    title: str  # e.g. "shop.orders" / check name / connection name
+    subtitle: str  # e.g. connection name / dataset name / kind
+    url: str  # SPA path the frontend navigates to, e.g. "/datasets/12"
+
+
+class SearchOut(BaseModel):
+    hits: list[SearchHit] = []

@@ -4,7 +4,7 @@ import { api } from "../../api/client";
 import type { Health, RcaSession, TranscriptStep } from "../../api/types";
 import { canEdit, useAuth } from "../../auth";
 import Markdown from "../../components/Markdown";
-import { EmptyState, ErrorBox, Icon, Pill, Spinner } from "../../components/ui";
+import { EmptyState, ErrorBox, Icon, Spinner, StatusPill } from "../../components/ui";
 import { fmtDateTime } from "../../lib/format";
 
 function Transcript({ steps }: { steps: TranscriptStep[] }) {
@@ -48,7 +48,7 @@ function SessionView({ session }: { session: RcaSession }) {
     <div className="card card-pad" style={{ marginBottom: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
         <h3 style={{ marginBottom: 4 }}>
-          <Pill value={session.status} />{" "}
+          <StatusPill value={session.status} />{" "}
           {session.check_run_id ? `Run #${session.check_run_id}` : "Ad-hoc investigation"}
           <span style={{ fontWeight: 400, color: "var(--text-light)", fontSize: 12, marginLeft: 8 }}>
             {fmtDateTime(session.created_at)} {session.model && `· ${session.model}`}

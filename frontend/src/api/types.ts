@@ -312,6 +312,22 @@ export interface ConnectionHealth {
   latency_ms: number | null;
 }
 
+// ---- saved queries (team snippet library) ----
+export interface SavedQuery {
+  id: number;
+  connection_id: number;
+  dataset_id: number | null;
+  name: string;
+  description: string;
+  sql: string;
+  tags: string[];
+  created_by_id: number | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  last_run_at: string | null;
+}
+
 // ---- MCP ----
 export interface McpServer {
   id: number;
@@ -320,6 +336,21 @@ export interface McpServer {
   description: string;
   enabled: boolean;
   has_token: boolean;
+  created_at: string;
+}
+
+// ---- notification rules (issue #27) ----
+export type NotifyChannel = "slack" | "email";
+
+export interface NotificationRule {
+  id: number;
+  dataset_id: number | null; // null = all datasets
+  dataset_name: string; // "" when dataset_id is null
+  min_severity: Severity;
+  channel: NotifyChannel;
+  target: string; // webhook URL or comma-separated emails ("" = global Slack default)
+  on_error_runs: boolean;
+  enabled: boolean;
   created_at: string;
 }
 
@@ -438,3 +469,37 @@ export type ChatWsEvent =
   | { type: "assistant_message"; message: ChatMessage }
   | { type: "error"; detail: string }
   | { type: "done" };
+
+// ---- audit log (issue #30) ----
+export interface AuditEntry {
+  id: number;
+  user_id: number | null;
+  user: string | null; // resolved display name; null = system/anonymous
+  action: string;
+  entity_type: string;
+  entity_id: number | null;
+  detail: Record<string, unknown>;
+  request_id: string;
+  client_ip: string;
+  created_at: string;
+}
+
+export interface AuditPage {
+  items: AuditEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+// ---- global search (issue #43) ----
+export interface SearchHit {
+  type: "dataset" | "check" | "connection" | "saved_query";
+  id: number;
+  title: string;
+  subtitle: string;
+  url: string;
+}
+
+export interface SearchOut {
+  hits: SearchHit[];
+}
