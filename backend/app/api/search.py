@@ -1,7 +1,21 @@
-from dataclasses import dataclass
+"""Unified global search across entities — backs the command-K palette (issue #43).
 
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func
+Four small independent ILIKE queries (datasets, checks, connections, saved
+queries), each capped at `limit`. No search engine, no new deps. Hits are
+ordered exact-prefix-first, then by entity type in a fixed order.
+
+Saved queries come from issue #41's table, which may not exist yet — that query
+is wrapped in try/except and skipped silently when the table is absent.
+
+TODO(#26): when per-connection RBAC grants land, filter every branch here by the
+caller's grants (a viewer must not discover datasets/checks on connections they
+cannot access).
+"""
+
+import logging
+
+from fastapi import APIRouter, Depends
+from sqlalchemy import func, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -9,178 +23,130 @@ from app import models, schemas
 from app.db import get_db
 from app.security import get_current_user
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/search", tags=["search"])
 
-TYPE_ORDER = {
-    "dataset": 0,
-    "check": 1,
-    "connection": 2,
-    "saved_query": 3,
-}
+# Stable ordering of entity types when relevance (exact-prefix) is equal.
+_TYPE_ORDER = {"dataset": 0, "check": 1, "connection": 2, "saved_query": 3}
 
 
-@dataclass(frozen=True)
-class RankedHit:
-    hit: schemas.SearchHit
-    prefix_match: bool
+def _rank(hit: schemas.SearchHit, needle: str) -> tuple[int, int]:
+    """Exact-prefix matches first (0), then by entity type order."""
+    prefix = 0 if hit.title.lower().startswith(needle) else 1
+    return (prefix, _TYPE_ORDER.get(hit.type, 99))
 
 
-def _dataset_title(dataset: models.Dataset) -> str:
-    if dataset.schema_name:
-        return f"{dataset.schema_name}.{dataset.table_name}"
-    return dataset.display_name or dataset.table_name
+@router.get("", response_model=schemas.SearchOut)
+def search(
+    q: str = "",
+    limit: int = 5,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+) -> schemas.SearchOut:
+    needle = q.strip().lower()
+    if not needle:
+        return schemas.SearchOut(hits=[])
+    limit = max(1, min(limit, 25))
+    like = f"%{needle}%"
+    hits: list[schemas.SearchHit] = []
 
-
-def _dataset_label(dataset: models.Dataset) -> str:
-    if dataset.schema_name:
-        return f"{dataset.schema_name}.{dataset.table_name}"
-    return dataset.table_name
-
-
-def _has_prefix(needle: str, *values: str | None) -> bool:
-    return any((value or "").lower().startswith(needle) for value in values)
-
-
-def _dataset_hits(db: Session, needle: str, like: str, limit: int) -> list[RankedHit]:
-    rows = (
-        db.query(models.Dataset)
-        .join(models.Connection)
+    # datasets: match table_name / display_name; subtitle = connection name.
+    dataset_rows = (
+        db.query(models.Dataset, models.Connection.name)
+        .join(models.Connection, models.Dataset.connection_id == models.Connection.id)
         .filter(
             func.lower(models.Dataset.table_name).like(like)
-            | func.lower(models.Dataset.display_name).like(like)
+            | func.lower(func.coalesce(models.Dataset.display_name, "")).like(like)
         )
         .order_by(models.Dataset.table_name)
         .limit(limit)
         .all()
     )
-    return [
-        RankedHit(
-            hit=schemas.SearchHit(
+    for ds, conn_name in dataset_rows:
+        title = f"{ds.schema_name}.{ds.table_name}" if ds.schema_name else ds.table_name
+        hits.append(
+            schemas.SearchHit(
                 type="dataset",
-                id=dataset.id,
-                title=_dataset_title(dataset),
-                subtitle=dataset.connection.name,
-                url=f"/datasets/{dataset.id}",
-            ),
-            prefix_match=_has_prefix(
-                needle, dataset.table_name, dataset.display_name, _dataset_title(dataset)
-            ),
+                id=ds.id,
+                title=title,
+                subtitle=conn_name,
+                url=f"/datasets/{ds.id}",
+            )
         )
-        for dataset in rows
-    ]
 
-
-def _check_hits(db: Session, needle: str, like: str, limit: int) -> list[RankedHit]:
-    rows = (
-        db.query(models.Check)
-        .join(models.Dataset)
-        .filter(models.Check.status != "archived", func.lower(models.Check.name).like(like))
+    # checks: match name; subtitle = dataset table_name; url = dataset's Checks tab.
+    check_rows = (
+        db.query(models.Check, models.Dataset.table_name)
+        .join(models.Dataset, models.Check.dataset_id == models.Dataset.id)
+        .filter(
+            models.Check.status != "archived",
+            func.lower(models.Check.name).like(like),
+        )
         .order_by(models.Check.name)
         .limit(limit)
         .all()
     )
-    return [
-        RankedHit(
-            hit=schemas.SearchHit(
+    for chk, table_name in check_rows:
+        hits.append(
+            schemas.SearchHit(
                 type="check",
-                id=check.id,
-                title=check.name,
-                subtitle=_dataset_label(check.dataset),
-                url=f"/datasets/{check.dataset_id}/checks",
-            ),
-            prefix_match=_has_prefix(needle, check.name),
+                id=chk.id,
+                title=chk.name,
+                subtitle=table_name,
+                url=f"/datasets/{chk.dataset_id}/checks",
+            )
         )
-        for check in rows
-    ]
 
-
-def _connection_hits(db: Session, needle: str, like: str, limit: int) -> list[RankedHit]:
-    rows = (
+    # connections: match name; subtitle = kind.
+    conn_rows = (
         db.query(models.Connection)
         .filter(func.lower(models.Connection.name).like(like))
         .order_by(models.Connection.name)
         .limit(limit)
         .all()
     )
-    return [
-        RankedHit(
-            hit=schemas.SearchHit(
-                type="connection",
-                id=connection.id,
-                title=connection.name,
-                subtitle=connection.kind,
-                url="/connections",
-            ),
-            prefix_match=_has_prefix(needle, connection.name),
-        )
-        for connection in rows
-    ]
-
-
-def _saved_query_hits(db: Session, needle: str, like: str, limit: int) -> list[RankedHit]:
-    saved_query_model = getattr(models, "SavedQuery", None)
-    if (
-        saved_query_model is None
-        or not hasattr(saved_query_model, "id")
-        or not hasattr(saved_query_model, "name")
-    ):
-        return []
-
-    try:
-        rows = (
-            db.query(saved_query_model)
-            .filter(func.lower(saved_query_model.name).like(like))
-            .order_by(saved_query_model.name)
-            .limit(limit)
-            .all()
-        )
-    except SQLAlchemyError:
-        return []
-
-    hits: list[RankedHit] = []
-    for saved_query in rows:
-        name = getattr(saved_query, "name", "")
-        saved_query_id = saved_query.id
+    for conn in conn_rows:
         hits.append(
-            RankedHit(
-                hit=schemas.SearchHit(
-                    type="saved_query",
-                    id=saved_query_id,
-                    title=name,
-                    subtitle="Saved query",
-                    url=f"/workbench?saved_query_id={saved_query_id}",
-                ),
-                prefix_match=_has_prefix(needle, name),
+            schemas.SearchHit(
+                type="connection",
+                id=conn.id,
+                title=conn.name,
+                subtitle=conn.kind,
+                url="/connections",
             )
         )
-    return hits
+
+    # saved queries (issue #41): the table may not exist yet — skip silently.
+    hits.extend(_saved_query_hits(db, like, limit))
+
+    hits.sort(key=lambda h: _rank(h, needle))
+    return schemas.SearchOut(hits=hits)
 
 
-@router.get("", response_model=schemas.SearchOut)
-def global_search(
-    q: str = Query(default="", max_length=200),
-    limit: int = Query(default=5, ge=1, le=20),
-    db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
-):
-    needle = q.strip().lower()
-    if not needle:
-        return schemas.SearchOut(hits=[])
+def _saved_query_hits(db: Session, like: str, limit: int) -> list[schemas.SearchHit]:
+    """Saved-query hits from issue #41's `saved_queries` table.
 
-    like = f"%{needle}%"
-    # TODO(#26): Filter metadata hits by per-connection grants once connection RBAC lands.
-    ranked = [
-        *_dataset_hits(db, needle, like, limit),
-        *_check_hits(db, needle, like, limit),
-        *_connection_hits(db, needle, like, limit),
-        *_saved_query_hits(db, needle, like, limit),
-    ]
-    ranked.sort(
-        key=lambda item: (
-            not item.prefix_match,
-            TYPE_ORDER[item.hit.type],
-            item.hit.title.lower(),
-            item.hit.id,
+    Feature-detected at runtime: the table won't exist in worktrees built before
+    #41 lands, so a missing-table error is caught and the section skipped.
+    """
+    try:
+        rows = db.execute(
+            text(
+                "SELECT id, name FROM saved_queries "
+                "WHERE lower(name) LIKE :like ORDER BY name LIMIT :limit"
+            ),
+            {"like": like, "limit": limit},
+        ).all()
+    except SQLAlchemyError:
+        db.rollback()  # clear the failed transaction so later queries still work
+        return []
+    return [
+        schemas.SearchHit(
+            type="saved_query",
+            id=row.id,
+            title=row.name,
+            subtitle="Saved query",
+            url=f"/workbench?saved_query_id={row.id}",
         )
-    )
-    return schemas.SearchOut(hits=[item.hit for item in ranked])
+        for row in rows
+    ]

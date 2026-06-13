@@ -4,6 +4,7 @@ import type { KeyboardEvent, ReactNode } from "react";
 import { api } from "../api/client";
 import type { ChatMessage, ChatSession, ChatStep, ChatWsEvent, Health } from "../api/types";
 import { canEdit, useAuth } from "../auth";
+import { useConfirm } from "../components/confirm";
 import ErrorBoundary from "../components/ErrorBoundary";
 import Markdown from "../components/Markdown";
 import PanelChart from "../components/PanelChart";
@@ -100,6 +101,7 @@ export default function AssistantPage() {
   const { user } = useAuth();
   const editable = canEdit(user);
   const qc = useQueryClient();
+  const confirm = useConfirm();
 
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -249,9 +251,22 @@ export default function AssistantPage() {
                 <button
                   className="ghost small del"
                   title="Delete conversation"
-                  onClick={(e) => {
+                  onClick={async (e) => {
                     e.stopPropagation();
-                    deleteSession.mutate(s.id);
+                    if (
+                      await confirm({
+                        title: "Delete conversation",
+                        danger: true,
+                        confirmLabel: "Delete",
+                        body: (
+                          <>
+                            Delete <strong>{s.title || "New conversation"}</strong>? Its messages will be
+                            removed.
+                          </>
+                        ),
+                      })
+                    )
+                      deleteSession.mutate(s.id);
                   }}
                 >
                   <Icon name="x" size={12} />

@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link } from "react-router";
 import { api } from "../api/client";
 import type { Connection, ConnectionHealth, ConnectionTest, EngineInfo } from "../api/types";
 import { isAdmin, useAuth } from "../auth";
-import { EmptyState, ErrorBox, Icon, Modal, Spinner, StatusPill } from "../components/ui";
+import { useConfirm } from "../components/confirm";
+import { EmptyState, ErrorBox, Icon, Modal, Spinner } from "../components/ui";
 import { fmtDateTime } from "../lib/format";
 
 const GENERIC_DSN_PLACEHOLDER = "dialect+driver://user:pass@host:port/dbname";
@@ -22,6 +23,7 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
     staleTime: Infinity,
   });
   const selected = (engines.data ?? []).find((e) => e.kind === kind);
+  const dirty = name.trim() !== "" || dsn.trim() !== "" || kind !== null;
 
   const test = useMutation({
     mutationFn: () => api.post<ConnectionTest>("/connections/test", { name: name || "test", dsn }),
@@ -51,6 +53,7 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
     <Modal
       title="Add a connection"
       onClose={onClose}
+      dirty={dirty}
       footer={
         <>
           <button onClick={() => test.mutate()} disabled={!dsn || test.isPending}>
@@ -153,8 +156,8 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
 
 export default function ConnectionsPage() {
   const { user } = useAuth();
-  const navigate = useNavigate();
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const [adding, setAdding] = useState(false);
   const { data, isLoading, error } = useQuery({
     queryKey: ["connections"],
@@ -232,45 +235,51 @@ export default function ConnectionsPage() {
               </tr>
             </thead>
             <tbody>
-              {data.map((c) => {
-                const rowHealth = healthById.get(c.id);
-                const healthClass = rowHealth?.ok ? "pill tone-ok" : "pill tone-danger";
-                return (
-                <tr key={c.id} className="clickable" onClick={() => navigate(`/connections/${c.id}`)}>
-                  <td>
-                    <Link
-                      to={`/connections/${c.id}`}
-                      onClick={(e) => e.stopPropagation()}
-                      style={{ fontWeight: 700, color: "var(--text-dark)" }}
-                    >
-                      {c.name}
-                    </Link>
+              {data.map((c) => (
+                <tr key={c.id}>
+                  <td style={{ fontWeight: 700 }}>
+                    <Link to={`/connections/${c.id}`}>{c.name}</Link>
                   </td>
                   <td>
-                    {rowHealth ? (
+                    {healthById.has(c.id) ? (
                       <span
-                        className={healthClass}
-                        title={rowHealth.message}
+                        className={`pill tone-${healthById.get(c.id)!.ok ? "ok" : "danger"}`}
+                        title={healthById.get(c.id)!.message}
                       >
-                        {rowHealth.ok ? `up · ${rowHealth.latency_ms}ms` : "down"}
+                        {healthById.get(c.id)!.ok ? `up · ${healthById.get(c.id)!.latency_ms}ms` : "down"}
                       </span>
                     ) : (
-                      <StatusPill value={null} />
+                      <span className="pill tone-neutral">—</span>
                     )}
                   </td>
                   <td><span className="badge kind">{c.kind}</span></td>
                   <td className="mono" style={{ maxWidth: 340, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.dsn_masked}</td>
                   <td className="num">{c.dataset_count}</td>
                   <td style={{ color: "var(--text-light)" }}>{fmtDateTime(c.created_at)}</td>
-                  <td style={{ textAlign: "right", whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
+                  <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                     <Link to={`/connections/${c.id}/browse`} className="btn small" style={{ marginRight: 6 }}>
                       <Icon name="search" size={12} /> Browse tables
                     </Link>
                     {isAdmin(user) && (
                       <button
                         className="small danger"
-                        onClick={() => {
-                          if (confirm(`Delete connection "${c.name}" and its ${c.dataset_count} dataset(s), checks and history?`)) remove.mutate(c.id);
+                        onClick={async () => {
+                          if (
+                            await confirm({
+                              title: "Delete connection",
+                              danger: true,
+                              confirmLabel: "Delete connection",
+                              typeToConfirm: c.name,
+                              body: (
+                                <>
+                                  This permanently deletes <strong>{c.name}</strong> and its{" "}
+                                  {c.dataset_count} dataset(s), along with all their checks, runs and
+                                  exceptions. This cannot be undone.
+                                </>
+                              ),
+                            })
+                          )
+                            remove.mutate(c.id);
                         }}
                       >
                         Delete
@@ -278,8 +287,7 @@ export default function ConnectionsPage() {
                     )}
                   </td>
                 </tr>
-                );
-              })}
+              ))}
             </tbody>
           </table>
         </div>

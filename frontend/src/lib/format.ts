@@ -35,6 +35,26 @@ export function timeAgo(iso: string | null | undefined): string {
   return `${Math.floor(secs / 86400)}d ago`;
 }
 
+/** Compact relative time for tables ("3h ago", "5m ago", "2d ago"). Used by the
+ *  exceptions workspace "last seen" column (#63). UTC-normalized like the rest. */
+export function fmtRelative(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z");
+  const secs = Math.max(0, (Date.now() - d.getTime()) / 1000);
+  if (secs < 45) return "now";
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+  if (secs < 86400 * 30) return `${Math.floor(secs / 86400)}d ago`;
+  return `${Math.floor(secs / (86400 * 30))}mo ago`;
+}
+
+/** True when an ISO timestamp is within the last 24h (the "new" tint, #63). */
+export function isRecent(iso: string | null | undefined, hours = 24): boolean {
+  if (!iso) return false;
+  const d = new Date(iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z");
+  return Date.now() - d.getTime() < hours * 3600 * 1000;
+}
+
 export function describeSchedule(kind: string | null, expr: string | null): string {
   if (!kind || !expr) return "manual";
   if (kind === "cron") return `cron ${expr}`;

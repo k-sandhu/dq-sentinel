@@ -1,193 +1,198 @@
 /**
- * Personalization storage boundary.
+ * Typed client-side user preferences (favorites, recently-viewed, default
+ * landing, plus the exceptions workspace's saved views / hidden columns).
  *
- * Keep every personalization read/write in this module. v1 stores only opaque
- * dataset ids and landing route strings in localStorage; a future user_prefs
- * API can replace getPref/setPref without touching call sites.
+ * ── v1 storage backend: localStorage ──────────────────────────────────────────
+ * Everything is persisted in localStorage, namespaced under the PREF_KEYS below.
+ * This is a deliberate v1 trade-off: zero backend, instant reads, no migration.
+ *
+ * ── v2-swap contract (READ THIS BEFORE ADDING STORAGE) ────────────────────────
+ * Enterprise users work across machines (office desktop, laptop, VDI) and will
+ * eventually expect their prefs to follow them. ALL preference storage MUST go
+ * through `getPref` / `setPref` (and the typed helpers that wrap them) — never
+ * call `localStorage` directly from a component. That single chokepoint is the
+ * contract: a future server-backed implementation (a `user_prefs` table behind
+ * `GET/PUT /auth/me/prefs`) can replace the *bodies* of `getPref`/`setPref`
+ * (e.g. read from an in-memory cache hydrated on login, write-through to the API)
+ * without touching a single call site. Saved views are shaped `{name, params}[]`
+ * so they ingest into a future `user_views` table unchanged.
+ *
+ * ── privacy ───────────────────────────────────────────────────────────────────
+ * Store dataset IDs only — never names or row data. Prefs then carry nothing
+ * meaningful without API access, so they share (and never exceed) the exposure
+ * surface of the JWT that already lives in this same localStorage.
  */
 
-export const PREF_EVENT = "dq:prefs";
-
 export const PREF_KEYS = {
-  favorites: "dq_favs",
-  recents: "dq_recent",
-  landing: "dq_landing",
+  favorites: "dq_favs", // number[] dataset ids, most-recently-starred first
+  recents: "dq_recent", // {id: number, at: string}[] capped at RECENTS_CAP
+  landing: "dq_landing", // LandingPref
+  views: "dq_views_v1", // SavedView[] (exceptions workspace, #63)
+  cols: "dq_cols_v1", // string[] of hidden column ids (exceptions table, #63)
 } as const;
 
-export const SESSION_KEYS = {
-  landed: "dq_landed",
-} as const;
+export type PrefKey = (typeof PREF_KEYS)[keyof typeof PREF_KEYS];
 
-export const LANDING_PATHS = ["/", "/exceptions", "/datasets", "/workbench"] as const;
-export type LandingPath = (typeof LANDING_PATHS)[number];
-
-export interface RecentDataset {
-  id: number;
-  at: string;
-}
-
-const RECENT_LIMIT = 8;
-const PREF_KEY_VALUES = Object.values(PREF_KEYS) as string[];
-let memoryLanded = false;
-
+/** Read a JSON-serialized preference. Returns `fallback` on miss or any error. */
 export function getPref<T>(key: string, fallback: T): T {
   try {
-    const raw = window.localStorage.getItem(key);
+    const raw = localStorage.getItem(key);
     return raw == null ? fallback : (JSON.parse(raw) as T);
   } catch {
     return fallback;
   }
 }
 
+/**
+ * Write a JSON-serialized preference. Degrades silently when storage is
+ * unavailable (private mode / quota). Dispatches a `dq:prefs` window event so
+ * other mounted components (e.g. the sidebar Favorites group) can re-read
+ * without a remount — see `subscribePrefs`.
+ */
 export function setPref<T>(key: string, value: T): void {
   try {
-    window.localStorage.setItem(key, JSON.stringify(value));
+    localStorage.setItem(key, JSON.stringify(value));
   } catch {
-    /* storage unavailable: degrade silently */
+    /* storage unavailable — degrade silently */
   }
-  emitPrefsChanged(key);
+  try {
+    window.dispatchEvent(new CustomEvent(PREFS_EVENT, { detail: { key } }));
+  } catch {
+    /* no window (SSR/tests) — nothing to notify */
+  }
 }
 
-export function subscribePrefs(listener: () => void): () => void {
-  if (typeof window === "undefined") return () => undefined;
+/** Window event fired by `setPref`; lets live components stay in sync. */
+export const PREFS_EVENT = "dq:prefs";
 
-  const onPrefs = () => listener();
-  const onStorage = (event: StorageEvent) => {
-    if (event.key === null || PREF_KEY_VALUES.includes(event.key)) listener();
-  };
-
-  window.addEventListener(PREF_EVENT, onPrefs);
-  window.addEventListener("storage", onStorage);
-  return () => {
-    window.removeEventListener(PREF_EVENT, onPrefs);
-    window.removeEventListener("storage", onStorage);
-  };
+/** Subscribe to in-tab preference changes. Returns an unsubscribe fn. */
+export function subscribePrefs(handler: () => void): () => void {
+  window.addEventListener(PREFS_EVENT, handler);
+  return () => window.removeEventListener(PREFS_EVENT, handler);
 }
 
-export function getFavoriteDatasetIds(): number[] {
-  return normalizeIds(getPref<unknown>(PREF_KEYS.favorites, []));
+// ── saved views (exceptions workspace, #63) ────────────────────────────────────
+
+/** A persisted saved view: a name + a URL search-param string. */
+export interface SavedView {
+  name: string;
+  params: string;
 }
 
-export function setFavoriteDatasetIds(ids: number[]): number[] {
-  const next = normalizeIds(ids);
+// ── landing page ──────────────────────────────────────────────────────────────
+
+/**
+ * The fixed, named landing destinations offered by the Settings dropdown
+ * (#59). Kept as a closed union so `LANDING_OPTIONS` stays exhaustive.
+ */
+export type NamedLanding = "/" | "/exceptions" | "/datasets" | "/workbench";
+
+/**
+ * The stored landing preference. Besides the named pages above, custom
+ * dashboards (#68) let a user pin a specific board (e.g. "/dashboards/3") as
+ * their landing page, so the stored value is any in-app path. The `(string & {})`
+ * arm widens to arbitrary paths while preserving autocomplete for the named ones.
+ */
+export type LandingPref = NamedLanding | (string & {});
+
+export const LANDING_OPTIONS: { value: NamedLanding; label: string }[] = [
+  { value: "/", label: "Home" },
+  { value: "/exceptions", label: "Exceptions" },
+  { value: "/datasets", label: "Datasets" },
+  { value: "/workbench", label: "Workbench" },
+];
+
+export function getLanding(): LandingPref {
+  return getPref<LandingPref>(PREF_KEYS.landing, "/");
+}
+
+export function setLanding(value: LandingPref): void {
+  setPref(PREF_KEYS.landing, value);
+}
+
+/**
+ * Reset the landing preference back to Home. Used when the pinned destination
+ * disappears — e.g. deleting the custom dashboard (#68) that was set as landing,
+ * so a fresh tab doesn't loop into a 404.
+ */
+export function clearLanding(): void {
+  setPref(PREF_KEYS.landing, "/");
+}
+
+// ── favorites ─────────────────────────────────────────────────────────────────
+
+/** Max favorites surfaced in the sidebar group. */
+export const FAVORITES_SIDEBAR_CAP = 6;
+
+export function getFavorites(): number[] {
+  const raw = getPref<unknown[]>(PREF_KEYS.favorites, []);
+  // Defensive: only keep finite numbers (storage may have been hand-edited).
+  return raw.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+}
+
+export function isFavorite(id: number): boolean {
+  return getFavorites().includes(id);
+}
+
+/**
+ * Toggle a dataset's favorite state. Newly-starred ids go to the FRONT so the
+ * ordering is most-recently-starred first (no manual reordering in v1).
+ * Returns the new favorited state.
+ */
+export function toggleFavorite(id: number): boolean {
+  const current = getFavorites();
+  const has = current.includes(id);
+  const next = has ? current.filter((x) => x !== id) : [id, ...current];
   setPref(PREF_KEYS.favorites, next);
-  return next;
+  return !has;
 }
 
-export function toggleFavoriteDataset(id: number): number[] {
-  const favoriteIds = getFavoriteDatasetIds();
-  const next = favoriteIds.includes(id) ? favoriteIds.filter((favoriteId) => favoriteId !== id) : [id, ...favoriteIds];
-  return setFavoriteDatasetIds(next);
+// ── recently viewed ───────────────────────────────────────────────────────────
+
+export interface RecentEntry {
+  id: number;
+  at: string; // ISO timestamp of the visit
 }
 
-export function getRecentDatasets(): RecentDataset[] {
-  return normalizeRecents(getPref<unknown>(PREF_KEYS.recents, []));
+/** Max entries kept in the recents list. */
+export const RECENTS_CAP = 8;
+
+export function getRecents(): RecentEntry[] {
+  const raw = getPref<RecentEntry[]>(PREF_KEYS.recents, []);
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (e): e is RecentEntry =>
+      !!e && typeof e.id === "number" && Number.isFinite(e.id) && typeof e.at === "string",
+  );
 }
 
-export function setRecentDatasets(recents: RecentDataset[]): RecentDataset[] {
-  const next = normalizeRecents(recents);
+/**
+ * Record a dataset visit: move it to the front (most-recent-first), dedupe by
+ * id, and cap the list at RECENTS_CAP.
+ */
+export function pushRecent(id: number): void {
+  const rest = getRecents().filter((e) => e.id !== id);
+  const next: RecentEntry[] = [{ id, at: new Date().toISOString() }, ...rest].slice(0, RECENTS_CAP);
   setPref(PREF_KEYS.recents, next);
-  return next;
 }
 
-export function markDatasetRecent(id: number): RecentDataset[] {
-  if (!isDatasetId(id)) return getRecentDatasets();
-  const next = [{ id, at: new Date().toISOString() }, ...getRecentDatasets().filter((recent) => recent.id !== id)];
-  return setRecentDatasets(next);
-}
+// ── stale-id pruning ──────────────────────────────────────────────────────────
 
-export function pruneDatasetPrefs(validDatasetIds: Iterable<number>): { favorites: number[]; recents: RecentDataset[] } {
-  const validIds = new Set(Array.from(validDatasetIds).filter(isDatasetId));
-  const favorites = getFavoriteDatasetIds();
-  const recents = getRecentDatasets();
+/**
+ * Drop favorites/recents whose dataset no longer exists. Datasets get deleted in
+ * real deployments; dead entries that reappear every session read as bugs, so we
+ * prune storage (not just the rendered view) the moment we have the live id set.
+ * No-ops (and writes nothing) when everything is still valid, to avoid spurious
+ * `dq:prefs` events. Call once the live datasets list has loaded.
+ */
+export function pruneStalePrefs(liveIds: Iterable<number>): void {
+  const live = new Set(liveIds);
 
-  const nextFavorites = favorites.filter((id) => validIds.has(id));
-  const nextRecents = recents.filter((recent) => validIds.has(recent.id));
+  const favs = getFavorites();
+  const favsKept = favs.filter((id) => live.has(id));
+  if (favsKept.length !== favs.length) setPref(PREF_KEYS.favorites, favsKept);
 
-  if (nextFavorites.length !== favorites.length) setFavoriteDatasetIds(nextFavorites);
-  if (nextRecents.length !== recents.length) setRecentDatasets(nextRecents);
-
-  return { favorites: nextFavorites, recents: nextRecents };
-}
-
-export function getLandingPath(): LandingPath {
-  const value = getPref<unknown>(PREF_KEYS.landing, "/");
-  return isLandingPath(value) ? value : "/";
-}
-
-export function setLandingPath(path: LandingPath): void {
-  setPref(PREF_KEYS.landing, path);
-}
-
-export function hasLandedThisSession(): boolean {
-  if (typeof window === "undefined") return true;
-  try {
-    return window.sessionStorage.getItem(SESSION_KEYS.landed) === "1";
-  } catch {
-    return memoryLanded;
-  }
-}
-
-export function markLandedThisSession(): void {
-  memoryLanded = true;
-  if (typeof window === "undefined") return;
-  try {
-    window.sessionStorage.setItem(SESSION_KEYS.landed, "1");
-  } catch {
-    /* session storage unavailable: in-memory guard still applies */
-  }
-}
-
-function emitPrefsChanged(key: string): void {
-  if (typeof window === "undefined") return;
-  window.dispatchEvent(new CustomEvent(PREF_EVENT, { detail: { key } }));
-}
-
-function normalizeIds(value: unknown): number[] {
-  if (!Array.isArray(value)) return [];
-  const seen = new Set<number>();
-  const ids: number[] = [];
-  for (const raw of value) {
-    const id = Number(raw);
-    if (!isDatasetId(id) || seen.has(id)) continue;
-    seen.add(id);
-    ids.push(id);
-  }
-  return ids;
-}
-
-function normalizeRecents(value: unknown): RecentDataset[] {
-  if (!Array.isArray(value)) return [];
-  const seen = new Set<number>();
-  const recents: RecentDataset[] = [];
-
-  for (const item of value) {
-    if (!item || typeof item !== "object") continue;
-    const record = item as Partial<RecentDataset>;
-    const id = Number(record.id);
-    if (!isDatasetId(id) || seen.has(id)) continue;
-
-    seen.add(id);
-    recents.push({
-      id,
-      at: typeof record.at === "string" && record.at ? record.at : new Date(0).toISOString(),
-    });
-  }
-
-  return recents
-    .sort((a, b) => timeValue(b.at) - timeValue(a.at))
-    .slice(0, RECENT_LIMIT);
-}
-
-function isDatasetId(value: number): boolean {
-  return Number.isInteger(value) && value > 0;
-}
-
-function timeValue(value: string): number {
-  const time = Date.parse(value);
-  return Number.isFinite(time) ? time : 0;
-}
-
-function isLandingPath(value: unknown): value is LandingPath {
-  return typeof value === "string" && (LANDING_PATHS as readonly string[]).includes(value);
+  const recents = getRecents();
+  const recentsKept = recents.filter((e) => live.has(e.id));
+  if (recentsKept.length !== recents.length) setPref(PREF_KEYS.recents, recentsKept);
 }

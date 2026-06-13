@@ -1,70 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { useNavigate } from "react-router";
 import { api } from "../api/client";
-import type { Check, Dataset } from "../api/types";
-import { canEdit, useAuth } from "../auth";
+import type { Check } from "../api/types";
 import ChecksTable from "../components/ChecksTable";
-import { EmptyState, ErrorBox, Icon, Modal, Spinner } from "../components/ui";
+import { EmptyState, ErrorBox, Spinner } from "../components/ui";
 
 const FILTERS = ["all", "active", "proposed", "disabled"] as const;
 
-function NewCheckPicker({ onClose }: { onClose: () => void }) {
-  const navigate = useNavigate();
-  const [datasetId, setDatasetId] = useState("");
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["datasets"],
-    queryFn: () => api.get<Dataset[]>("/datasets"),
-  });
-
-  const go = () => {
-    if (!datasetId) return;
-    onClose();
-    navigate(`/datasets/${datasetId}/checks`);
-  };
-
-  return (
-    <Modal
-      title="New check"
-      onClose={onClose}
-      footer={
-        <>
-          <button onClick={onClose}>Cancel</button>
-          <button className="primary" onClick={go} disabled={!datasetId}>
-            Continue
-          </button>
-        </>
-      }
-    >
-      <ErrorBox error={error} />
-      {isLoading ? (
-        <Spinner />
-      ) : !data?.length ? (
-        <EmptyState title="No datasets registered" hint="Register a dataset before adding checks." />
-      ) : (
-        <label className="field">
-          Dataset
-          <select value={datasetId} onChange={(e) => setDatasetId(e.target.value)}>
-            <option value="">Pick a dataset...</option>
-            {data.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.schema_name ? `${d.schema_name}.` : ""}
-                {d.table_name} ({d.connection_name})
-              </option>
-            ))}
-          </select>
-          <div className="field-hint">The dataset Checks tab has the check form and profile-aware defaults.</div>
-        </label>
-      )}
-    </Modal>
-  );
-}
-
 export default function ChecksPage() {
-  const { user } = useAuth();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("all");
   const [search, setSearch] = useState("");
-  const [creating, setCreating] = useState(false);
   const { data, isLoading, error } = useQuery({
     queryKey: ["checks", { filter }],
     queryFn: () => api.get<Check[]>(`/checks${filter === "all" ? "" : `?status=${filter}`}`),
@@ -90,11 +35,6 @@ export default function ChecksPage() {
             {data ? ` · ${shown.length} of ${data.length} shown` : ""}
           </div>
         </div>
-        {canEdit(user) && (
-          <button className="primary" onClick={() => setCreating(true)}>
-            <Icon name="plus" size={14} /> New check
-          </button>
-        )}
       </div>
       <div className="toolbar">
         <input
@@ -129,7 +69,6 @@ export default function ChecksPage() {
       ) : (
         <ChecksTable checks={shown} />
       )}
-      {creating && <NewCheckPicker onClose={() => setCreating(false)} />}
     </div>
   );
 }

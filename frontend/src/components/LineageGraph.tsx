@@ -117,12 +117,6 @@ function trunc(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
-function nodeDestination(n: LineageNode): string | null {
-  if (n.dataset_id === null) return null;
-  if (n.health === "fail" || n.health === "warn") return `/datasets/${n.dataset_id}/exceptions`;
-  return `/datasets/${n.dataset_id}`;
-}
-
 export default function LineageGraph({
   graph,
   currentId,
@@ -189,8 +183,7 @@ export default function LineageGraph({
           {graph.nodes.map((n) => {
             const p = placed.get(n.id);
             if (!p) return null;
-            const destination = nodeDestination(n);
-            const clickable = destination !== null;
+            const clickable = n.dataset_id !== null;
             const isCurrent = currentId !== undefined && n.id === currentId;
             const isView = n.kind === "view";
             const dim = related !== null && !related.has(n.id);
@@ -214,10 +207,10 @@ export default function LineageGraph({
                 transform={`translate(${p.x}, ${p.y})`}
                 onMouseEnter={() => setHoverId(n.id)}
                 onMouseLeave={() => setHoverId(null)}
-                onClick={destination ? () => navigate(destination) : undefined}
+                onClick={clickable ? () => navigate(`/datasets/${n.dataset_id}/lineage`) : undefined}
               >
                 <title>
-                  {`${n.schema_name ? `${n.schema_name}.` : ""}${n.table_name} — ${n.kind}, health: ${n.health}${destination ? ` (opens ${n.health === "fail" || n.health === "warn" ? "exceptions" : "profile"})` : " (not registered as a dataset)"}`}
+                  {`${n.schema_name ? `${n.schema_name}.` : ""}${n.table_name} — ${n.kind}, health: ${n.health}${clickable ? "" : " (not registered as a dataset)"}`}
                 </title>
                 {isCurrent && <rect className="lineage-glow" x={-4} y={-4} width={NODE_W + 8} height={NODE_H + 8} rx={12} />}
                 <rect className={`lineage-box ${n.health}`} width={NODE_W} height={NODE_H} rx={8} />
@@ -253,7 +246,7 @@ export default function LineageGraph({
         <span>
           <span className="swatch ext" /> external / no checks
         </span>
-        <span style={{ marginLeft: "auto" }}>scroll to pan · unhealthy nodes open exceptions; others open profile</span>
+        <span style={{ marginLeft: "auto" }}>scroll to pan · click a registered table to open it</span>
       </div>
       {notes.length > 0 && <div className="lineage-note">{notes.join(" · ")}</div>}
     </div>

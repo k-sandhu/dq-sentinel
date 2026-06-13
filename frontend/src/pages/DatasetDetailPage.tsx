@@ -1,12 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api } from "../api/client";
 import type { Dataset, Profile } from "../api/types";
 import { canEdit, useAuth } from "../auth";
-import { ErrorBox, Icon, Spinner, StatusPill } from "../components/ui";
+import { Breadcrumbs, ErrorBox, Icon, Spinner, StatusPill } from "../components/ui";
 import { fmtNum, timeAgo } from "../lib/format";
-import { getFavoriteDatasetIds, markDatasetRecent, subscribePrefs, toggleFavoriteDataset } from "../lib/prefs";
+import { isFavorite, pushRecent, subscribePrefs, toggleFavorite } from "../lib/prefs";
 import ChecksTab from "./dataset/ChecksTab";
 import CodeTab from "./dataset/CodeTab";
 import DashboardsTab from "./dataset/DashboardsTab";
@@ -20,10 +20,6 @@ import RunsTab from "./dataset/RunsTab";
 const TABS = ["profile", "code", "lineage", "checks", "runs", "exceptions", "dashboards", "knowledge", "rca"] as const;
 type Tab = (typeof TABS)[number];
 
-function datasetLabel(dataset: Dataset): string {
-  return dataset.display_name || `${dataset.schema_name ? `${dataset.schema_name}.` : ""}${dataset.table_name}`;
-}
-
 export default function DatasetDetailPage() {
   const { id, tab } = useParams();
   const datasetId = Number(id);
@@ -31,7 +27,18 @@ export default function DatasetDetailPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
   const active: Tab = TABS.includes(tab as Tab) ? (tab as Tab) : "profile";
-  const [favorites, setFavorites] = useState<number[]>(() => getFavoriteDatasetIds());
+  // The Knowledge tab reports unsaved edits here so a tab switch can warn first (BF-3).
+  const knowledgeDirty = useRef(false);
+
+  const goTab = (t: Tab) => {
+    if (
+      active === "knowledge" &&
+      knowledgeDirty.current &&
+      !window.confirm("You have unsaved changes to this table's knowledge. Leave without saving?")
+    )
+      return;
+    navigate(`/datasets/${datasetId}/${t}`);
+  };
 
   const { data: dataset, error } = useQuery({
     queryKey: ["datasets", datasetId],
@@ -52,19 +59,24 @@ export default function DatasetDetailPage() {
     },
   });
 
-  useEffect(() => subscribePrefs(() => setFavorites(getFavoriteDatasetIds())), []);
-
+  // Recently-viewed (#59): record this visit (dedupe + cap handled in prefs).
   useEffect(() => {
-    if (dataset?.id) markDatasetRecent(dataset.id);
-  }, [dataset?.id]);
+    if (Number.isFinite(datasetId)) pushRecent(datasetId);
+  }, [datasetId]);
+
+  // Favorite toggle state, kept in sync with the sidebar / datasets page.
+  const [fav, setFav] = useState(() => isFavorite(datasetId));
+  useEffect(() => setFav(isFavorite(datasetId)), [datasetId]);
+  useEffect(() => subscribePrefs(() => setFav(isFavorite(datasetId))), [datasetId]);
 
   if (error) return <div className="page"><ErrorBox error={error} /></div>;
   if (!dataset) return <Spinner label="Loading dataset…" />;
 
-  const isFavorite = favorites.includes(dataset.id);
+  const datasetLabel = `${dataset.schema_name ? `${dataset.schema_name}.` : ""}${dataset.table_name}`;
 
   return (
     <div className="page">
+      <Breadcrumbs items={[{ label: "Datasets", to: "/datasets" }, { label: datasetLabel }]} />
       <div className="page-header">
         <div>
           <h1>
@@ -79,13 +91,14 @@ export default function DatasetDetailPage() {
         <div className="header-actions">
           <button
             type="button"
-            className={`favorite-toggle${isFavorite ? " on" : ""}`}
-            aria-label={`${isFavorite ? "Remove" : "Add"} ${datasetLabel(dataset)} ${isFavorite ? "from" : "to"} favorites`}
-            aria-pressed={isFavorite}
-            title={isFavorite ? "Remove from favorites" : "Add to favorites"}
-            onClick={() => setFavorites(toggleFavoriteDataset(dataset.id))}
+            className={`icon-only star-btn${fav ? " on" : ""}`}
+            aria-pressed={fav}
+            title={fav ? "Remove from favorites" : "Add to favorites"}
+            onClick={() => {
+              setFav(toggleFavorite(datasetId)); // optimistic; dq:prefs keeps siblings in sync
+            }}
           >
-            <Icon name={isFavorite ? "star-filled" : "star"} size={15} />
+            <Icon name={fav ? "star-filled" : "star"} size={15} />
           </button>
           <Link to={`/workbench?dataset_id=${datasetId}`} className="btn">
             <Icon name="search" size={13} /> Workbench
@@ -102,7 +115,7 @@ export default function DatasetDetailPage() {
 
       <div className="tabs">
         {TABS.map((t) => (
-          <button key={t} className={`tab${active === t ? " on" : ""}`} onClick={() => navigate(`/datasets/${datasetId}/${t}`)}>
+          <button key={t} className={`tab${active === t ? " on" : ""}`} onClick={() => goTab(t)}>
             {t === "rca" ? "Root cause" : t[0].toUpperCase() + t.slice(1)}
           </button>
         ))}
@@ -123,7 +136,7 @@ export default function DatasetDetailPage() {
       {active === "runs" && <RunsTab datasetId={datasetId} />}
       {active === "exceptions" && <ExceptionsTab datasetId={datasetId} />}
       {active === "dashboards" && <DashboardsTab datasetId={datasetId} hasProfile={!!profileQuery.data} />}
-      {active === "knowledge" && <KnowledgeTab datasetId={datasetId} />}
+      {active === "knowledge" && <KnowledgeTab datasetId={datasetId} dirtyRef={knowledgeDirty} />}
       {active === "rca" && <RcaTab datasetId={datasetId} />}
     </div>
   );

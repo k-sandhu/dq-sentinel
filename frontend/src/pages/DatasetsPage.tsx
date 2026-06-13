@@ -6,52 +6,42 @@ import type { Dataset } from "../api/types";
 import { EmptyState, ErrorBox, Icon, Spinner, StatusPill } from "../components/ui";
 import { fmtNum, timeAgo } from "../lib/format";
 import {
-  getFavoriteDatasetIds,
-  getRecentDatasets,
-  pruneDatasetPrefs,
+  getFavorites,
+  getRecents,
+  pruneStalePrefs,
   subscribePrefs,
-  toggleFavoriteDataset,
+  toggleFavorite,
 } from "../lib/prefs";
 
 const HEALTH_FILTERS = ["all", "fail", "warn", "pass", "unknown"] as const;
-
-function datasetLabel(dataset: Dataset): string {
-  return dataset.display_name || `${dataset.schema_name ? `${dataset.schema_name}.` : ""}${dataset.table_name}`;
-}
 
 export default function DatasetsPage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
   const [healthFilter, setHealthFilter] = useState<(typeof HEALTH_FILTERS)[number]>("all");
-  const [favorites, setFavorites] = useState<number[]>(() => getFavoriteDatasetIds());
-  const [recents, setRecents] = useState(() => getRecentDatasets());
+  // Snapshot of prefs; re-read on any in-tab change so stars/recents stay live.
+  const [favIds, setFavIds] = useState<number[]>(() => getFavorites());
+  const [recents, setRecents] = useState(() => getRecents());
+  useEffect(
+    () =>
+      subscribePrefs(() => {
+        setFavIds(getFavorites());
+        setRecents(getRecents());
+      }),
+    [],
+  );
+
   const { data: raw, isLoading, error } = useQuery({
     queryKey: ["datasets"],
     queryFn: () => api.get<Dataset[]>("/datasets"),
   });
 
-  useEffect(
-    () =>
-      subscribePrefs(() => {
-        setFavorites(getFavoriteDatasetIds());
-        setRecents(getRecentDatasets());
-      }),
-    [],
-  );
-
+  // Prune favorites/recents pointing at deleted datasets once the live list loads.
   useEffect(() => {
-    if (!raw) return;
-    const pruned = pruneDatasetPrefs(raw.map((dataset) => dataset.id));
-    setFavorites(pruned.favorites);
-    setRecents(pruned.recents);
+    if (raw) pruneStalePrefs(raw.map((d) => d.id));
   }, [raw]);
 
-  const datasetsById = useMemo(() => new Map((raw ?? []).map((dataset) => [dataset.id, dataset])), [raw]);
-  const favoriteIds = useMemo(() => new Set(favorites), [favorites]);
-  const recentDatasets = useMemo(
-    () => recents.map((recent) => datasetsById.get(recent.id)).filter((dataset): dataset is Dataset => Boolean(dataset)),
-    [datasetsById, recents],
-  );
+  const favSet = useMemo(() => new Set(favIds), [favIds]);
 
   const data = useMemo(() => {
     let list = raw ?? [];
@@ -65,18 +55,26 @@ export default function DatasetsPage() {
       );
     }
     if (healthFilter !== "all") list = list.filter((d) => (d.health ?? "unknown") === healthFilter);
-    const favoriteRank = new Map(favorites.map((id, index) => [id, index]));
+    // Favorites float to the top; within each band, most open exceptions first.
     return [...list].sort((a, b) => {
-      const aRank = favoriteRank.get(a.id);
-      const bRank = favoriteRank.get(b.id);
-      if (aRank !== undefined || bRank !== undefined) {
-        if (aRank === undefined) return 1;
-        if (bRank === undefined) return -1;
-        return aRank - bRank;
-      }
-      return b.open_exceptions - a.open_exceptions || datasetLabel(a).localeCompare(datasetLabel(b));
+      const favDelta = Number(favSet.has(b.id)) - Number(favSet.has(a.id));
+      return favDelta !== 0 ? favDelta : b.open_exceptions - a.open_exceptions;
     });
-  }, [raw, search, healthFilter, favorites]);
+  }, [raw, search, healthFilter, favSet]);
+
+  // Recently-viewed chips: resolve against the live list, drop unknowns, keep order.
+  const recentDatasets = useMemo(() => {
+    if (!raw) return [];
+    const byId = new Map(raw.map((d) => [d.id, d]));
+    return recents
+      .map((r) => byId.get(r.id))
+      .filter((d): d is Dataset => d !== undefined);
+  }, [raw, recents]);
+
+  function onToggleFav(e: React.MouseEvent, id: number) {
+    e.stopPropagation(); // don't navigate into the row
+    toggleFavorite(id); // dq:prefs event refreshes favIds via the subscription
+  }
 
   return (
     <div className="page">
@@ -107,6 +105,25 @@ export default function DatasetsPage() {
         </div>
       </div>
       <ErrorBox error={error} />
+      {recentDatasets.length > 0 && (
+        <div className="recents-strip">
+          <span className="recents-label">Recently viewed</span>
+          <div className="chip-row">
+            {recentDatasets.map((d) => (
+              <button
+                key={d.id}
+                type="button"
+                className="filter-chip"
+                onClick={() => navigate(`/datasets/${d.id}`)}
+                title={`${d.connection_name} — open dataset`}
+              >
+                {d.schema_name ? `${d.schema_name}.` : ""}
+                {d.table_name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {isLoading ? (
         <Spinner />
       ) : !raw?.length ? (
@@ -118,30 +135,11 @@ export default function DatasetsPage() {
           </EmptyState>
         </div>
       ) : (
-        <>
-          {recentDatasets.length > 0 && (
-            <div className="recent-strip">
-              <span className="recent-label">Recently viewed</span>
-              <div className="chip-row">
-                {recentDatasets.map((dataset) => (
-                  <button
-                    key={dataset.id}
-                    type="button"
-                    className="filter-chip recent-chip"
-                    title={`${datasetLabel(dataset)} on ${dataset.connection_name}`}
-                    onClick={() => navigate(`/datasets/${dataset.id}`)}
-                  >
-                    {datasetLabel(dataset)}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-          <div className="card table-wrap">
+        <div className="card table-wrap">
           <table className="data">
             <thead>
               <tr>
-                <th className="favorite-col" aria-label="Favorite" />
+                <th className="star-col" aria-label="Favorite" />
                 <th>Health</th>
                 <th>Dataset</th>
                 <th>Connection</th>
@@ -154,23 +152,17 @@ export default function DatasetsPage() {
               </tr>
             </thead>
             <tbody>
-              {data.map((d) => {
-                const isFavorite = favoriteIds.has(d.id);
-                return (
+              {data.map((d) => (
                 <tr key={d.id} className="clickable" onClick={() => navigate(`/datasets/${d.id}`)}>
-                  <td className="favorite-col">
+                  <td className="star-col">
                     <button
                       type="button"
-                      className={`favorite-toggle${isFavorite ? " on" : ""}`}
-                      aria-label={`${isFavorite ? "Remove" : "Add"} ${datasetLabel(d)} ${isFavorite ? "from" : "to"} favorites`}
-                      aria-pressed={isFavorite}
-                      title={isFavorite ? "Remove from favorites" : "Add to favorites"}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setFavorites(toggleFavoriteDataset(d.id));
-                      }}
+                      className="ghost icon-only star-btn"
+                      aria-pressed={favSet.has(d.id)}
+                      title={favSet.has(d.id) ? "Remove from favorites" : "Add to favorites"}
+                      onClick={(e) => onToggleFav(e, d.id)}
                     >
-                      <Icon name={isFavorite ? "star-filled" : "star"} size={15} />
+                      <Icon name={favSet.has(d.id) ? "star-filled" : "star"} size={15} />
                     </button>
                   </td>
                   <td><StatusPill value={d.health} /></td>
@@ -196,12 +188,10 @@ export default function DatasetsPage() {
                   </td>
                   <td style={{ color: "var(--text-light)" }}>{timeAgo(d.last_profiled_at)}</td>
                 </tr>
-                );
-              })}
+              ))}
             </tbody>
           </table>
-          </div>
-        </>
+        </div>
       )}
     </div>
   );

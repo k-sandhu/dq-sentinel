@@ -118,7 +118,7 @@ export default function LineagePage() {
                     <div
                       key={n.id}
                       className={`dense-item${n.dataset_id !== null ? " clickable" : ""}`}
-                      onClick={() => n.dataset_id !== null && navigate(`/datasets/${n.dataset_id}/exceptions`)}
+                      onClick={() => n.dataset_id !== null && navigate(`/datasets/${n.dataset_id}`)}
                     >
                       <div className="title">
                         {nodeLabel(n)} <StatusPill value={n.health} />
@@ -170,10 +170,7 @@ export default function LineagePage() {
                           </td>
                           <td>
                             {target?.dataset_id != null && (
-                              <span className="chip-row">
-                                <Link to={`/datasets/${target.dataset_id}`}>profile</Link>
-                                <Link to={`/datasets/${target.dataset_id}/lineage`}>lineage</Link>
-                              </span>
+                              <Link to={`/datasets/${target.dataset_id}`}>open dataset</Link>
                             )}
                           </td>
                         </tr>

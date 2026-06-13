@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
+import { Link } from "react-router";
 
 export function Icon({ name, size = 16 }: { name: string; size?: number }) {
   const paths: Record<string, ReactNode> = {
@@ -68,16 +69,34 @@ export function Icon({ name, size = 16 }: { name: string; size?: number }) {
         <path d="M8.5 11h.01M12 11h.01M15.5 11h.01" />
       </>
     ),
-    rows: (
+    grid: (
       <>
-        <path d="M4 7h16M4 12h16M4 17h16" />
-        <path d="M7 5v4M7 10v4M7 15v4" />
+        <rect x="3" y="3" width="7" height="7" rx="1.5" />
+        <rect x="14" y="3" width="7" height="7" rx="1.5" />
+        <rect x="3" y="14" width="7" height="7" rx="1.5" />
+        <rect x="14" y="14" width="7" height="7" rx="1.5" />
       </>
     ),
-    star: <path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3l-5.6 2.9 1.1-6.2L3 9.6l6.2-.9L12 3z" />,
+    up: <path d="M6 15l6-6 6 6" />,
+    down: <path d="M6 9l6 6 6-6" />,
+    wide: (
+      <>
+        <rect x="3" y="6" width="18" height="12" rx="1.5" />
+        <path d="M8 6v12M16 6v12" />
+      </>
+    ),
+    narrow: (
+      <>
+        <rect x="3" y="6" width="18" height="12" rx="1.5" />
+        <path d="M12 6v12" />
+      </>
+    ),
+    rows: <path d="M4 6h16M4 12h16M4 18h16" />,
+    // Personalization (#59): outline + filled star for favorites toggles.
+    star: <path d="M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.6 9.7l5.8-.8L12 3.6z" />,
     "star-filled": (
       <path
-        d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3l-5.6 2.9 1.1-6.2L3 9.6l6.2-.9L12 3z"
+        d="M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.6 9.7l5.8-.8L12 3.6z"
         fill="currentColor"
       />
     ),
@@ -99,49 +118,62 @@ export function Icon({ name, size = 16 }: { name: string; size?: number }) {
   );
 }
 
+export function Breadcrumbs({ items }: { items: { label: string; to?: string }[] }) {
+  return (
+    <nav className="breadcrumbs" aria-label="Breadcrumb">
+      {items.map((item, i) => (
+        <Fragment key={i}>
+          {i > 0 && <span className="crumb-sep" aria-hidden="true">/</span>}
+          {item.to ? (
+            <Link to={item.to} className="crumb">
+              {item.label}
+            </Link>
+          ) : (
+            <span className="crumb current" aria-current="page">
+              {item.label}
+            </span>
+          )}
+        </Fragment>
+      ))}
+    </nav>
+  );
+}
+
+/** Semantic status tone. Backgrounds/foregrounds live in styles.css (.pill.tone-*),
+ *  defined once for light and once for dark — so a status's meaning is centralized
+ *  here instead of scattered across ~20 per-status CSS selectors. */
 type Tone = "ok" | "warn" | "danger" | "info" | "neutral" | "accent";
 
+/** Maps every status string used across the app to one of six tones. Unknown
+ *  values fall back to "neutral" (rather than rendering unstyled). */
 const STATUS_TONES: Record<string, Tone> = {
-  pass: "ok",
-  warn: "warn",
-  fail: "danger",
-  error: "danger",
-  proposed: "accent",
-  active: "ok",
-  disabled: "neutral",
-  archived: "neutral",
-  open: "danger",
-  acknowledged: "warn",
-  expected: "info",
-  resolved: "ok",
-  muted: "neutral",
-  running: "info",
-  complete: "ok",
-  failed: "danger",
-  unknown: "neutral",
-  review: "accent",
-  approved: "ok",
-  monitoring: "info",
-  dismissed: "neutral",
+  // run + check last_status
+  pass: "ok", warn: "warn", fail: "danger", error: "danger",
+  // check lifecycle
+  proposed: "accent", active: "ok", disabled: "neutral", archived: "neutral",
+  // exception lifecycle
+  open: "danger", acknowledged: "warn", expected: "info", resolved: "ok", muted: "neutral",
+  // misc statuses used across pages
+  running: "info", complete: "ok", failed: "danger", unknown: "neutral",
+  review: "accent", approved: "ok", monitoring: "info", dismissed: "neutral",
 };
 
+/** Status chip with centralized tone mapping. Always renders the value as a text
+ *  label (never color-only) so it stays legible for color-vision-deficient users. */
 export function StatusPill({ value }: { value: string | null | undefined }) {
-  if (!value) return <span className="pill tone-neutral">-</span>;
+  if (!value) return <span className="pill tone-neutral">—</span>;
   const tone = STATUS_TONES[value] ?? "neutral";
-  const className = `pill tone-${tone}`;
-  return <span className={className}>{value}</span>;
+  return <span className={`pill tone-${tone}`}>{value}</span>;
 }
 
-export function SeverityBadge({ severity }: { severity: string | null | undefined }) {
-  const label = severity || "info";
-  const tone = label === "error" ? "danger" : label === "warn" ? "warn" : "info";
-  const className = `pill tone-${tone} pill-outline`;
-  return <span className={className}>{label}</span>;
+/** Outlined severity chip (info/warn/error). Keeps the word, not just a color. */
+export function SeverityBadge({ severity }: { severity: string }) {
+  const tone = severity === "error" ? "danger" : severity === "warn" ? "warn" : "info";
+  return <span className={`pill tone-${tone} pill-outline`}>{severity}</span>;
 }
 
-export function Pill({ value }: { value: string | null | undefined }) {
-  return <StatusPill value={value} />;
-}
+/** @deprecated Use {@link StatusPill}. Kept as an alias while call sites migrate. */
+export const Pill = StatusPill;
 
 export function SeverityDot({ severity }: { severity: string }) {
   return (
@@ -183,19 +215,26 @@ export function Modal({
   children,
   footer,
   wide,
+  dirty,
 }: {
   title: string;
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
   wide?: boolean;
+  /** When true, closing via the backdrop or ✕ asks before discarding edits. */
+  dirty?: boolean;
 }) {
+  const requestClose = () => {
+    if (dirty && !window.confirm("Discard your unsaved changes?")) return;
+    onClose();
+  };
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && requestClose()}>
       <div className={`modal${wide ? " wide" : ""}`}>
         <div className="modal-head">
           <h3>{title}</h3>
-          <button className="ghost small" onClick={onClose} aria-label="Close">
+          <button className="ghost small" onClick={requestClose} aria-label="Close">
             <Icon name="x" />
           </button>
         </div>

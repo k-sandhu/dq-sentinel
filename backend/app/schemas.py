@@ -1,9 +1,9 @@
 """Pydantic request/response schemas. Mirror changes into frontend/src/api/types.ts."""
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 Role = Literal["viewer", "editor", "admin"]
 Severity = Literal["info", "warn", "error"]
@@ -35,6 +35,18 @@ class TokenOut(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserOut
+
+
+class AssigneeOut(ORMModel):
+    """Minimal active-user shape for the triage assignee picker (#56).
+
+    Any authenticated user may list these; deliberately omits role/is_active so
+    a non-admin assignee dropdown doesn't leak authorization state.
+    """
+
+    id: int
+    name: str
+    email: str
 
 
 class UserCreate(BaseModel):
@@ -123,19 +135,6 @@ class PreviewOut(BaseModel):
     columns: list[str]
     rows: list[list[Any]]
     total_rows: int | None = None
-
-
-# ---- global search ----
-class SearchHit(BaseModel):
-    type: Literal["dataset", "check", "connection", "saved_query"]
-    id: int
-    title: str
-    subtitle: str
-    url: str
-
-
-class SearchOut(BaseModel):
-    hits: list[SearchHit]
 
 
 # ---- profiles ----
@@ -278,13 +277,14 @@ class RunOut(ORMModel):
     exception_count: int = 0
 
 
-# ---- exceptions ----
+# ---- exceptions (workbench: #55 identity, #56 triage workflow, #57 API v2) ----
 class ExceptionOut(ORMModel):
     id: int
     run_id: int
     check_id: int
     check_name: str = ""
     check_type: str = ""
+    check_severity: Severity = "error"  # denormalized from the check for the triage table
     column_name: str | None = None
     dataset_id: int
     dataset_name: str = ""
@@ -296,12 +296,61 @@ class ExceptionOut(ORMModel):
     marked_by: str | None = None
     marked_at: datetime | None
     created_at: datetime
+    # --- identity & recurrence (#55) ---
+    fingerprint: str | None = None
+    first_seen_at: datetime | None = None
+    last_seen_at: datetime | None = None
+    last_run_id: int | None = None
+    occurrence_count: int = 1
+    # --- triage workflow (#56) ---
+    assigned_to_id: int | None = None
+    assigned_to: str | None = None  # resolved display name ("(inactive)" suffix when deactivated)
 
 
 class TriageIn(BaseModel):
-    ids: list[int]
-    status: ExceptionStatus
+    # Bulk cap (#56): bounds transaction size, payload, and event-write amplification.
+    ids: list[int] = Field(max_length=1000)
+    status: ExceptionStatus | None = None  # optional: comment/assign without a status change
     note: str = ""
+    assigned_to_id: int | None = None
+    clear_assignee: bool = False
+
+
+class ExceptionEventOut(ORMModel):
+    id: int
+    exception_id: int
+    kind: str  # status | comment | assign | system
+    from_status: str = ""
+    to_status: str = ""
+    comment: str = ""
+    user: str | None = None  # resolved display name; None = system action
+    created_at: datetime
+
+
+class CommentIn(BaseModel):
+    comment: str = Field(min_length=1)
+
+
+# ---- exceptions API v2 (#57) ----
+class FacetEntry(BaseModel):
+    id: int
+    name: str
+    count: int
+
+
+class ExceptionFacets(BaseModel):
+    status: dict[str, int]
+    severity: dict[str, int]
+    check_type: dict[str, int]
+    datasets: list[FacetEntry]  # {id, name, count}, ordered by count desc, top 20
+    total: int
+
+
+class ExceptionPage(BaseModel):
+    items: list[ExceptionOut]
+    total: int
+    limit: int
+    offset: int
 
 
 # ---- RCA ----
@@ -409,6 +458,40 @@ class ConnectionHealth(BaseModel):
     latency_ms: int | None = None
 
 
+# ---- saved queries (team snippet library) ----
+class SavedQueryIn(BaseModel):
+    connection_id: int
+    dataset_id: int | None = None  # set => pin to this dataset
+    name: str = Field(min_length=1, max_length=255)
+    description: str = ""
+    sql: str = Field(min_length=1)
+    tags: list[str] = []
+
+
+class SavedQueryUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = None
+    sql: str | None = Field(default=None, min_length=1)
+    tags: list[str] | None = None
+    dataset_id: int | None = None  # null leaves the pin unchanged; use unpin=True to clear
+    unpin: bool = False  # explicitly clear the dataset pin
+
+
+class SavedQueryOut(ORMModel):
+    id: int
+    connection_id: int
+    dataset_id: int | None
+    name: str
+    description: str
+    sql: str
+    tags: list[str]
+    created_by_id: int | None
+    created_by: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    last_run_at: datetime | None
+
+
 # ---- MCP servers ----
 class McpServerIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
@@ -434,6 +517,61 @@ class McpServerOut(ORMModel):
     enabled: bool
     has_token: bool = False
     created_at: datetime
+
+
+# ---- notification rules (issue #27) ----
+NotifyChannel = Literal["slack", "email"]
+
+
+class NotificationRuleIn(BaseModel):
+    dataset_id: int | None = None  # None = all datasets
+    min_severity: Severity = "error"
+    channel: NotifyChannel
+    target: str = ""  # webhook URL or comma-separated emails ("" = global Slack default)
+    on_error_runs: bool = True
+    enabled: bool = True
+
+
+class NotificationRuleUpdate(BaseModel):
+    dataset_id: int | None = None
+    min_severity: Severity | None = None
+    channel: NotifyChannel | None = None
+    target: str | None = None
+    on_error_runs: bool | None = None
+    enabled: bool | None = None
+
+
+class NotificationRuleOut(ORMModel):
+    id: int
+    dataset_id: int | None
+    dataset_name: str = ""  # "" when dataset_id is None (all datasets)
+    min_severity: Severity
+    channel: NotifyChannel
+    target: str
+    on_error_runs: bool
+    enabled: bool
+    created_at: datetime
+
+
+# ---- audit log (issue #30) ----
+class AuditEntryOut(ORMModel):
+    id: int
+    user_id: int | None
+    user: str | None = None  # resolved display name (name or email), None = system/anonymous
+    action: str
+    entity_type: str
+    entity_id: int | None
+    detail: dict[str, Any]
+    request_id: str
+    client_ip: str
+    created_at: datetime
+
+
+class AuditPage(BaseModel):
+    items: list[AuditEntryOut]
+    total: int
+    limit: int
+    offset: int
 
 
 # ---- ad-hoc dashboards ----
@@ -535,3 +673,208 @@ class LineageGraph(BaseModel):
     edges: list[LineageEdge] = []
     parse_errors: int = 0  # view definitions sqlglot could not parse
     truncated: bool = False  # graph exceeded the node cap and was cut off
+
+
+# ---- custom dashboards (issue #67) -----------------------------------------
+# The widget JSON contract below is authoritative for BOTH this backend and
+# frontend/src/api/types.ts — keep the two mirrored exactly.
+
+# Allowed keys for metric/exceptions widget `params`. These mirror the
+# GET /exceptions query contract from #57 (rich filters); the frontend resolves
+# the widget by calling that endpoint with these stored params and reading the
+# `total` of its envelope — so a widget's count is ALWAYS the same number the
+# triage queue would show for the same filters. Never build a parallel count.
+EXCEPTION_PARAM_KEYS = frozenset(
+    {
+        "status",
+        "severity",
+        "check_type",
+        "dataset_id",
+        "check_id",
+        "run_id",
+        "assignee",
+        "recurrence",
+        "seen_since",
+        "q",
+        "sort",
+    }
+)
+
+MAX_WIDGETS = 12  # quota policy; per-tenant quotas (multi-tenancy track) hook here
+MAX_DATASET_IDS = 20  # checks-widget cap; same quota posture
+MAX_NOTE_CHARS = 5_000
+SNAPSHOT_ROW_CAP = 200  # rows persisted per sql-widget snapshot (quota policy)
+
+Visibility = Literal["private", "team"]
+WidgetSpan = Literal[1, 2]
+
+
+def _validate_param_keys(params: dict[str, str]) -> dict[str, str]:
+    """Reject params keys not in the #57 allowlist; coerce values to strings."""
+    bad = set(params) - EXCEPTION_PARAM_KEYS
+    if bad:
+        raise ValueError(
+            f"Unknown filter param(s): {', '.join(sorted(bad))}. "
+            f"Allowed: {', '.join(sorted(EXCEPTION_PARAM_KEYS))}"
+        )
+    return {k: str(v) for k, v in params.items()}
+
+
+class WidgetBase(BaseModel):
+    id: str = Field(min_length=1, max_length=64)  # client-generated uuid
+    title: str = Field(min_length=1, max_length=200)
+    span: WidgetSpan = 1
+
+
+class MetricWidgetConfig(BaseModel):
+    params: dict[str, str] = {}
+    warn_at: float | None = None  # tone thresholds on the count (null = never)
+    danger_at: float | None = None
+
+    @field_validator("params")
+    @classmethod
+    def _params_ok(cls, v: dict[str, str]) -> dict[str, str]:
+        return _validate_param_keys(v)
+
+
+class MetricWidget(WidgetBase):
+    type: Literal["metric"] = "metric"
+    config: MetricWidgetConfig
+
+
+class ExceptionsWidgetConfig(BaseModel):
+    params: dict[str, str] = {}
+    limit: int = Field(default=5, ge=1, le=10)  # clamped 1..10
+
+    @field_validator("params")
+    @classmethod
+    def _params_ok(cls, v: dict[str, str]) -> dict[str, str]:
+        return _validate_param_keys(v)
+
+
+class ExceptionsWidget(WidgetBase):
+    type: Literal["exceptions"] = "exceptions"
+    config: ExceptionsWidgetConfig
+
+
+class ChecksWidgetConfig(BaseModel):
+    dataset_ids: list[int] = []
+    only_failing: bool = False
+
+    @field_validator("dataset_ids")
+    @classmethod
+    def _cap_ids(cls, v: list[int]) -> list[int]:
+        if len(v) > MAX_DATASET_IDS:
+            raise ValueError(f"At most {MAX_DATASET_IDS} datasets per checks widget")
+        return v
+
+
+class ChecksWidget(WidgetBase):
+    type: Literal["checks"] = "checks"
+    config: ChecksWidgetConfig
+
+
+class WidgetSnapshot(BaseModel):
+    """Server-executed sql-widget result. WRITTEN ONLY BY THE SERVER (the /refresh
+    endpoint); client-sent snapshots are stripped on every write. `refreshed_at`
+    is mandatory so the UI can label freshness honestly (data was captured with
+    the refresher's authority, not the viewer's — same posture as ad-hoc boards)."""
+
+    columns: list[str] = []
+    rows: list[list[Any]] = []
+    refreshed_at: datetime
+    error: str | None = None
+    elapsed_ms: int = 0
+
+
+class SqlWidgetConfig(BaseModel):
+    connection_id: int
+    sql: str
+    viz: PanelViz = PanelViz()
+
+
+class SqlWidget(WidgetBase):
+    type: Literal["sql"] = "sql"
+    config: SqlWidgetConfig
+    # Optional on input (and ignored — server-owned); populated on output.
+    snapshot: WidgetSnapshot | None = None
+
+
+class NoteWidgetConfig(BaseModel):
+    markdown: str = Field(default="", max_length=MAX_NOTE_CHARS)
+
+
+class NoteWidget(WidgetBase):
+    type: Literal["note"] = "note"
+    config: NoteWidgetConfig
+
+
+Widget = Annotated[
+    MetricWidget | ExceptionsWidget | ChecksWidget | SqlWidget | NoteWidget,
+    Field(discriminator="type"),
+]
+
+
+class DashboardLayout(BaseModel):
+    version: Literal[1] = 1  # mandatory artifact version (epic standard #7)
+    widgets: list[Widget] = []
+
+    @field_validator("widgets")
+    @classmethod
+    def _cap_and_dedupe(cls, v: list[Widget]) -> list[Widget]:
+        if len(v) > MAX_WIDGETS:
+            raise ValueError(f"A dashboard may have at most {MAX_WIDGETS} widgets")
+        ids = [w.id for w in v]
+        if len(set(ids)) != len(ids):
+            raise ValueError("Widget ids must be unique within a dashboard")
+        return v
+
+
+class CustomDashboardCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    description: str = ""
+    visibility: Visibility = "private"
+    layout: DashboardLayout = DashboardLayout()
+
+
+class CustomDashboardUpdate(BaseModel):
+    """Full-layout replace (the UI always sends the whole layout — there is no
+    widget-level PATCH). All fields optional so partial metadata edits work.
+    `owner_id` is honored for admins only (owner reassignment on offboarding)."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = None
+    visibility: Visibility | None = None
+    layout: DashboardLayout | None = None
+    owner_id: int | None = None  # admin-only; ignored for non-admins in the router
+
+
+class CustomDashboardMeta(ORMModel):
+    id: int
+    name: str
+    description: str
+    owner_id: int
+    owner_name: str = ""  # joined display field (serialize.py pattern)
+    owner_active: bool = True  # offboarding: owner shown "(inactive)" in the UI
+    visibility: Visibility
+    widget_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class CustomDashboardOut(CustomDashboardMeta):
+    layout: DashboardLayout = DashboardLayout()
+    can_edit: bool = False  # owner or admin — drives the builder Edit toggle
+
+
+# --- global search (issue #43) ---
+class SearchHit(BaseModel):
+    type: Literal["dataset", "check", "connection", "saved_query"]
+    id: int
+    title: str  # e.g. "shop.orders" / check name / connection name
+    subtitle: str  # e.g. connection name / dataset name / kind
+    url: str  # SPA path the frontend navigates to, e.g. "/datasets/12"
+
+
+class SearchOut(BaseModel):
+    hits: list[SearchHit] = []

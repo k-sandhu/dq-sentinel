@@ -1,11 +1,13 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link } from "react-router";
 import { api } from "../api/client";
-import type { Check, Run } from "../api/types";
+import type { Check, CheckTypeInfo, Run } from "../api/types";
 import { canEdit, useAuth } from "../auth";
 import { checkTypeLabel, originLabel } from "../lib/checkMeta";
 import { describeSchedule, timeAgo } from "../lib/format";
+import { useConfirm } from "./confirm";
+import CheckParamsForm, { validateParams } from "./CheckParamsForm";
 import { EmptyState, ErrorBox, Icon, Modal, SeverityBadge, StatusPill } from "./ui";
 
 function paramsSummary(c: Check): string {
@@ -18,23 +20,36 @@ function paramsSummary(c: Check): string {
 
 function EditCheckModal({ check, onClose }: { check: Check; onClose: () => void }) {
   const qc = useQueryClient();
+  const { data: types } = useQuery({
+    queryKey: ["check-types"],
+    queryFn: () => api.get<CheckTypeInfo[]>("/checks/types"),
+  });
   const [name, setName] = useState(check.name);
   const [severity, setSeverity] = useState(check.severity);
   const [scheduleKind, setScheduleKind] = useState(check.schedule_kind ?? "interval");
   const [scheduleExpr, setScheduleExpr] = useState(check.schedule_expr ?? "1440");
-  const [paramsText, setParamsText] = useState(JSON.stringify(check.params ?? {}, null, 2));
+  const [params, setParams] = useState<Record<string, unknown>>(check.params ?? {});
+
+  const selected = types?.find((t) => t.key === check.check_type);
+  const paramErrors = validateParams(selected?.params ?? [], params);
+  const hasParamErrors = Object.keys(paramErrors).length > 0;
+
+  const dirty =
+    name !== check.name ||
+    severity !== check.severity ||
+    scheduleKind !== (check.schedule_kind ?? "interval") ||
+    scheduleExpr !== (check.schedule_expr ?? "1440") ||
+    JSON.stringify(params) !== JSON.stringify(check.params ?? {});
 
   const save = useMutation({
-    mutationFn: async () => {
-      const params = JSON.parse(paramsText);
-      return api.patch<Check>(`/checks/${check.id}`, {
+    mutationFn: async () =>
+      api.patch<Check>(`/checks/${check.id}`, {
         name,
         severity,
         schedule_kind: scheduleKind,
         schedule_expr: scheduleExpr,
         params,
-      });
-    },
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["checks"] });
       onClose();
@@ -45,10 +60,15 @@ function EditCheckModal({ check, onClose }: { check: Check; onClose: () => void 
     <Modal
       title="Edit check"
       onClose={onClose}
+      dirty={dirty}
       footer={
         <>
           <button onClick={onClose}>Cancel</button>
-          <button className="primary" onClick={() => save.mutate()} disabled={save.isPending}>
+          <button
+            className="primary"
+            onClick={() => save.mutate()}
+            disabled={save.isPending || hasParamErrors}
+          >
             Save
           </button>
         </>
@@ -84,18 +104,14 @@ function EditCheckModal({ check, onClose }: { check: Check; onClose: () => void 
           </div>
         </label>
       </div>
-      <label className="field">
-        Params (JSON)
-        <textarea
-          rows={6}
-          value={paramsText}
-          onChange={(e) => setParamsText(e.target.value)}
-          style={{ fontFamily: "var(--mono)", fontSize: 12 }}
-        />
-        <div className="field-hint">
-          Add {"{"}"tolerance": N{"}"} to allow up to N violations before the check fails.
-        </div>
-      </label>
+      <div className="field-group-label">
+        Parameters
+        <span className="field-hint" style={{ fontWeight: 400, marginLeft: 6 }}>
+          {checkTypeLabel(check.check_type)}
+          {check.column_name ? ` · ${check.column_name}` : ""}
+        </span>
+      </div>
+      <CheckParamsForm specs={selected?.params} params={params} onChange={setParams} errors={paramErrors} />
     </Modal>
   );
 }
@@ -110,8 +126,8 @@ export default function ChecksTable({
   onRunFinished?: (run: Run) => void;
 }) {
   const { user } = useAuth();
-  const navigate = useNavigate();
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const editable = canEdit(user);
   const [editing, setEditing] = useState<Check | null>(null);
   const [runningId, setRunningId] = useState<number | null>(null);
@@ -170,19 +186,13 @@ export default function ChecksTable({
             <table className="data">
               <tbody>
                 {proposed.map((c) => (
-                  <tr key={c.id} className="clickable" onClick={() => navigate(`/checks/${c.id}`)}>
+                  <tr key={c.id}>
                     <td style={{ width: 24 }}>
                       <span className={`badge ${c.origin === "llm" ? "ai" : ""}`}>{originLabel(c.origin)}</span>
                     </td>
                     <td>
                       <div style={{ fontWeight: 700, color: "var(--text-dark)" }}>
-                        <Link
-                          to={`/checks/${c.id}`}
-                          onClick={(e) => e.stopPropagation()}
-                          style={{ color: "var(--text-dark)" }}
-                        >
-                          {checkTypeLabel(c.check_type)}
-                        </Link>
+                        {checkTypeLabel(c.check_type)}
                         {c.column_name && <span style={{ fontWeight: 400 }}> on </span>}
                         {c.column_name && <code>{c.column_name}</code>}
                         {showDataset && (
@@ -201,7 +211,7 @@ export default function ChecksTable({
                       {describeSchedule(c.schedule_kind, c.schedule_expr)}
                     </td>
                     {editable && (
-                      <td style={{ whiteSpace: "nowrap", textAlign: "right" }} onClick={(e) => e.stopPropagation()}>
+                      <td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
                         <button
                           className="primary small"
                           onClick={() => setStatus.mutate({ id: c.id, status: "active" })}
@@ -211,7 +221,31 @@ export default function ChecksTable({
                         <button className="small" onClick={() => setEditing(c)}>
                           Edit
                         </button>{" "}
-                        <button className="small danger" onClick={() => archive.mutate(c.id)}>
+                        <button
+                          className="small danger"
+                          onClick={async () => {
+                            if (
+                              await confirm({
+                                title: "Dismiss proposed check",
+                                danger: true,
+                                confirmLabel: "Dismiss",
+                                body: (
+                                  <>
+                                    Dismiss the proposed <strong>{checkTypeLabel(c.check_type)}</strong>
+                                    {c.column_name ? (
+                                      <>
+                                        {" "}
+                                        on <code>{c.column_name}</code>
+                                      </>
+                                    ) : null}{" "}
+                                    check? It will be removed from proposals.
+                                  </>
+                                ),
+                              })
+                            )
+                              archive.mutate(c.id);
+                          }}
+                        >
                           Dismiss
                         </button>
                       </td>
@@ -241,15 +275,11 @@ export default function ChecksTable({
               </thead>
               <tbody>
                 {rest.map((c) => (
-                  <tr key={c.id} className="clickable" onClick={() => navigate(`/checks/${c.id}`)}>
+                  <tr key={c.id}>
                     <td>
-                      <Link
-                        to={`/checks/${c.id}`}
-                        onClick={(e) => e.stopPropagation()}
-                        style={{ fontWeight: 600, color: "var(--text-dark)" }}
-                      >
-                        {c.name}
-                      </Link>
+                      <div style={{ fontWeight: 600 }}>
+                        <Link to={`/checks/${c.id}`}>{c.name}</Link>
+                      </div>
                       <div style={{ fontSize: 11.5, color: "var(--text-light)" }}>
                         {checkTypeLabel(c.check_type)}
                         {c.column_name ? ` · ${c.column_name}` : ""} ·{" "}
@@ -260,9 +290,7 @@ export default function ChecksTable({
                     </td>
                     {showDataset && (
                       <td>
-                        <Link to={`/datasets/${c.dataset_id}/checks`} onClick={(e) => e.stopPropagation()}>
-                          {c.dataset_name}
-                        </Link>
+                        <Link to={`/datasets/${c.dataset_id}/checks`}>{c.dataset_name}</Link>
                       </td>
                     )}
                     <td>
@@ -285,7 +313,7 @@ export default function ChecksTable({
                       )}
                     </td>
                     {editable && (
-                      <td style={{ whiteSpace: "nowrap", textAlign: "right" }} onClick={(e) => e.stopPropagation()}>
+                      <td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
                         <button
                           className="small"
                           disabled={runningId === c.id}
@@ -307,7 +335,25 @@ export default function ChecksTable({
                         <button className="small" onClick={() => setEditing(c)}>
                           Edit
                         </button>{" "}
-                        <button className="small danger" onClick={() => archive.mutate(c.id)}>
+                        <button
+                          className="small danger"
+                          onClick={async () => {
+                            if (
+                              await confirm({
+                                title: "Archive check",
+                                danger: true,
+                                confirmLabel: "Archive",
+                                body: (
+                                  <>
+                                    Archive <strong>{c.name}</strong>? It stops running and leaves the
+                                    active list.
+                                  </>
+                                ),
+                              })
+                            )
+                              archive.mutate(c.id);
+                          }}
+                        >
                           Archive
                         </button>
                       </td>

@@ -17,7 +17,6 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         populate_by_name=True,
-        validate_by_name=True,
     )
 
     # App metadata database (SQLite for dev, PostgreSQL for prod)
@@ -36,11 +35,9 @@ class Settings(BaseSettings):
     # "auto" picks anthropic if ANTHROPIC_API_KEY is set, else openai if
     # DQ_LLM_API_KEY is set.
     llm_provider: str = "auto"  # auto | anthropic | openai | openrouter
-    anthropic_api_key: str = Field(
-        default="", validation_alias=AliasChoices("ANTHROPIC_API_KEY", "anthropic_api_key")
-    )
+    anthropic_api_key: str = Field(default="", validation_alias="ANTHROPIC_API_KEY")
     llm_api_key: str = Field(
-        default="", validation_alias=AliasChoices("DQ_LLM_API_KEY", "OPENROUTER_API_KEY", "llm_api_key")
+        default="", validation_alias=AliasChoices("DQ_LLM_API_KEY", "OPENROUTER_API_KEY")
     )
     llm_base_url: str = "https://openrouter.ai/api/v1"
     llm_model: str = ""  # default per provider: anthropic -> claude-opus-4-8; openai -> required
@@ -53,13 +50,6 @@ class Settings(BaseSettings):
     # thread and times out every proxy in front of the API.
     llm_timeout_seconds: float = 90.0
     llm_max_retries: int = 1
-
-    def __init__(self, **data: object) -> None:
-        if "anthropic_api_key" in data and "ANTHROPIC_API_KEY" not in data:
-            data["ANTHROPIC_API_KEY"] = data.pop("anthropic_api_key")
-        if "llm_api_key" in data and "DQ_LLM_API_KEY" not in data:
-            data["DQ_LLM_API_KEY"] = data.pop("llm_api_key")
-        super().__init__(**data)
 
     def resolved_llm(self) -> dict | None:
         """Which provider/model will actually be used, or None when disabled."""
@@ -93,6 +83,23 @@ class Settings(BaseSettings):
     worker_poll_seconds: int = 15
     worker_concurrency: int = 4
     worker_metrics_port: int = 9100
+
+    # Notifications (issue #27 — Slack webhook + SMTP email). All optional:
+    # with nothing set there are zero sends and zero behaviour change. Rules in
+    # the DB (NotificationRule) decide *what* fires; these settings supply the
+    # transport (and a global Slack default for rules that leave target blank).
+    notify_slack_webhook_url: str = ""  # global default; a Slack rule may override per-target
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from_addr: str = ""
+    smtp_starttls: bool = True
+    base_url: str = "http://localhost:3000"  # for building links in notification bodies
+
+    # Audit log retention (issue #30): rows older than this are purged by a
+    # daily pass in the worker. 0 disables purging (keep everything).
+    audit_retention_days: int = 365
 
     # Observability
     log_format: str = "text"  # text | json
