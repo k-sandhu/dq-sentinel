@@ -464,6 +464,20 @@ details.step summary { padding: 9px 12px; cursor: pointer; font-weight: 600; fon
 details.step[open] summary { border-bottom: 1px solid var(--border-light); }
 details.step .body { padding: 4px 12px 10px; }
 
+/* ---------- rca report ---------- */
+.rca-toolbar { margin-top: 10px; }
+.rca-verdict { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.rca-likely-cause { margin: 10px 0 16px; padding: 10px 14px; border-left: 3px solid var(--brand); border-radius: 0 6px 6px 0; background: var(--bg); }
+.rca-section { margin-top: 18px; }
+.rca-section h4 { font-size: 13px; margin-bottom: 8px; }
+.rca-evidence-list { display: grid; gap: 8px; }
+.rca-finding { margin: 8px 0; font-size: 13px; color: var(--text-dark); }
+.rca-action-list { display: grid; gap: 8px; }
+.rca-action-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; border: 1px solid var(--border-light); border-radius: 6px; padding: 9px 10px; }
+.rca-action-text { flex: 1; min-width: 220px; color: var(--text-dark); }
+.rca-muted { color: var(--text-light); font-size: 12.5px; margin: 0; }
+.rca-copy-textarea { min-height: 320px; font-family: var(--mono); white-space: pre; }
+
 /* ---------- responsive shell ---------- */
 @media (max-width: 820px) {
   .app { display: block; height: auto; min-height: 100%; overflow: visible; }

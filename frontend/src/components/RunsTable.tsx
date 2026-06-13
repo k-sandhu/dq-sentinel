@@ -57,6 +57,7 @@ export default function RunsTable({
               </td>
               <td style={{ whiteSpace: "nowrap" }}>{fmtDateTime(r.started_at)}</td>
               <td style={{ whiteSpace: "nowrap" }}>
+                <Link to={`/runs/${r.id}`} style={{ marginRight: 8 }}>details →</Link>
                 {r.exception_count > 0 && (
                   <Link to={`/exceptions?run_id=${r.id}`}>
                     {r.exception_count} exception{r.exception_count === 1 ? "" : "s"}

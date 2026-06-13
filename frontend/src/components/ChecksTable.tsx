@@ -277,7 +277,9 @@ export default function ChecksTable({
                 {rest.map((c) => (
                   <tr key={c.id}>
                     <td>
-                      <div style={{ fontWeight: 600, color: "var(--text-dark)" }}>{c.name}</div>
+                      <div style={{ fontWeight: 600 }}>
+                        <Link to={`/checks/${c.id}`}>{c.name}</Link>
+                      </div>
                       <div style={{ fontSize: 11.5, color: "var(--text-light)" }}>
                         {checkTypeLabel(c.check_type)}
                         {c.column_name ? ` · ${c.column_name}` : ""} ·{" "}

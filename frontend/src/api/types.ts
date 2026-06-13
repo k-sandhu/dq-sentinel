@@ -256,6 +256,32 @@ export interface ExceptionPage {
   offset: number;
 }
 
+export interface RcaHypothesis {
+  statement: string;
+  verdict: "supported" | "refuted" | "inconclusive";
+  evidence: string;
+}
+
+export interface RcaEvidence {
+  title: string;
+  sql: string;
+  finding: string;
+}
+
+export interface RcaAction {
+  action: string;
+  kind: "fix_data" | "fix_pipeline" | "adjust_check" | "investigate";
+}
+
+export interface RcaReport {
+  version?: number;
+  hypotheses?: RcaHypothesis[];
+  evidence?: RcaEvidence[];
+  likely_cause?: string;
+  recommended_actions?: RcaAction[];
+  confidence?: "low" | "medium" | "high";
+}
+
 export interface RcaSession {
   id: number;
   dataset_id: number;
@@ -264,6 +290,7 @@ export interface RcaSession {
   question: string;
   status: "running" | "complete" | "failed";
   report_md: string;
+  report_json: RcaReport | null;
   root_cause_summary: string;
   transcript: TranscriptStep[];
   model: string;
