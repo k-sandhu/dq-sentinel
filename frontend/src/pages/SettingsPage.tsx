@@ -13,6 +13,7 @@ import type {
   User,
 } from "../api/types";
 import { isAdmin, useAuth } from "../auth";
+import { useConfirm } from "../components/confirm";
 import { EmptyState, ErrorBox, Icon, Modal, SeverityBadge, Spinner, StatusPill } from "../components/ui";
 import { fmtDateTime } from "../lib/format";
 import { getLanding, LANDING_OPTIONS, type NamedLanding, setLanding } from "../lib/prefs";
@@ -233,11 +234,13 @@ function McpServersCard() {
   const { user } = useAuth();
   const qc = useQueryClient();
   const admin = isAdmin(user);
+  const confirm = useConfirm();
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
   const [description, setDescription] = useState("");
+  const dirty = name !== "" || url !== "" || token !== "" || description !== "";
 
   const { data, error } = useQuery({
     queryKey: ["mcp-servers"],
@@ -312,7 +315,24 @@ function McpServersCard() {
                       <button className="small" onClick={() => toggle.mutate(s)}>
                         {s.enabled ? "Disable" : "Enable"}
                       </button>{" "}
-                      <button className="small danger" onClick={() => remove.mutate(s.id)}>
+                      <button
+                        className="small danger"
+                        onClick={async () => {
+                          if (
+                            await confirm({
+                              title: "Delete MCP server",
+                              danger: true,
+                              confirmLabel: "Delete",
+                              body: (
+                                <>
+                                  Delete <strong>{s.name}</strong>? AI calls will stop using it.
+                                </>
+                              ),
+                            })
+                          )
+                            remove.mutate(s.id);
+                        }}
+                      >
                         Delete
                       </button>
                     </td>
@@ -327,6 +347,7 @@ function McpServersCard() {
         <Modal
           title="Add MCP server"
           onClose={() => setAdding(false)}
+          dirty={dirty}
           footer={
             <>
               <button onClick={() => setAdding(false)}>Cancel</button>
@@ -549,6 +570,7 @@ function NewUserModal({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<Role>("viewer");
+  const dirty = email !== "" || name !== "" || password !== "" || role !== "viewer";
 
   const create = useMutation({
     mutationFn: () => api.post<User>("/auth/users", { email, name, password, role }),
@@ -562,6 +584,7 @@ function NewUserModal({ onClose }: { onClose: () => void }) {
     <Modal
       title="Invite user"
       onClose={onClose}
+      dirty={dirty}
       footer={
         <>
           <button onClick={onClose}>Cancel</button>
@@ -601,6 +624,8 @@ function NewUserModal({ onClose }: { onClose: () => void }) {
 export default function SettingsPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
+  const confirm = useConfirm();
+  const [, setTick] = useState(0);
   const [inviting, setInviting] = useState(false);
 
   const { data: health } = useQuery({ queryKey: ["health"], queryFn: () => api.get<Health>("/health") });
@@ -696,7 +721,22 @@ export default function SettingsPage() {
                         <select
                           value={u.role}
                           disabled={u.id === user?.id}
-                          onChange={(e) => update.mutate({ id: u.id, body: { role: e.target.value } })}
+                          onChange={async (e) => {
+                            const role = e.target.value as Role;
+                            if (role === u.role) return;
+                            const ok = await confirm({
+                              title: "Change role",
+                              confirmLabel: "Change role",
+                              body: (
+                                <>
+                                  Change <strong>{u.email}</strong> from <strong>{u.role}</strong> to{" "}
+                                  <strong>{role}</strong>? This takes effect immediately.
+                                </>
+                              ),
+                            });
+                            if (ok) update.mutate({ id: u.id, body: { role } });
+                            else setTick((t) => t + 1); // snap the <select> back to the server value
+                          }}
                           style={{ marginTop: 0, width: 110 }}
                         >
                           <option value="viewer">viewer</option>
@@ -710,7 +750,24 @@ export default function SettingsPage() {
                         {u.id !== user?.id && (
                           <button
                             className="small"
-                            onClick={() => update.mutate({ id: u.id, body: { is_active: !u.is_active } })}
+                            onClick={async () => {
+                              if (
+                                u.is_active &&
+                                !(await confirm({
+                                  title: "Deactivate user",
+                                  danger: true,
+                                  confirmLabel: "Deactivate",
+                                  body: (
+                                    <>
+                                      Deactivate <strong>{u.email}</strong>? They will be unable to sign
+                                      in.
+                                    </>
+                                  ),
+                                }))
+                              )
+                                return;
+                              update.mutate({ id: u.id, body: { is_active: !u.is_active } });
+                            }}
                           >
                             {u.is_active ? "Deactivate" : "Activate"}
                           </button>

@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
+import { Link } from "react-router";
 
 export function Icon({ name, size = 16 }: { name: string; size?: number }) {
   const paths: Record<string, ReactNode> = {
@@ -117,6 +118,27 @@ export function Icon({ name, size = 16 }: { name: string; size?: number }) {
   );
 }
 
+export function Breadcrumbs({ items }: { items: { label: string; to?: string }[] }) {
+  return (
+    <nav className="breadcrumbs" aria-label="Breadcrumb">
+      {items.map((item, i) => (
+        <Fragment key={i}>
+          {i > 0 && <span className="crumb-sep" aria-hidden="true">/</span>}
+          {item.to ? (
+            <Link to={item.to} className="crumb">
+              {item.label}
+            </Link>
+          ) : (
+            <span className="crumb current" aria-current="page">
+              {item.label}
+            </span>
+          )}
+        </Fragment>
+      ))}
+    </nav>
+  );
+}
+
 /** Semantic status tone. Backgrounds/foregrounds live in styles.css (.pill.tone-*),
  *  defined once for light and once for dark — so a status's meaning is centralized
  *  here instead of scattered across ~20 per-status CSS selectors. */
@@ -193,19 +215,26 @@ export function Modal({
   children,
   footer,
   wide,
+  dirty,
 }: {
   title: string;
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
   wide?: boolean;
+  /** When true, closing via the backdrop or ✕ asks before discarding edits. */
+  dirty?: boolean;
 }) {
+  const requestClose = () => {
+    if (dirty && !window.confirm("Discard your unsaved changes?")) return;
+    onClose();
+  };
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && requestClose()}>
       <div className={`modal${wide ? " wide" : ""}`}>
         <div className="modal-head">
           <h3>{title}</h3>
-          <button className="ghost small" onClick={onClose} aria-label="Close">
+          <button className="ghost small" onClick={requestClose} aria-label="Close">
             <Icon name="x" />
           </button>
         </div>

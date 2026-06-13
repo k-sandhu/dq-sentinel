@@ -26,6 +26,7 @@ function NewCheckModal({ datasetId, onClose }: { datasetId: number; onClose: () 
   const selected = types?.find((t) => t.key === checkType);
   const paramErrors = validateParams(selected?.params ?? [], params);
   const hasParamErrors = Object.keys(paramErrors).length > 0;
+  const dirty = checkType !== "not_null" || column !== "" || severity !== "error" || Object.keys(params).length > 0;
 
   const create = useMutation({
     mutationFn: () =>
@@ -47,6 +48,7 @@ function NewCheckModal({ datasetId, onClose }: { datasetId: number; onClose: () 
     <Modal
       title="New check"
       onClose={onClose}
+      dirty={dirty}
       footer={
         <>
           <button onClick={onClose}>Cancel</button>
