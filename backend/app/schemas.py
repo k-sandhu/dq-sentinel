@@ -1,9 +1,9 @@
 """Pydantic request/response schemas. Mirror changes into frontend/src/api/types.ts."""
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 Role = Literal["viewer", "editor", "admin"]
 Severity = Literal["info", "warn", "error"]
@@ -522,3 +522,195 @@ class LineageGraph(BaseModel):
     edges: list[LineageEdge] = []
     parse_errors: int = 0  # view definitions sqlglot could not parse
     truncated: bool = False  # graph exceeded the node cap and was cut off
+
+
+# ---- custom dashboards (issue #67) -----------------------------------------
+# The widget JSON contract below is authoritative for BOTH this backend and
+# frontend/src/api/types.ts — keep the two mirrored exactly.
+
+# Allowed keys for metric/exceptions widget `params`. These mirror the
+# GET /exceptions query contract from #57 (rich filters); the frontend resolves
+# the widget by calling that endpoint with these stored params and reading the
+# `total` of its envelope — so a widget's count is ALWAYS the same number the
+# triage queue would show for the same filters. Never build a parallel count.
+EXCEPTION_PARAM_KEYS = frozenset(
+    {
+        "status",
+        "severity",
+        "check_type",
+        "dataset_id",
+        "check_id",
+        "run_id",
+        "assignee",
+        "recurrence",
+        "seen_since",
+        "q",
+        "sort",
+    }
+)
+
+MAX_WIDGETS = 12  # quota policy; per-tenant quotas (multi-tenancy track) hook here
+MAX_DATASET_IDS = 20  # checks-widget cap; same quota posture
+MAX_NOTE_CHARS = 5_000
+SNAPSHOT_ROW_CAP = 200  # rows persisted per sql-widget snapshot (quota policy)
+
+Visibility = Literal["private", "team"]
+WidgetSpan = Literal[1, 2]
+
+
+def _validate_param_keys(params: dict[str, str]) -> dict[str, str]:
+    """Reject params keys not in the #57 allowlist; coerce values to strings."""
+    bad = set(params) - EXCEPTION_PARAM_KEYS
+    if bad:
+        raise ValueError(
+            f"Unknown filter param(s): {', '.join(sorted(bad))}. "
+            f"Allowed: {', '.join(sorted(EXCEPTION_PARAM_KEYS))}"
+        )
+    return {k: str(v) for k, v in params.items()}
+
+
+class WidgetBase(BaseModel):
+    id: str = Field(min_length=1, max_length=64)  # client-generated uuid
+    title: str = Field(min_length=1, max_length=200)
+    span: WidgetSpan = 1
+
+
+class MetricWidgetConfig(BaseModel):
+    params: dict[str, str] = {}
+    warn_at: float | None = None  # tone thresholds on the count (null = never)
+    danger_at: float | None = None
+
+    @field_validator("params")
+    @classmethod
+    def _params_ok(cls, v: dict[str, str]) -> dict[str, str]:
+        return _validate_param_keys(v)
+
+
+class MetricWidget(WidgetBase):
+    type: Literal["metric"] = "metric"
+    config: MetricWidgetConfig
+
+
+class ExceptionsWidgetConfig(BaseModel):
+    params: dict[str, str] = {}
+    limit: int = Field(default=5, ge=1, le=10)  # clamped 1..10
+
+    @field_validator("params")
+    @classmethod
+    def _params_ok(cls, v: dict[str, str]) -> dict[str, str]:
+        return _validate_param_keys(v)
+
+
+class ExceptionsWidget(WidgetBase):
+    type: Literal["exceptions"] = "exceptions"
+    config: ExceptionsWidgetConfig
+
+
+class ChecksWidgetConfig(BaseModel):
+    dataset_ids: list[int] = []
+    only_failing: bool = False
+
+    @field_validator("dataset_ids")
+    @classmethod
+    def _cap_ids(cls, v: list[int]) -> list[int]:
+        if len(v) > MAX_DATASET_IDS:
+            raise ValueError(f"At most {MAX_DATASET_IDS} datasets per checks widget")
+        return v
+
+
+class ChecksWidget(WidgetBase):
+    type: Literal["checks"] = "checks"
+    config: ChecksWidgetConfig
+
+
+class WidgetSnapshot(BaseModel):
+    """Server-executed sql-widget result. WRITTEN ONLY BY THE SERVER (the /refresh
+    endpoint); client-sent snapshots are stripped on every write. `refreshed_at`
+    is mandatory so the UI can label freshness honestly (data was captured with
+    the refresher's authority, not the viewer's — same posture as ad-hoc boards)."""
+
+    columns: list[str] = []
+    rows: list[list[Any]] = []
+    refreshed_at: datetime
+    error: str | None = None
+    elapsed_ms: int = 0
+
+
+class SqlWidgetConfig(BaseModel):
+    connection_id: int
+    sql: str
+    viz: PanelViz = PanelViz()
+
+
+class SqlWidget(WidgetBase):
+    type: Literal["sql"] = "sql"
+    config: SqlWidgetConfig
+    # Optional on input (and ignored — server-owned); populated on output.
+    snapshot: WidgetSnapshot | None = None
+
+
+class NoteWidgetConfig(BaseModel):
+    markdown: str = Field(default="", max_length=MAX_NOTE_CHARS)
+
+
+class NoteWidget(WidgetBase):
+    type: Literal["note"] = "note"
+    config: NoteWidgetConfig
+
+
+Widget = Annotated[
+    MetricWidget | ExceptionsWidget | ChecksWidget | SqlWidget | NoteWidget,
+    Field(discriminator="type"),
+]
+
+
+class DashboardLayout(BaseModel):
+    version: Literal[1] = 1  # mandatory artifact version (epic standard #7)
+    widgets: list[Widget] = []
+
+    @field_validator("widgets")
+    @classmethod
+    def _cap_and_dedupe(cls, v: list[Widget]) -> list[Widget]:
+        if len(v) > MAX_WIDGETS:
+            raise ValueError(f"A dashboard may have at most {MAX_WIDGETS} widgets")
+        ids = [w.id for w in v]
+        if len(set(ids)) != len(ids):
+            raise ValueError("Widget ids must be unique within a dashboard")
+        return v
+
+
+class CustomDashboardCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    description: str = ""
+    visibility: Visibility = "private"
+    layout: DashboardLayout = DashboardLayout()
+
+
+class CustomDashboardUpdate(BaseModel):
+    """Full-layout replace (the UI always sends the whole layout — there is no
+    widget-level PATCH). All fields optional so partial metadata edits work.
+    `owner_id` is honored for admins only (owner reassignment on offboarding)."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = None
+    visibility: Visibility | None = None
+    layout: DashboardLayout | None = None
+    owner_id: int | None = None  # admin-only; ignored for non-admins in the router
+
+
+class CustomDashboardMeta(ORMModel):
+    id: int
+    name: str
+    description: str
+    owner_id: int
+    owner_name: str = ""  # joined display field (serialize.py pattern)
+    owner_active: bool = True  # offboarding: owner shown "(inactive)" in the UI
+    visibility: Visibility
+    widget_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class CustomDashboardOut(CustomDashboardMeta):
+    layout: DashboardLayout = DashboardLayout()
+    can_edit: bool = False  # owner or admin — drives the builder Edit toggle

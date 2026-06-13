@@ -58,6 +58,24 @@ def exception_out(db: Session, exc: models.ExceptionRecord) -> schemas.Exception
     return out
 
 
+def custom_dashboard_meta(
+    db: Session, d: models.CustomDashboard, owner: models.User | None = None
+) -> schemas.CustomDashboardMeta:
+    """Meta (no layout) with the owner's display name + active flag. Pass `owner`
+    to avoid a per-row lookup when listing."""
+    out = schemas.CustomDashboardMeta.model_validate(d)
+    if owner is None:
+        owner = db.get(models.User, d.owner_id)
+    if owner is not None:
+        out.owner_name = owner.name or owner.email
+        out.owner_active = owner.is_active
+    else:  # owner row hard-deleted — keep the dashboard usable, label it honestly
+        out.owner_name = "(unknown)"
+        out.owner_active = False
+    out.widget_count = len((d.layout or {}).get("widgets", []))
+    return out
+
+
 def dataset_out(db: Session, ds: models.Dataset) -> schemas.DatasetOut:
     out = schemas.DatasetOut.model_validate(ds)
     out.connection_name = ds.connection.name if ds.connection else ""

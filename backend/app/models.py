@@ -207,6 +207,31 @@ class AdhocDashboard(Base):
     last_refreshed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class CustomDashboard(Base):
+    """A user-composed, cross-dataset dashboard (issue #67). The sibling of the
+    LLM/heuristic per-dataset AdhocDashboard: here the analyst hand-picks widgets
+    ("my morning screen"), shares with the team, and can set it as their landing
+    page. Widgets live inside ``layout`` JSON — they have no independent identity,
+    so no separate widget table (a 12-widget cap makes joins pointless). The SQL
+    widgets' server-executed results are persisted inside that same JSON as
+    ``snapshot`` blobs (see schemas.WidgetSnapshot); every other widget type
+    resolves live, client-side, through the existing read APIs.
+    """
+
+    __tablename__ = "custom_dashboards"
+    __table_args__ = (Index("ix_customdash_owner", "owner_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    description: Mapped[str] = mapped_column(Text, default="")
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    visibility: Mapped[str] = mapped_column(String(10), default="private")  # private | team
+    # {"version": 1, "widgets": [...]} — version is mandatory (epic standard #7).
+    layout: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
 class ChatSession(Base):
     """An assistant conversation. Messages persist; the provider-native LLM
     history is kept in process memory and rehydrated from messages on demand."""
