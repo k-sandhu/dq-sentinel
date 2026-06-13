@@ -32,6 +32,22 @@ def list_users(db: Session = Depends(get_db), _: models.User = Depends(require_r
     return db.query(models.User).order_by(models.User.id).all()
 
 
+@router.get("/assignees", response_model=list[schemas.AssigneeOut])
+def list_assignees(
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """Active users for the triage assignee picker (#56). Any authenticated user
+    (the admin-only /auth/users stays admin-gated); returns the minimum shape —
+    no roles/is_active — so a non-admin dropdown doesn't leak authz state."""
+    return (
+        db.query(models.User)
+        .filter(models.User.is_active.is_(True))
+        .order_by(models.User.name, models.User.id)
+        .all()
+    )
+
+
 @router.post("/users", response_model=schemas.UserOut, status_code=201)
 def create_user(
     body: schemas.UserCreate,
