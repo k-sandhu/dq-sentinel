@@ -14,6 +14,17 @@ export default function ExceptionsPage() {
     queryFn: () => api.get<Dataset[]>("/datasets"),
   });
 
+  const selectedDataset = datasets?.find((dataset) => dataset.id === datasetFilter);
+  const selectedDatasetLabel =
+    selectedDataset?.display_name || selectedDataset?.table_name || `#${datasetFilter}`;
+
+  const setFilterParam = (key: string, value: string | null) => {
+    const next = new URLSearchParams(params);
+    if (value) next.set(key, value);
+    else next.delete(key);
+    setParams(next);
+  };
+
   return (
     <div className="page">
       <div className="page-header">
@@ -28,9 +39,7 @@ export default function ExceptionsPage() {
           <select
             value={datasetFilter ?? ""}
             onChange={(e) => {
-              const next = new URLSearchParams();
-              if (e.target.value) next.set("dataset_id", e.target.value);
-              setParams(next);
+              setFilterParam("dataset_id", e.target.value || null);
             }}
             style={{ marginTop: 0, width: 220 }}
           >
@@ -43,6 +52,30 @@ export default function ExceptionsPage() {
           </select>
         </div>
       </div>
+      {(datasetFilter || runId) && (
+        <div className="chip-row" style={{ marginBottom: 14 }}>
+          {datasetFilter && (
+            <button
+              type="button"
+              className="filter-chip on"
+              onClick={() => setFilterParam("dataset_id", null)}
+              title="Remove dataset filter"
+            >
+              Dataset: {selectedDatasetLabel} <span aria-hidden="true">x</span>
+            </button>
+          )}
+          {runId && (
+            <button
+              type="button"
+              className="filter-chip on"
+              onClick={() => setFilterParam("run_id", null)}
+              title="Remove run filter"
+            >
+              Run: #{runId} <span aria-hidden="true">x</span>
+            </button>
+          )}
+        </div>
+      )}
       <ExceptionsTriage datasetId={datasetFilter} runId={runId} />
     </div>
   );
