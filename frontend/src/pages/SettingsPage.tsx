@@ -3,7 +3,7 @@ import { useState } from "react";
 import { api } from "../api/client";
 import type { Health, McpServer, Role, User } from "../api/types";
 import { isAdmin, useAuth } from "../auth";
-import { EmptyState, ErrorBox, Icon, Modal, Pill, Spinner } from "../components/ui";
+import { ConfirmModal, EmptyState, ErrorBox, Icon, Modal, Pill, Spinner } from "../components/ui";
 import { fmtDateTime } from "../lib/format";
 
 function McpServersCard() {
@@ -15,6 +15,7 @@ function McpServersCard() {
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
   const [description, setDescription] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<McpServer | null>(null);
 
   const { data, error } = useQuery({
     queryKey: ["mcp-servers"],
@@ -89,7 +90,7 @@ function McpServersCard() {
                       <button className="small" onClick={() => toggle.mutate(s)}>
                         {s.enabled ? "Disable" : "Enable"}
                       </button>{" "}
-                      <button className="small danger" onClick={() => remove.mutate(s.id)}>
+                      <button className="small danger" onClick={() => setDeleteTarget(s)}>
                         Delete
                       </button>
                     </td>
@@ -132,6 +133,24 @@ function McpServersCard() {
             <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What code/context lives here" />
           </label>
         </Modal>
+      )}
+      {deleteTarget && (
+        <ConfirmModal
+          title="Delete MCP server"
+          confirmLabel="Delete server"
+          pending={remove.isPending}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={() =>
+            remove.mutate(deleteTarget.id, {
+              onSuccess: () => setDeleteTarget(null),
+            })
+          }
+        >
+          <ErrorBox error={remove.error} />
+          <p>
+            Delete <strong>{deleteTarget.name}</strong>? AI features will no longer attach this MCP context.
+          </p>
+        </ConfirmModal>
       )}
     </div>
   );
@@ -196,6 +215,8 @@ export default function SettingsPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
   const [inviting, setInviting] = useState(false);
+  const [draftRoles, setDraftRoles] = useState<Record<number, Role>>({});
+  const [deactivateTarget, setDeactivateTarget] = useState<User | null>(null);
 
   const { data: health } = useQuery({ queryKey: ["health"], queryFn: () => api.get<Health>("/health") });
   const { data: users, isLoading, error } = useQuery({
@@ -208,7 +229,16 @@ export default function SettingsPage() {
   const update = useMutation({
     mutationFn: ({ id, body }: { id: number; body: Record<string, unknown> }) =>
       api.patch<User>(`/auth/users/${id}`, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
+    onSuccess: (_updated, { id, body }) => {
+      qc.invalidateQueries({ queryKey: ["users"] });
+      if ("role" in body) {
+        setDraftRoles((current) => {
+          const next = { ...current };
+          delete next[id];
+          return next;
+        });
+      }
+    },
   });
 
   return (
@@ -277,36 +307,59 @@ export default function SettingsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {users?.map((u) => (
-                    <tr key={u.id}>
-                      <td style={{ fontWeight: 600, color: "var(--text-dark)" }}>{u.email}</td>
-                      <td>{u.name || "—"}</td>
-                      <td>
-                        <select
-                          value={u.role}
-                          disabled={u.id === user?.id}
-                          onChange={(e) => update.mutate({ id: u.id, body: { role: e.target.value } })}
-                          style={{ marginTop: 0, width: 110 }}
-                        >
-                          <option value="viewer">viewer</option>
-                          <option value="editor">editor</option>
-                          <option value="admin">admin</option>
-                        </select>
-                      </td>
-                      <td>{u.is_active ? <Pill value="active" /> : <Pill value="disabled" />}</td>
-                      <td style={{ color: "var(--text-light)" }}>{fmtDateTime(u.created_at)}</td>
-                      <td style={{ textAlign: "right" }}>
-                        {u.id !== user?.id && (
-                          <button
-                            className="small"
-                            onClick={() => update.mutate({ id: u.id, body: { is_active: !u.is_active } })}
-                          >
-                            {u.is_active ? "Deactivate" : "Activate"}
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {users?.map((u) => {
+                    const self = u.id === user?.id;
+                    const draftRole = draftRoles[u.id] ?? u.role;
+                    const roleChanged = draftRole !== u.role;
+                    return (
+                      <tr key={u.id}>
+                        <td style={{ fontWeight: 600, color: "var(--text-dark)" }}>{u.email}</td>
+                        <td>{u.name || "—"}</td>
+                        <td>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <select
+                              value={draftRole}
+                              disabled={self}
+                              onChange={(e) =>
+                                setDraftRoles((current) => ({ ...current, [u.id]: e.target.value as Role }))
+                              }
+                              style={{ marginTop: 0, width: 110 }}
+                            >
+                              <option value="viewer">viewer</option>
+                              <option value="editor">editor</option>
+                              <option value="admin">admin</option>
+                            </select>
+                            {!self && roleChanged && (
+                              <button
+                                className="small primary"
+                                onClick={() => update.mutate({ id: u.id, body: { role: draftRole } })}
+                                disabled={update.isPending}
+                              >
+                                Save
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                        <td>{u.is_active ? <Pill value="active" /> : <Pill value="disabled" />}</td>
+                        <td style={{ color: "var(--text-light)" }}>{fmtDateTime(u.created_at)}</td>
+                        <td style={{ textAlign: "right" }}>
+                          {!self && (
+                            <button
+                              className={u.is_active ? "small danger" : "small"}
+                              onClick={() =>
+                                u.is_active
+                                  ? setDeactivateTarget(u)
+                                  : update.mutate({ id: u.id, body: { is_active: true } })
+                              }
+                              disabled={update.isPending}
+                            >
+                              {u.is_active ? "Deactivate" : "Activate"}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -318,6 +371,26 @@ export default function SettingsPage() {
         </div>
       )}
       {inviting && <NewUserModal onClose={() => setInviting(false)} />}
+      {deactivateTarget && (
+        <ConfirmModal
+          title="Deactivate user"
+          confirmLabel="Deactivate user"
+          pending={update.isPending}
+          onClose={() => setDeactivateTarget(null)}
+          onConfirm={() =>
+            update.mutate(
+              { id: deactivateTarget.id, body: { is_active: false } },
+              { onSuccess: () => setDeactivateTarget(null) },
+            )
+          }
+        >
+          <ErrorBox error={update.error} />
+          <p>
+            Deactivate <strong>{deactivateTarget.email}</strong>? They will not be able to sign in until an
+            admin reactivates them.
+          </p>
+        </ConfirmModal>
+      )}
     </div>
   );
 }

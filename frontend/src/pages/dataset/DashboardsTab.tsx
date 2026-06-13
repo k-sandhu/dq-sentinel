@@ -5,7 +5,7 @@ import type { AdhocDashboard, AdhocDashboardMeta, Health, Panel } from "../../ap
 import { canEdit, useAuth } from "../../auth";
 import ErrorBoundary from "../../components/ErrorBoundary";
 import PanelChart from "../../components/PanelChart";
-import { EmptyState, ErrorBox, Icon, Spinner } from "../../components/ui";
+import { ConfirmModal, EmptyState, ErrorBox, Icon, Spinner } from "../../components/ui";
 import { fmtDateTime } from "../../lib/format";
 
 function PanelCard({ panel }: { panel: Panel }) {
@@ -40,6 +40,7 @@ export default function DashboardsTab({ datasetId, hasProfile }: { datasetId: nu
   const qc = useQueryClient();
   const [focus, setFocus] = useState("");
   const [openId, setOpenId] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AdhocDashboard | null>(null);
 
   const { data: health } = useQuery({ queryKey: ["health"], queryFn: () => api.get<Health>("/health") });
   const llm = health?.llm_enabled ?? false;
@@ -161,7 +162,7 @@ export default function DashboardsTab({ datasetId, hasProfile }: { datasetId: nu
                     <Icon name="refresh" size={12} /> Refresh
                   </button>
                   {canEdit(user) && (
-                    <button className="small danger" onClick={() => remove.mutate(openId)}>
+                    <button className="small danger" onClick={() => setDeleteTarget(dashboard.data)}>
                       Delete
                     </button>
                   )}
@@ -176,6 +177,24 @@ export default function DashboardsTab({ datasetId, hasProfile }: { datasetId: nu
           ) : null}
         </div>
       </div>
+      {deleteTarget && (
+        <ConfirmModal
+          title="Delete dashboard"
+          confirmLabel="Delete dashboard"
+          pending={remove.isPending}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={() =>
+            remove.mutate(deleteTarget.id, {
+              onSuccess: () => setDeleteTarget(null),
+            })
+          }
+        >
+          <ErrorBox error={remove.error} />
+          <p>
+            Delete <strong>{deleteTarget.title}</strong>? Its saved panels will be removed.
+          </p>
+        </ConfirmModal>
+      )}
     </div>
   );
 }

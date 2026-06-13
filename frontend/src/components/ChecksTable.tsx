@@ -7,7 +7,7 @@ import { canEdit, useAuth } from "../auth";
 import { checkTypeLabel, originLabel } from "../lib/checkMeta";
 import { describeSchedule, timeAgo } from "../lib/format";
 import CheckParamsForm from "./CheckParamsForm";
-import { EmptyState, ErrorBox, Icon, Modal, Pill, SeverityDot } from "./ui";
+import { ConfirmModal, EmptyState, ErrorBox, Icon, Modal, Pill, SeverityDot } from "./ui";
 
 function paramsSummary(check: Check): string {
   const entries = Object.entries(check.params ?? {});
@@ -117,6 +117,7 @@ export default function ChecksTable({
   const qc = useQueryClient();
   const editable = canEdit(user);
   const [editing, setEditing] = useState<Check | null>(null);
+  const [archiveTarget, setArchiveTarget] = useState<Check | null>(null);
   const [runningId, setRunningId] = useState<number | null>(null);
 
   const invalidate = () => {
@@ -201,7 +202,7 @@ export default function ChecksTable({
                         <button className="small" onClick={() => setEditing(check)}>
                           Edit
                         </button>{" "}
-                        <button className="small danger" onClick={() => archive.mutate(check.id)}>
+                        <button className="small danger" onClick={() => setArchiveTarget(check)}>
                           Dismiss
                         </button>
                       </td>
@@ -291,7 +292,7 @@ export default function ChecksTable({
                         <button className="small" onClick={() => setEditing(check)}>
                           Edit
                         </button>{" "}
-                        <button className="small danger" onClick={() => archive.mutate(check.id)}>
+                        <button className="small danger" onClick={() => setArchiveTarget(check)}>
                           Archive
                         </button>
                       </td>
@@ -304,6 +305,29 @@ export default function ChecksTable({
         </div>
       )}
       {editing && <EditCheckModal check={editing} onClose={() => setEditing(null)} />}
+      {archiveTarget && (
+        <ConfirmModal
+          title={archiveTarget.status === "proposed" ? "Dismiss proposed check" : "Archive check"}
+          confirmLabel={archiveTarget.status === "proposed" ? "Dismiss check" : "Archive check"}
+          pending={archive.isPending}
+          onClose={() => setArchiveTarget(null)}
+          onConfirm={() =>
+            archive.mutate(archiveTarget.id, {
+              onSuccess: () => setArchiveTarget(null),
+            })
+          }
+        >
+          <ErrorBox error={archive.error} />
+          <p>
+            {archiveTarget.status === "proposed"
+              ? "Dismiss this proposed check so it is no longer shown for review?"
+              : "Archive this check so it no longer runs on the schedule?"}
+          </p>
+          <p>
+            <strong>{archiveTarget.name}</strong>
+          </p>
+        </ConfirmModal>
+      )}
     </>
   );
 }
