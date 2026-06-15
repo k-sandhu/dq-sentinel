@@ -6,6 +6,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import type { LineageGraph as LineageGraphData, LineageNode } from "../api/types";
+import { lineageDestLabel, lineageNodeHref } from "../lib/lineageNav";
 import { EmptyState } from "./ui";
 
 const NODE_W = 190;
@@ -207,10 +208,10 @@ export default function LineageGraph({
                 transform={`translate(${p.x}, ${p.y})`}
                 onMouseEnter={() => setHoverId(n.id)}
                 onMouseLeave={() => setHoverId(null)}
-                onClick={clickable ? () => navigate(`/datasets/${n.dataset_id}/lineage`) : undefined}
+                onClick={clickable ? () => navigate(lineageNodeHref(n)!) : undefined}
               >
                 <title>
-                  {`${n.schema_name ? `${n.schema_name}.` : ""}${n.table_name} — ${n.kind}, health: ${n.health}${clickable ? "" : " (not registered as a dataset)"}`}
+                  {`${n.schema_name ? `${n.schema_name}.` : ""}${n.table_name} — ${n.kind}, health: ${n.health}${clickable ? ` · click to open ${lineageDestLabel(n)}` : " (not registered as a dataset)"}`}
                 </title>
                 {isCurrent && <rect className="lineage-glow" x={-4} y={-4} width={NODE_W + 8} height={NODE_H + 8} rx={12} />}
                 <rect className={`lineage-box ${n.health}`} width={NODE_W} height={NODE_H} rx={8} />
@@ -246,7 +247,7 @@ export default function LineageGraph({
         <span>
           <span className="swatch ext" /> external / no checks
         </span>
-        <span style={{ marginLeft: "auto" }}>scroll to pan · click a registered table to open it</span>
+        <span style={{ marginLeft: "auto" }}>scroll to pan · click a table to open it (failing → exceptions, else profile)</span>
       </div>
       {notes.length > 0 && <div className="lineage-note">{notes.join(" · ")}</div>}
     </div>

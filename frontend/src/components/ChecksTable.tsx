@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { api } from "../api/client";
 import type { Check, CheckTypeInfo, Run } from "../api/types";
 import { canEdit, useAuth } from "../auth";
@@ -128,6 +128,7 @@ export default function ChecksTable({
   const { user } = useAuth();
   const qc = useQueryClient();
   const confirm = useConfirm();
+  const navigate = useNavigate();
   const editable = canEdit(user);
   const [editing, setEditing] = useState<Check | null>(null);
   const [runningId, setRunningId] = useState<number | null>(null);
@@ -186,13 +187,15 @@ export default function ChecksTable({
             <table className="data">
               <tbody>
                 {proposed.map((c) => (
-                  <tr key={c.id}>
+                  <tr key={c.id} className="clickable" onClick={() => navigate(`/checks/${c.id}`)}>
                     <td style={{ width: 24 }}>
                       <span className={`badge ${c.origin === "llm" ? "ai" : ""}`}>{originLabel(c.origin)}</span>
                     </td>
                     <td>
                       <div style={{ fontWeight: 700, color: "var(--text-dark)" }}>
-                        {checkTypeLabel(c.check_type)}
+                        <Link to={`/checks/${c.id}`} className="row-title-link" onClick={(e) => e.stopPropagation()}>
+                          {checkTypeLabel(c.check_type)}
+                        </Link>
                         {c.column_name && <span style={{ fontWeight: 400 }}> on </span>}
                         {c.column_name && <code>{c.column_name}</code>}
                         {showDataset && (
@@ -214,16 +217,26 @@ export default function ChecksTable({
                       <td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
                         <button
                           className="primary small"
-                          onClick={() => setStatus.mutate({ id: c.id, status: "active" })}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setStatus.mutate({ id: c.id, status: "active" });
+                          }}
                         >
                           <Icon name="check" size={13} /> Activate
                         </button>{" "}
-                        <button className="small" onClick={() => setEditing(c)}>
+                        <button
+                          className="small"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditing(c);
+                          }}
+                        >
                           Edit
                         </button>{" "}
                         <button
                           className="small danger"
-                          onClick={async () => {
+                          onClick={async (e) => {
+                            e.stopPropagation();
                             if (
                               await confirm({
                                 title: "Dismiss proposed check",
@@ -275,10 +288,12 @@ export default function ChecksTable({
               </thead>
               <tbody>
                 {rest.map((c) => (
-                  <tr key={c.id}>
+                  <tr key={c.id} className="clickable" onClick={() => navigate(`/checks/${c.id}`)}>
                     <td>
                       <div style={{ fontWeight: 600 }}>
-                        <Link to={`/checks/${c.id}`}>{c.name}</Link>
+                        <Link to={`/checks/${c.id}`} className="row-title-link" onClick={(e) => e.stopPropagation()}>
+                          {c.name}
+                        </Link>
                       </div>
                       <div style={{ fontSize: 11.5, color: "var(--text-light)" }}>
                         {checkTypeLabel(c.check_type)}
@@ -290,7 +305,9 @@ export default function ChecksTable({
                     </td>
                     {showDataset && (
                       <td>
-                        <Link to={`/datasets/${c.dataset_id}/checks`}>{c.dataset_name}</Link>
+                        <Link to={`/datasets/${c.dataset_id}/checks`} onClick={(e) => e.stopPropagation()}>
+                          {c.dataset_name}
+                        </Link>
                       </td>
                     )}
                     <td>
@@ -317,27 +334,49 @@ export default function ChecksTable({
                         <button
                           className="small"
                           disabled={runningId === c.id}
-                          onClick={() => runNow.mutate(c.id)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            runNow.mutate(c.id);
+                          }}
                           title="Run now"
                         >
                           {runningId === c.id ? <span className="spinner" style={{ width: 12, height: 12 }} /> : <Icon name="play" size={12} />}
                           Run
                         </button>{" "}
                         {c.status === "active" ? (
-                          <button className="small" onClick={() => setStatus.mutate({ id: c.id, status: "disabled" })}>
+                          <button
+                            className="small"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setStatus.mutate({ id: c.id, status: "disabled" });
+                            }}
+                          >
                             Pause
                           </button>
                         ) : (
-                          <button className="small" onClick={() => setStatus.mutate({ id: c.id, status: "active" })}>
+                          <button
+                            className="small"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setStatus.mutate({ id: c.id, status: "active" });
+                            }}
+                          >
                             Resume
                           </button>
                         )}{" "}
-                        <button className="small" onClick={() => setEditing(c)}>
+                        <button
+                          className="small"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditing(c);
+                          }}
+                        >
                           Edit
                         </button>{" "}
                         <button
                           className="small danger"
-                          onClick={async () => {
+                          onClick={async (e) => {
+                            e.stopPropagation();
                             if (
                               await confirm({
                                 title: "Archive check",

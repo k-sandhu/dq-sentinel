@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { api } from "../api/client";
 import type { Connection, ConnectionHealth, ConnectionTest, EngineInfo } from "../api/types";
 import { isAdmin, useAuth } from "../auth";
@@ -158,6 +158,7 @@ export default function ConnectionsPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
   const confirm = useConfirm();
+  const navigate = useNavigate();
   const [adding, setAdding] = useState(false);
   const { data, isLoading, error } = useQuery({
     queryKey: ["connections"],
@@ -236,9 +237,11 @@ export default function ConnectionsPage() {
             </thead>
             <tbody>
               {data.map((c) => (
-                <tr key={c.id}>
+                <tr key={c.id} className="clickable" onClick={() => navigate(`/connections/${c.id}`)}>
                   <td style={{ fontWeight: 700 }}>
-                    <Link to={`/connections/${c.id}`}>{c.name}</Link>
+                    <Link to={`/connections/${c.id}`} className="row-title-link" onClick={(e) => e.stopPropagation()}>
+                      {c.name}
+                    </Link>
                   </td>
                   <td>
                     {healthById.has(c.id) ? (
@@ -257,13 +260,19 @@ export default function ConnectionsPage() {
                   <td className="num">{c.dataset_count}</td>
                   <td style={{ color: "var(--text-light)" }}>{fmtDateTime(c.created_at)}</td>
                   <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                    <Link to={`/connections/${c.id}/browse`} className="btn small" style={{ marginRight: 6 }}>
+                    <Link
+                      to={`/connections/${c.id}/browse`}
+                      className="btn small"
+                      style={{ marginRight: 6 }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <Icon name="search" size={12} /> Browse tables
                     </Link>
                     {isAdmin(user) && (
                       <button
                         className="small danger"
-                        onClick={async () => {
+                        onClick={async (e) => {
+                          e.stopPropagation();
                           if (
                             await confirm({
                               title: "Delete connection",

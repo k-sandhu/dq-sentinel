@@ -4,6 +4,8 @@ Drives the real `run_check` flow against the synthetic source DB so the
 fingerprint/reconcile/auto-resolve path is exercised end to end.
 """
 
+import uuid
+
 from app.core.runner import exception_fingerprint, run_check
 from app.db import _ensure_columns, get_engine, init_db, session_factory
 from app.models import (
@@ -17,7 +19,7 @@ from app.models import (
 
 
 def _setup(db, source_db, *, check_type="not_null", column="email", params=None, profile_pk=None):
-    conn = Connection(name=f"lc-{id(object())}", kind="sqlite", dsn=source_db)
+    conn = Connection(name=f"lc-{uuid.uuid4().hex}", kind="sqlite", dsn=source_db)
     db.add(conn)
     db.flush()
     ds = Dataset(connection_id=conn.id, table_name="people", display_name="people")

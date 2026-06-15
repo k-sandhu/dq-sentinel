@@ -292,6 +292,10 @@ table.data td { padding: 9px 12px; border-bottom: 1px solid var(--border-light);
 table.data tr:last-child td { border-bottom: none; }
 table.data tr.clickable { cursor: pointer; }
 table.data tr.clickable:hover td { background: var(--hover); }
+/* Primary identifier inside a clickable row: keep the dark-text look but stay a
+   real, focusable link, so the row's destination is reachable by keyboard and
+   announced by screen readers (the row onClick alone is mouse-only). #82 */
+.row-title-link { color: var(--text-dark); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 td.mono, .mono { font-family: var(--mono); font-size: 12px; }
 
