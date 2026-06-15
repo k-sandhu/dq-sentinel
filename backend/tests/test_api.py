@@ -3,6 +3,10 @@ connection -> tables -> register -> profile -> generate -> activate -> run ->
 exceptions -> triage -> knowledge -> dashboard -> RCA fallback -> RBAC.
 """
 
+from uuid import uuid4
+
+from app import models
+from app.db import session_factory
 from tests.conftest import NULL_EMAILS, SOURCE_ROWS
 
 
@@ -185,6 +189,97 @@ def test_full_flow(client, admin_headers, source_db):
     # check types metadata
     types = client.get("/api/v1/checks/types", headers=h).json()
     assert {t["key"] for t in types} >= {"not_null", "unique", "ml_outlier", "custom_sql"}
+
+
+def test_delete_dataset_cleans_dependents(client, admin_headers, source_db):
+    h = admin_headers
+    suffix = uuid4().hex[:8]
+    conn = client.post(
+        "/api/v1/connections",
+        json={"name": f"delete-dataset-{suffix}", "dsn": source_db},
+        headers=h,
+    ).json()
+    ds = client.post(
+        "/api/v1/datasets/register",
+        json={"connection_id": conn["id"], "tables": [{"table_name": "people"}]},
+        headers=h,
+    ).json()[0]
+    ds_id = ds["id"]
+
+    assert client.post(f"/api/v1/datasets/{ds_id}/profile", headers=h).status_code == 200
+    dash = client.post(
+        "/api/v1/adhoc-dashboards/generate",
+        json={"dataset_id": ds_id, "focus": "delete cleanup"},
+        headers=h,
+    ).json()
+    saved_query = client.post(
+        "/api/v1/queries",
+        json={
+            "connection_id": conn["id"],
+            "dataset_id": ds_id,
+            "name": "Pinned cleanup query",
+            "sql": "SELECT id, email FROM people",
+            "tags": ["cleanup"],
+        },
+        headers=h,
+    ).json()
+    notification = client.post(
+        "/api/v1/notifications/rules",
+        json={"dataset_id": ds_id, "channel": "slack", "target": "https://hook.example/delete"},
+        headers=h,
+    ).json()
+
+    check = client.post(
+        "/api/v1/checks",
+        json={
+            "dataset_id": ds_id,
+            "check_type": "not_null",
+            "column_name": "email",
+            "severity": "error",
+            "name": "cleanup exception producer",
+        },
+        headers=h,
+    ).json()
+    run = client.post(f"/api/v1/checks/{check['id']}/run", headers=h).json()
+    excs = client.get(f"/api/v1/exceptions?run_id={run['id']}", headers=h).json()["items"]
+    exc_ids = [e["id"] for e in excs]
+    assert exc_ids
+    triaged = client.post(
+        "/api/v1/exceptions/triage",
+        json={"ids": [exc_ids[0]], "status": "acknowledged", "note": "cleanup coverage"},
+        headers=h,
+    )
+    assert triaged.status_code == 200, triaged.text
+
+    with session_factory()() as db:
+        rca = models.RcaSession(
+            dataset_id=ds_id,
+            check_run_id=run["id"],
+            question="cleanup coverage",
+            status="complete",
+        )
+        db.add(rca)
+        db.commit()
+        rca_id = rca.id
+
+    resp = client.delete(f"/api/v1/datasets/{ds_id}", headers=h)
+    assert resp.status_code == 204, resp.text
+
+    with session_factory()() as db:
+        assert db.get(models.Dataset, ds_id) is None
+        assert db.query(models.Check).filter(models.Check.dataset_id == ds_id).count() == 0
+        assert db.query(models.CheckRun).filter(models.CheckRun.dataset_id == ds_id).count() == 0
+        assert db.query(models.ExceptionRecord).filter(models.ExceptionRecord.dataset_id == ds_id).count() == 0
+        assert (
+            db.query(models.ExceptionEvent)
+            .filter(models.ExceptionEvent.exception_id.in_(exc_ids))
+            .count()
+            == 0
+        )
+        assert db.get(models.RcaSession, rca_id) is None
+        assert db.get(models.AdhocDashboard, dash["id"]) is None
+        assert db.get(models.NotificationRule, notification["id"]) is None
+        assert db.get(models.SavedQuery, saved_query["id"]).dataset_id is None
 
 
 def test_rbac_viewer_cannot_mutate(client, admin_headers):

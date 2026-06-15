@@ -9,6 +9,7 @@ from app.api.serialize import connection_out
 from app.connectors.dialects import REGISTRY, DriverNotInstalled, driver_installed
 from app.connectors.sa import Connector, SqlNotAllowed, connector_for, dispose_connection, kind_from_dsn
 from app.core.audit import audit
+from app.core.deletion import cleanup_dataset_dependents
 from app.db import get_db
 from app.security import get_current_user, require_role
 
@@ -160,6 +161,9 @@ def delete_connection(
     if conn is None:
         raise HTTPException(404, "Connection not found")
     audit(db, user, "connection.delete", "connection", conn.id, name=conn.name, kind=conn.kind)
-    db.delete(conn)  # cascades to datasets/checks/runs via ORM relationships
+    dataset_ids = [d.id for d in conn.datasets]
+    for dataset_id in dataset_ids:
+        cleanup_dataset_dependents(db, dataset_id)
+    db.delete(conn)  # cascades to datasets/checks/profiles/knowledge via ORM relationships
     db.commit()
     dispose_connection(connection_id)
