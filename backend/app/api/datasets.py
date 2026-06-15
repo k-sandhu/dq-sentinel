@@ -6,6 +6,7 @@ from app import models, schemas
 from app.api.serialize import dataset_out
 from app.config import get_settings
 from app.connectors.sa import connector_for
+from app.core.deletion import cleanup_dataset_dependents
 from app.core.profiler import jsonable, profile_dataset
 from app.db import get_db
 from app.models import utcnow
@@ -178,9 +179,6 @@ def delete_dataset(
     _: models.User = Depends(require_role("admin")),
 ):
     ds = _get_dataset(db, dataset_id)
-    # ORM cascades cover checks/profiles/knowledge; clean up the rest explicitly
-    db.query(models.ExceptionRecord).filter(models.ExceptionRecord.dataset_id == dataset_id).delete()
-    db.query(models.RcaSession).filter(models.RcaSession.dataset_id == dataset_id).delete()
-    db.query(models.CheckRun).filter(models.CheckRun.dataset_id == dataset_id).delete()
+    cleanup_dataset_dependents(db, dataset_id)
     db.delete(ds)
     db.commit()
