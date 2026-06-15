@@ -132,6 +132,9 @@ export default function LineagePage() {
                         </div>
                         {n.dataset_id !== null && (
                           <div style={{ display: "flex", gap: 12, marginTop: 6, fontSize: 12 }}>
+                            <Link to={`/datasets/${n.dataset_id}/exceptions`} onClick={(e) => e.stopPropagation()}>
+                              Open exceptions
+                            </Link>
                             <Link to={`/datasets/${n.dataset_id}`} onClick={(e) => e.stopPropagation()}>
                               Open profile
                             </Link>

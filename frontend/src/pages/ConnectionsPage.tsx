@@ -238,7 +238,11 @@ export default function ConnectionsPage() {
             <tbody>
               {data.map((c) => (
                 <tr key={c.id} className="clickable" onClick={() => navigate(`/connections/${c.id}`)}>
-                  <td style={{ fontWeight: 700, color: "var(--text-dark)" }}>{c.name}</td>
+                  <td style={{ fontWeight: 700 }}>
+                    <Link to={`/connections/${c.id}`} className="row-title-link" onClick={(e) => e.stopPropagation()}>
+                      {c.name}
+                    </Link>
+                  </td>
                   <td>
                     {healthById.has(c.id) ? (
                       <span

@@ -36,7 +36,11 @@ export default function RunsTable({
                 <StatusPill value={r.status} />
               </td>
               <td>
-                <div style={{ fontWeight: 600, color: "var(--text-dark)" }}>{r.check_name}</div>
+                <div style={{ fontWeight: 600 }}>
+                  <Link to={`/runs/${r.id}`} className="row-title-link" onClick={(e) => e.stopPropagation()}>
+                    {r.check_name}
+                  </Link>
+                </div>
                 <div style={{ fontSize: 11.5, color: "var(--text-light)" }}>{checkTypeLabel(r.check_type)}</div>
               </td>
               {showDataset && (
