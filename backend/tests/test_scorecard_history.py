@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from uuid import uuid4
 
 from app import models
@@ -30,6 +30,7 @@ def _metadata_dataset(db, *, suffix: str):
         owner=f"owner-{suffix}",
         domain=f"domain_{suffix}",
         team=f"Revenue Ops {suffix}",
+        slo_target_score=95.0,
     )
     passing = models.Check(
         dataset_id=dataset.id,
@@ -73,7 +74,7 @@ def _metadata_dataset(db, *, suffix: str):
         scope="dataset",
         scope_id=dataset.id,
         target_type="check_success",
-        objective=0.95,
+        objective=0.80,
         enabled=True,
     )
     db.add_all([exc, sla])
@@ -111,9 +112,11 @@ def test_capture_scorecard_snapshots_is_idempotent_metadata_only():
         assert owner_snap.active_check_count == 2
         assert owner_snap.open_exception_count == 1
         assert owner_snap.breached_dataset_count == 1
-        assert owner_snap.score == 50.0
+        assert owner_snap.score == 48.0
         assert owner_snap.slo_target == 95.0
         assert owner_snap.slo_status == "breached"
+        assert owner_snap.detail["scoring_adapter"] == "live_scorecards_v1"
+        assert owner_snap.detail["slo_counts"]["breached"] == 1
         detail_text = str(owner_snap.detail).lower()
         assert "sqlite:///" not in detail_text
         assert "select " not in detail_text
@@ -162,6 +165,15 @@ def test_capture_scorecard_snapshots_is_idempotent_metadata_only():
 
         db.get(models.Check, failing_id).last_status = "pass"
         db.get(models.ExceptionRecord, exc_id).status = "resolved"
+        db.add(
+            models.CheckRun(
+                check_id=failing_id,
+                dataset_id=dataset_id,
+                status="pass",
+                violation_count=0,
+                metrics={},
+            )
+        )
         second = capture_scorecard_snapshots(db, day)
         db.commit()
 
@@ -177,6 +189,50 @@ def test_capture_scorecard_snapshots_is_idempotent_metadata_only():
         assert owner_snap.open_exception_count == 0
         assert owner_snap.breached_dataset_count == 0
         assert owner_snap.slo_status == "met"
+
+
+def test_historical_snapshot_missing_prior_runs_score_as_unknown():
+    init_db()
+    suffix = uuid4().hex[:8]
+    day = date(2026, 2, 1)
+    as_of = datetime.combine(day, time.max)
+    factory = session_factory()
+    with factory() as db:
+        dataset_id, failing_id, _exc_id = _metadata_dataset(db, suffix=suffix)
+        check = db.get(models.Check, failing_id)
+        check.last_status = "pass"
+        db.add(
+            models.CheckRun(
+                check_id=failing_id,
+                dataset_id=dataset_id,
+                status="fail",
+                violation_count=1,
+                metrics={},
+                started_at=datetime.combine(day, time(hour=12)),
+            )
+        )
+        capture_scorecard_snapshots(db, day, as_of=as_of, include_open_exceptions=False)
+        db.commit()
+
+        snap = (
+            db.query(models.ScorecardSnapshot)
+            .filter(
+                models.ScorecardSnapshot.grain == "dataset",
+                models.ScorecardSnapshot.key == str(dataset_id),
+                models.ScorecardSnapshot.snapshot_date == day,
+            )
+            .one()
+        )
+        assert snap.score == 25.0
+        assert snap.open_exception_count == 0
+        assert snap.detail["score_basis"] == "latest check run status at or before as_of; missing runs score as unknown"
+        assert snap.detail["status_counts"] == {
+            "pass": 0,
+            "warn": 0,
+            "fail": 1,
+            "error": 0,
+            "unknown": 1,
+        }
 
 
 def test_scorecard_history_requires_auth_and_returns_sparse_ordered_points(client, admin_headers):

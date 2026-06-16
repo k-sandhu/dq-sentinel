@@ -1,7 +1,7 @@
 """scorecard snapshots
 
-Revision ID: 0004_scorecard_snapshots
-Revises: 0003_sla_tracking
+Revision ID: 0005_scorecard_snapshots
+Revises: 0004_scorecard_knowledge_fields
 Create Date: 2026-06-16 00:00:00.000000
 
 """
