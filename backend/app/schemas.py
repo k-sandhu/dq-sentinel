@@ -129,6 +129,11 @@ class DatasetOut(ORMModel):
     health: str | None = None  # pass | warn | fail | unknown
     importance: str | None = None  # from table knowledge
     owner: str | None = None
+    domain: str | None = None
+    team: str | None = None
+    slo_target_score: float | None = None
+    slo_window_days: int | None = None
+    slo_enabled: bool = True
 
 
 class PreviewOut(BaseModel):
@@ -365,7 +370,12 @@ class KnowledgeIn(BaseModel):
     known_issues: str = ""
     importance: Literal["low", "medium", "high", "critical"] = "medium"
     owner: str = ""
+    domain: str = ""
+    team: str = ""
     freshness_sla_hours: int | None = None
+    slo_target_score: float | None = Field(default=None, ge=0, le=100)
+    slo_window_days: int | None = Field(default=None, gt=0)
+    slo_enabled: bool = True
     pii_columns: list[str] = []
     notes: str = ""
 
