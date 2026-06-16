@@ -9,7 +9,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.connectors.sa import connector_for
-from app.core import notify
+from app.core import incidents
 from app.core.check_types import CheckContext, CheckResult, run_check_type
 from app.core.events import record_event
 from app.models import Check, CheckRun, ExceptionEvent, ExceptionRecord, Profile, utcnow
@@ -244,17 +244,17 @@ def run_check(db: Session, check: Check, triggered_by: str = "manual") -> CheckR
     if new_records:
         EXCEPTIONS_RECORDED.inc(new_records)
 
-    # Notifications (issue #27): transition-based, AFTER commit, best-effort.
-    # newly failing (pass/warn/None -> fail/error) notifies; recovery
-    # (fail/error -> pass) closes the loop; fail -> fail is SILENT (anti-spam).
-    # A dead channel must never fail a run, so the whole block is guarded.
+    # Incidents (issues #112/#110): every failed/error run updates durable state.
+    # The incident service preserves the old no-spam behavior: first failure
+    # notifies, repeated failures dedupe, recovery sends once, escalations are
+    # processed by the worker.
     try:
-        if run.status in ("fail", "error") and prev_status in ("pass", "warn", None):
-            notify.dispatch(db, check, run)
-        elif run.status == "pass" and prev_status in ("fail", "error"):
-            notify.dispatch_recovery(db, check, run)
+        if run.status in incidents.FAILURE_STATUSES:
+            incidents.record_failure(db, check, run, prev_status)
+        elif run.status == "pass":
+            incidents.record_recovery(db, check, run, prev_status)
     except Exception:  # noqa: BLE001 - notifications must never fail a check run
-        log.warning("notification dispatch failed for check %s", check.id, exc_info=True)
+        log.warning("incident lifecycle failed for check %s", check.id, exc_info=True)
 
     log.info(
         "check run finished",

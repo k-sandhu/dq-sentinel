@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import delete, update
 
 from app.config import get_settings
+from app.core.incidents import process_due_escalations
 from app.core.runner import compute_next_run, run_check
 from app.db import session_factory
 from app.models import AuditEntry, Check, utcnow
@@ -91,6 +92,12 @@ def poll_once(executor: ThreadPoolExecutor) -> int:
         maybe_evaluate_slas(now)  # self-throttles to sla_eval_seconds
     except Exception:  # noqa: BLE001 - SLA evaluation must never block check scheduling
         log.exception("SLA evaluation pass failed; continuing")
+    try:
+        factory = session_factory()
+        with factory() as db:
+            process_due_escalations(db, now)
+    except Exception:  # noqa: BLE001 - escalation sends must never block check scheduling
+        log.exception("Incident escalation pass failed; continuing")
     claimed = 0
     with factory() as db:
         # Initialize schedules that were activated without a next_run_at

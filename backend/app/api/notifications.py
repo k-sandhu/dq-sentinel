@@ -20,6 +20,8 @@ router = APIRouter(prefix="/notifications", tags=["notifications"])
 
 def _out(db: Session, rule: models.NotificationRule) -> schemas.NotificationRuleOut:
     out = schemas.NotificationRuleOut.model_validate(rule)
+    if rule.channel in {"webhook", "teams"} and rule.target:
+        out.target = _mask_target(rule.target)
     if rule.dataset_id is not None:
         ds = db.get(models.Dataset, rule.dataset_id)
         if ds is not None:
@@ -30,6 +32,17 @@ def _out(db: Session, rule: models.NotificationRule) -> schemas.NotificationRule
 def _validate_dataset(db: Session, dataset_id: int | None) -> None:
     if dataset_id is not None and db.get(models.Dataset, dataset_id) is None:
         raise HTTPException(422, "dataset_id does not exist")
+
+
+def _mask_target(target: str) -> str:
+    if len(target) <= 12:
+        return "********"
+    return f"{target[:8]}...{target[-4:]}"
+
+
+def _validate_rule_payload(channel: str, target: str) -> None:
+    if channel == "email" and not target.strip():
+        raise HTTPException(422, "email rules require at least one recipient in target")
 
 
 @router.get("/rules", response_model=list[schemas.NotificationRuleOut])
@@ -45,14 +58,16 @@ def create_rule(
     _: models.User = Depends(require_role("admin")),
 ):
     _validate_dataset(db, body.dataset_id)
-    if body.channel == "email" and not body.target.strip():
-        raise HTTPException(422, "email rules require at least one recipient in target")
+    _validate_rule_payload(body.channel, body.target)
     rule = models.NotificationRule(
         dataset_id=body.dataset_id,
         min_severity=body.min_severity,
         channel=body.channel,
         target=body.target,
         on_error_runs=body.on_error_runs,
+        dedupe_window_minutes=body.dedupe_window_minutes,
+        escalation_delay_minutes=body.escalation_delay_minutes,
+        max_escalation_level=body.max_escalation_level,
         enabled=body.enabled,
     )
     db.add(rule)
@@ -74,8 +89,23 @@ def update_rule(
     data = body.model_dump(exclude_unset=True)
     if "dataset_id" in data:
         _validate_dataset(db, data["dataset_id"])
-    for field in ("dataset_id", "min_severity", "channel", "target", "on_error_runs", "enabled"):
-        if field in data and data[field] is not None:
+    new_channel = data["channel"] if data.get("channel") is not None else rule.channel
+    new_target = data["target"] if data.get("target") is not None else rule.target
+    _validate_rule_payload(new_channel, new_target)
+    for field in (
+        "dataset_id",
+        "min_severity",
+        "channel",
+        "target",
+        "on_error_runs",
+        "dedupe_window_minutes",
+        "escalation_delay_minutes",
+        "max_escalation_level",
+        "enabled",
+    ):
+        if field == "escalation_delay_minutes" and field in data:
+            setattr(rule, field, data[field])
+        elif field in data and data[field] is not None:
             setattr(rule, field, data[field])
     db.commit()
     db.refresh(rule)
@@ -108,7 +138,7 @@ def test_rule(
     channel = notify._channel_for(rule)
     if channel is None:
         raise HTTPException(
-            422, "Rule has no deliverable target (set a target or a global Slack webhook)"
+            422, "Rule has no deliverable target (set target or the matching DQ_* webhook setting)"
         )
     try:
         channel.send(
