@@ -206,6 +206,20 @@ def _csv_safe(value) -> str:
     return s
 
 
+def _audit_safe_filters(filters: dict) -> dict:
+    safe: dict = {}
+    for key, value in filters.items():
+        if value in (None, [], ""):
+            continue
+        if isinstance(value, datetime):
+            safe[key] = value.isoformat()
+        elif key == "q":
+            safe[key] = {"present": True, "length": len(value)}
+        else:
+            safe[key] = value
+    return safe
+
+
 @router.get("/export.csv")
 def export_csv(
     filters: dict = Depends(_common_filters),
@@ -213,9 +227,24 @@ def export_csv(
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),
 ):
-    # TODO(#30): emit an `exception.export` audit-log call here when audit lands.
-    query = _apply_sort(_filtered(db, current_user=user, **filters), sort).limit(EXPORT_CAP)
+    base_query = _filtered(db, current_user=user, **filters)
+    matching_count = base_query.count()
+    query = _apply_sort(base_query, sort).limit(EXPORT_CAP)
     rows = query.all()
+    audit(
+        db,
+        user,
+        "exception.export",
+        "exception",
+        None,
+        filters=_audit_safe_filters(filters),
+        sort=sort,
+        matching_count=matching_count,
+        exported_count=len(rows),
+        export_cap=EXPORT_CAP,
+        truncated=matching_count > len(rows),
+    )
+    db.commit()
     # Resolve display fields without N+1 per row.
     ds_names = {d.id: d.table_name for d in db.query(models.Dataset).all()}
     user_names = {u.id: (u.name or u.email) for u in db.query(models.User).all()}

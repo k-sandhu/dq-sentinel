@@ -10,6 +10,12 @@ from app.db import session_factory
 from app.models import ExceptionRecord, utcnow
 
 
+def _audit(client, headers, **params):
+    resp = client.get("/api/v1/audit", headers=headers, params=params)
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
 @pytest.fixture(scope="module")
 def seeded(client, admin_headers, source_db):
     """Two checks of different severity/type producing exceptions; plus an
@@ -217,3 +223,67 @@ def test_export_respects_filters(client, seeded):
     )
     rows = list(csv.reader(io.StringIO(resp.text)))[1:]
     assert len(rows) == 1  # only the warn exception
+
+
+def test_export_csv_writes_safe_audit(client, seeded):
+    h = seeded["h"]
+    sentinel = "AUDIT_EXPORT_ROW_SECRET_125"
+    factory = session_factory()
+    with factory() as db:
+        rec = (
+            db.query(ExceptionRecord)
+            .filter(ExceptionRecord.dataset_id == seeded["dataset_id"])
+            .order_by(ExceptionRecord.id)
+            .first()
+        )
+        assert rec is not None
+        rec.row_data = {**(rec.row_data or {}), "audit_secret": sentinel}
+        db.commit()
+
+    before = _audit(client, h, action="exception.export")["total"]
+    resp = client.get(
+        f"/api/v1/exceptions/export.csv?dataset_id={seeded['dataset_id']}&severity=error&sort=severity",
+        headers=h,
+    )
+    assert resp.status_code == 200
+
+    after = _audit(client, h, action="exception.export")
+    assert after["total"] == before + 1
+    row = after["items"][0]
+    assert row["entity_type"] == "exception"
+    assert row["entity_id"] is None
+
+    detail = row["detail"]
+    assert detail["filters"] == {"dataset_id": seeded["dataset_id"], "severity": ["error"]}
+    assert detail["sort"] == "severity"
+    assert detail["matching_count"] == 5
+    assert detail["exported_count"] == 5
+    assert detail["export_cap"] == 10_000
+    assert detail["truncated"] is False
+
+    detail_blob = json.dumps(detail, sort_keys=True)
+    assert sentinel not in detail_blob
+    assert "row_data" not in detail_blob
+    assert "sqlite:///" not in detail_blob
+    assert "dsn" not in detail_blob.lower()
+
+
+def test_export_csv_audit_records_truncation(client, seeded, monkeypatch):
+    import app.api.exceptions_api as exceptions_api
+
+    h = seeded["h"]
+    monkeypatch.setattr(exceptions_api, "EXPORT_CAP", 2)
+
+    before = _audit(client, h, action="exception.export")["total"]
+    resp = client.get(f"/api/v1/exceptions/export.csv?dataset_id={seeded['dataset_id']}", headers=h)
+    assert resp.status_code == 200
+    assert len(list(csv.reader(io.StringIO(resp.text)))) == 3  # header + capped rows
+
+    after = _audit(client, h, action="exception.export")
+    assert after["total"] == before + 1
+    detail = after["items"][0]["detail"]
+    assert detail["filters"] == {"dataset_id": seeded["dataset_id"]}
+    assert detail["matching_count"] == 6
+    assert detail["exported_count"] == 2
+    assert detail["export_cap"] == 2
+    assert detail["truncated"] is True
