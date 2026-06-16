@@ -250,17 +250,37 @@ export function StatCard({
   value,
   hint,
   tone,
+  to,
+  title,
+  ariaLabel,
 }: {
   label: string;
   value: ReactNode;
-  hint?: string;
+  hint?: ReactNode;
   tone?: "ok" | "danger";
+  to?: string;
+  title?: string;
+  ariaLabel?: string;
 }) {
-  return (
-    <div className="card stat-card">
+  const body = (
+    <>
       <div className="label">{label}</div>
       <div className={`value ${tone ?? ""}`}>{value}</div>
       {hint && <div className="hint">{hint}</div>}
+    </>
+  );
+
+  if (to) {
+    return (
+      <Link to={to} className="card stat-card stat-card-link" title={title} aria-label={ariaLabel}>
+        {body}
+      </Link>
+    );
+  }
+
+  return (
+    <div className="card stat-card">
+      {body}
     </div>
   );
 }

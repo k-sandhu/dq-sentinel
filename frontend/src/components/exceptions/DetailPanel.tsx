@@ -242,7 +242,7 @@ export default function DetailPanel({
 
         {/* 6. Links */}
         <div className="xw-panel-section xw-links">
-          <Link to={`/runs?run_id=${lastRun}`} className="btn small">
+          <Link to={`/runs/${lastRun}`} className="btn small">
             Run #{lastRun}
           </Link>
           <Link to={`/workbench?dataset_id=${exc.dataset_id}&exception_id=${exc.id}`} className="btn small">
