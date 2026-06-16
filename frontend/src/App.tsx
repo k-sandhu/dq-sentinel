@@ -15,6 +15,7 @@ import DatasetDetailPage from "./pages/DatasetDetailPage";
 import DatasetsPage from "./pages/DatasetsPage";
 import ExceptionsPage from "./pages/ExceptionsPage";
 import HomePage from "./pages/HomePage";
+import IncidentsPage from "./pages/IncidentsPage";
 import LineagePage from "./pages/LineagePage";
 import LoginPage from "./pages/LoginPage";
 import ReliabilityPage from "./pages/ReliabilityPage";
@@ -95,6 +96,7 @@ export default function App() {
         <Route path="/runs" element={<RunsPage />} />
         <Route path="/runs/:id" element={<RunDetailPage />} />
         <Route path="/exceptions" element={<ExceptionsPage />} />
+        <Route path="/incidents" element={<IncidentsPage />} />
         <Route path="/reliability" element={<ReliabilityPage />} />
         <Route path="/workbench" element={<WorkbenchPage />} />
         <Route path="/lineage" element={<LineagePage />} />
