@@ -17,6 +17,10 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         populate_by_name=True,
+        # Treat blank entries (e.g. a `DQ_DATABASE_URL=` left in a copied
+        # .env.example) as unset so they fall back to the field defaults below,
+        # instead of overriding them with "" (which broke engine creation).
+        env_ignore_empty=True,
     )
 
     # App metadata database (SQLite for dev, PostgreSQL for prod)
