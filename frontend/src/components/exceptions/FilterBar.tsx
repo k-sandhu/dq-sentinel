@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api, getToken } from "../../api/client";
+import { api } from "../../api/client";
 import type { Assignee, CheckTypeInfo, ExceptionFacets } from "../../api/types";
 import { checkTypeLabel } from "../../lib/checkMeta";
 import { ALL_SEVERITIES, ALL_STATUSES, SEEN_SINCE_OPTIONS, SORT_OPTIONS } from "./shared";
@@ -45,17 +45,7 @@ export default function FilterBar({
   async function exportCsv() {
     setExporting(true);
     try {
-      // window.open can't carry the auth header; fetch with the token, blob it.
-      const resp = await fetch(`/api/v1/exceptions/export.csv?${exportUrl}`, {
-        headers: { Authorization: `Bearer ${getToken()}` },
-      });
-      const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "exceptions.csv";
-      a.click();
-      URL.revokeObjectURL(url);
+      await api.download(`/exceptions/export.csv?${exportUrl}`, "exceptions.csv");
     } finally {
       setExporting(false);
     }
