@@ -18,7 +18,13 @@ jobs:
       - name: Install
         run: pip install -e "backend[dev]"
       - name: Lint (ruff)
-        run: ruff check backend/app backend/tests
+        run: ruff check backend/app backend/tests scripts data
+      - name: Compile scripts and data utilities
+        run: python -m compileall -q scripts data
+      - name: Validate Docker Compose config
+        run: docker compose config --quiet
+      - name: Validate Grafana dashboard JSON
+        run: python -m json.tool monitoring/grafana/dashboards/dq-sentinel.json > /dev/null
       - name: Tests (pytest)
         working-directory: backend
         run: pytest -q
