@@ -171,7 +171,7 @@ export interface ScorecardHistoryPoint {
   snapshot_date: string;
   score: number | null;
   slo_target: number | null;
-  slo_status: string;
+  slo_status: ScorecardSloStatus;
   dataset_count: number;
   active_check_count: number;
   open_exception_count: number;
@@ -526,59 +526,7 @@ export interface Dashboard {
   worst_datasets: Dataset[];
 }
 
-export interface Health {
-  status: string;
-  version: string;
-  llm_enabled: boolean;
-  llm_provider: string | null;
-  llm_model: string | null;
-}
-
-// ---- SLA tracking (#102) ----
-export type SLAScope = "dataset" | "check";
-export type SLATargetType = "freshness" | "volume" | "check_success";
-export type SLAWindow = "rolling_7d" | "rolling_30d";
-
-export interface SLAEvaluation {
-  id: number;
-  evaluated_at: string;
-  window_start: string;
-  window_end: string;
-  attainment: number; // 0..1
-  budget_consumed: number; // 0..2 (clamped)
-  good: number;
-  bad: number;
-  breached: boolean;
-  mttr_seconds: number | null;
-  mttd_seconds: number | null;
-}
-
-export interface Sla {
-  id: number;
-  name: string;
-  scope: SLAScope;
-  scope_id: number;
-  target_type: SLATargetType;
-  objective: number; // 0..1
-  window: SLAWindow;
-  enabled: boolean;
-  created_at: string;
-  scope_label: string;
-  dataset_id: number | null;
-  latest: SLAEvaluation | null;
-}
-
-export interface SlaDetail extends Sla {
-  evaluations: SLAEvaluation[]; // oldest -> newest
-}
-
-export interface Reliability {
-  total: number;
-  breached: number;
-  slas: Sla[];
-}
-
-// ---- scorecards (#118) ----
+// ---- executive scorecards (issues #118-#120) ----
 export type ScorecardSloStatus = "met" | "at_risk" | "breached" | "unknown" | "disabled";
 export type ScorecardSloTargetSource = "explicit" | "importance_default" | "disabled";
 export type ScorecardDimension = "domain" | "team" | "owner" | "importance";
@@ -664,6 +612,58 @@ export interface ScorecardSummary {
   slo_disabled: number;
   worst_rollups: ScorecardRollup[];
   top_failing_datasets: ScorecardDataset[];
+}
+
+export interface Health {
+  status: string;
+  version: string;
+  llm_enabled: boolean;
+  llm_provider: string | null;
+  llm_model: string | null;
+}
+
+// ---- SLA tracking (#102) ----
+export type SLAScope = "dataset" | "check";
+export type SLATargetType = "freshness" | "volume" | "check_success";
+export type SLAWindow = "rolling_7d" | "rolling_30d";
+
+export interface SLAEvaluation {
+  id: number;
+  evaluated_at: string;
+  window_start: string;
+  window_end: string;
+  attainment: number; // 0..1
+  budget_consumed: number; // 0..2 (clamped)
+  good: number;
+  bad: number;
+  breached: boolean;
+  mttr_seconds: number | null;
+  mttd_seconds: number | null;
+}
+
+export interface Sla {
+  id: number;
+  name: string;
+  scope: SLAScope;
+  scope_id: number;
+  target_type: SLATargetType;
+  objective: number; // 0..1
+  window: SLAWindow;
+  enabled: boolean;
+  created_at: string;
+  scope_label: string;
+  dataset_id: number | null;
+  latest: SLAEvaluation | null;
+}
+
+export interface SlaDetail extends Sla {
+  evaluations: SLAEvaluation[]; // oldest -> newest
+}
+
+export interface Reliability {
+  total: number;
+  breached: number;
+  slas: Sla[];
 }
 
 // ---- workbench ----
