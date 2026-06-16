@@ -118,13 +118,29 @@ def main() -> None:
     print("== check generation (heuristic fallback works without LLM key) ==")
     gen = c.post("/checks/generate", json={"dataset_id": orders_id, "use_llm": True}).json()
     ok("generated proposals", gen["created"] >= 5, f"{gen['created']} via {gen['mode']}")
-    freshness = [x for x in gen["checks"] if x["check_type"] == "freshness"]
-    ok("freshness proposal uses 24h SLA", freshness and freshness[0]["params"]["max_age_hours"] == 24)
+    # Monitor packs (#115) auto-create the core freshness/volume monitors at
+    # registration — before knowledge is set — so reconcile the pack now that the
+    # 24h SLA exists, then assert against the live freshness monitor (the heuristic
+    # generator dedupes against the pack's monitor rather than emitting its own).
+    c.post(f"/datasets/{orders_id}/monitor-pack/reconcile")
+    raw_checks = c.get(f"/checks?dataset_id={orders_id}").json()
+    all_checks = raw_checks if isinstance(raw_checks, list) else raw_checks.get("items", [])
+    freshness = [x for x in all_checks if x["check_type"] == "freshness"]
+    # Adaptive freshness (#113) seeds both max_age_hours and default_max_age_hours
+    # from the 24h knowledge SLA.
+    fresh_params = freshness[0]["params"] if freshness else {}
+    ok(
+        "freshness monitor uses 24h SLA",
+        bool(freshness)
+        and (fresh_params.get("max_age_hours") == 24 or fresh_params.get("default_max_age_hours") == 24),
+        f"max_age={fresh_params.get('max_age_hours')}h",
+    )
 
     print("== activate & run ==")
     results = {}
-    for chk in gen["checks"]:
-        c.patch(f"/checks/{chk['id']}", json={"status": "active"})
+    for chk in all_checks:
+        if chk["status"] != "active":
+            c.patch(f"/checks/{chk['id']}", json={"status": "active"})
         run = c.post(f"/checks/{chk['id']}/run").json()
         results[f"{chk['check_type']}:{chk['column_name']}"] = run
     fresh_run = results.get("freshness:order_date")
