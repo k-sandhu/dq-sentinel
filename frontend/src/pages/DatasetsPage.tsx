@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { api } from "../api/client";
 import type { Dataset } from "../api/types";
 import { EmptyState, ErrorBox, Icon, Spinner, StatusPill } from "../components/ui";
@@ -14,10 +14,23 @@ import {
 } from "../lib/prefs";
 
 const HEALTH_FILTERS = ["all", "fail", "warn", "pass", "unknown"] as const;
+type RollupFilterKey = "domain" | "team";
+
+function matchesRollupFilter(value: string | null | undefined, filter: string | null): boolean {
+  if (filter === null) return true;
+  return (value ?? "").trim().toLowerCase() === filter.trim().toLowerCase();
+}
 
 export default function DatasetsPage() {
   const navigate = useNavigate();
-  const [search, setSearch] = useState("");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const domainFilter = searchParams.has("domain") ? searchParams.get("domain") ?? "" : null;
+  const teamFilter = searchParams.has("team") ? searchParams.get("team") ?? "" : null;
+  const activeRollupFilters = [
+    domainFilter !== null ? { key: "domain" as const, label: "Domain", value: domainFilter || "Unassigned" } : null,
+    teamFilter !== null ? { key: "team" as const, label: "Team", value: teamFilter || "Unassigned" } : null,
+  ].filter((item): item is { key: RollupFilterKey; label: string; value: string } => item !== null);
+  const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
   const [healthFilter, setHealthFilter] = useState<(typeof HEALTH_FILTERS)[number]>("all");
   // Snapshot of prefs; re-read on any in-tab change so stars/recents stay live.
   const [favIds, setFavIds] = useState<number[]>(() => getFavorites());
@@ -45,6 +58,8 @@ export default function DatasetsPage() {
 
   const data = useMemo(() => {
     let list = raw ?? [];
+    if (domainFilter !== null) list = list.filter((d) => matchesRollupFilter(d.domain, domainFilter));
+    if (teamFilter !== null) list = list.filter((d) => matchesRollupFilter(d.team, teamFilter));
     if (search) {
       const needle = search.toLowerCase();
       list = list.filter(
@@ -62,7 +77,7 @@ export default function DatasetsPage() {
       const favDelta = Number(favSet.has(b.id)) - Number(favSet.has(a.id));
       return favDelta !== 0 ? favDelta : b.open_exceptions - a.open_exceptions;
     });
-  }, [raw, search, healthFilter, favSet]);
+  }, [raw, search, healthFilter, favSet, domainFilter, teamFilter]);
 
   // Recently-viewed chips: resolve against the live list, drop unknowns, keep order.
   const recentDatasets = useMemo(() => {
@@ -76,6 +91,12 @@ export default function DatasetsPage() {
   function onToggleFav(e: React.MouseEvent, id: number) {
     e.stopPropagation(); // don't navigate into the row
     toggleFavorite(id); // dq:prefs event refreshes favIds via the subscription
+  }
+
+  function clearRollupFilter(key: RollupFilterKey) {
+    const next = new URLSearchParams(searchParams);
+    next.delete(key);
+    setSearchParams(next);
   }
 
   return (
@@ -106,6 +127,24 @@ export default function DatasetsPage() {
           ))}
         </div>
       </div>
+      {activeRollupFilters.length > 0 && (
+        <div className="dataset-filter-strip">
+          <span className="recents-label">Filtered by scorecard</span>
+          <div className="chip-row">
+            {activeRollupFilters.map((filter) => (
+              <button
+                key={filter.key}
+                type="button"
+                className="filter-chip on"
+                onClick={() => clearRollupFilter(filter.key)}
+                title={`Clear ${filter.label.toLowerCase()} filter`}
+              >
+                {filter.label}: {filter.value} ✕
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <ErrorBox error={error} />
       {recentDatasets.length > 0 && (
         <div className="recents-strip">

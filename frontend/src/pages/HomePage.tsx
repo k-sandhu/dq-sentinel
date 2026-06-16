@@ -96,6 +96,16 @@ function datasetDriverLink(datasetId: number | null | undefined): string | null 
   return datasetId != null ? `/datasets/${datasetId}/exceptions` : null;
 }
 
+function rollupDatasetPath(row: Pick<ScorecardRollup, "dimension" | "key" | "label">): string {
+  const params = new URLSearchParams();
+  if (row.dimension === "domain" || row.dimension === "team") {
+    params.set(row.dimension, row.key);
+  } else {
+    params.set("q", row.label || row.key);
+  }
+  return `/datasets?${params.toString()}`;
+}
+
 function SloPill({ status }: { status: ScorecardSloStatus | null | undefined }) {
   return <span className={`pill tone-${sloTone(status)}`}>{sloLabel(status)}</span>;
 }
@@ -312,7 +322,7 @@ function buildDriverItems(summary: ScorecardSummary | undefined, dashboard: Dash
       key: `rollup-${rollup.dimension}-${rollup.key}`,
       title: rollup.label || "Unassigned",
       meta: `${rollup.dimension} / ${fmtNum(rollup.total_datasets)} datasets`,
-      to: null,
+      to: rollupDatasetPath(rollup),
       score: rollup.score,
       loss: rollup.score_gap,
       exceptions: rollup.open_exceptions,
@@ -439,7 +449,7 @@ function RollupTable({
               {rows.map((row) => (
                 <tr key={`${row.dimension}-${row.key}`}>
                   <td>
-                    <div className="row-title-link">{row.label || "Unassigned"}</div>
+                    <Link to={rollupDatasetPath(row)} className="row-title-link">{row.label || "Unassigned"}</Link>
                     <div className="scorecard-row-sub">{row.key || "unassigned"}</div>
                   </td>
                   <td><ScoreCell score={row.score} /></td>

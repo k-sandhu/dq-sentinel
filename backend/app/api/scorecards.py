@@ -1,11 +1,9 @@
-"""Scorecard read APIs over app metadata only (issue #118)."""
+"""Scorecard read APIs over app metadata only (issues #118, #119)."""
 
-from dataclasses import asdict
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.core import scorecards
@@ -16,61 +14,16 @@ from app.security import get_current_user
 router = APIRouter(prefix="/scorecards", tags=["scorecards"])
 
 
-def _latest_statuses(db: Session, check_ids: list[int]) -> dict[int, str | None]:
-    if not check_ids:
-        return {}
-    rows = (
-        db.query(models.CheckRun)
-        .filter(models.CheckRun.check_id.in_(check_ids))
-        .order_by(models.CheckRun.check_id, models.CheckRun.started_at.desc(), models.CheckRun.id.desc())
-        .all()
-    )
-    latest: dict[int, str | None] = {}
-    for row in rows:
-        latest.setdefault(row.check_id, row.status)
-    return latest
-
-
-def _active_exception_counts(db: Session) -> dict[int, int]:
-    rows = (
-        db.query(models.ExceptionRecord.dataset_id, func.count(models.ExceptionRecord.id))
-        .filter(models.ExceptionRecord.status == scorecards.OPEN_EXCEPTION_STATUS)
-        .group_by(models.ExceptionRecord.dataset_id)
-        .all()
-    )
-    return {int(dataset_id): int(count) for dataset_id, count in rows}
-
-
 def _scores(db: Session) -> list[scorecards.DatasetScore]:
-    datasets = (
-        db.query(models.Dataset)
-        .options(selectinload(models.Dataset.knowledge), selectinload(models.Dataset.checks))
-        .order_by(models.Dataset.id)
-        .all()
-    )
-    active_check_ids = [
-        int(check.id) for ds in datasets for check in ds.checks if check.status == "active"
-    ]
-    latest = _latest_statuses(db, active_check_ids)
-    exception_counts = _active_exception_counts(db)
-    return [
-        scorecards.score_dataset(
-            ds,
-            ds.knowledge,
-            ds.checks,
-            latest,
-            exception_counts.get(ds.id, 0),
-        )
-        for ds in datasets
-    ]
+    return scorecards.load_dataset_scores(db)
 
 
 def _dataset_out(row: scorecards.DatasetScore) -> schemas.ScorecardDatasetOut:
-    return schemas.ScorecardDatasetOut(**asdict(row))
+    return schemas.ScorecardDatasetOut(**scorecards.dataset_score_dict(row))
 
 
 def _rollup_out(row: scorecards.RollupScore) -> schemas.ScorecardRollupOut:
-    return schemas.ScorecardRollupOut(**asdict(row))
+    return schemas.ScorecardRollupOut(**scorecards.rollup_score_dict(row))
 
 
 def _summary_out(
@@ -173,9 +126,8 @@ def history(
 ):
     """Sparse daily scorecard points, ordered oldest first.
 
-    Snapshot rows are aggregate app metadata only (see ``core.scorecard_history``).
-    Missing dates are omitted so clients can render honest gaps without expensive
-    recomputation.
+    Snapshot rows are aggregate app metadata only. Missing dates are omitted so
+    clients can render honest gaps without expensive recomputation.
     """
     history_key = key.strip() if key and key.strip() else None
     if grain == "global" and history_key is None:

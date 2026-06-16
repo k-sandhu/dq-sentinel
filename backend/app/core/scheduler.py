@@ -54,7 +54,7 @@ def maybe_capture_scorecard_snapshots(now: datetime | None = None) -> int:
     today = now.date()
     if _last_scorecard_snapshot == today:
         return 0
-    from app.core.scorecard_history import capture_scorecard_snapshots
+    from app.core.scorecards import capture_scorecard_snapshots
 
     factory = session_factory()
     with factory() as db:

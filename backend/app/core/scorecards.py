@@ -1,20 +1,29 @@
 """Deterministic scorecard scoring over app metadata.
 
 This module accepts ORM-like objects and precomputed metadata counts/statuses.
-It never opens source connectors or writes to the app DB.
+It never opens source connectors or writes source data. Snapshot capture writes
+only aggregate app-metadata rollups to the app DB.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from datetime import date, datetime, time, timedelta
 from typing import Any, Literal
+
+from sqlalchemy import func
+from sqlalchemy.orm import Session, selectinload
+
+from app import models
+from app.models import utcnow
 
 RunStatus = Literal["pass", "warn", "fail", "error", "unknown"]
 Importance = Literal["low", "medium", "high", "critical"]
 SloStatus = Literal["met", "at_risk", "breached", "unknown", "disabled"]
 SloTargetSource = Literal["explicit", "importance_default", "disabled"]
 RollupDimension = Literal["domain", "team", "owner", "importance"]
+HistoryGrain = Literal["global", "domain", "team", "owner", "importance", "dataset"]
 
 SEVERITY_WEIGHTS = {"info": 0.5, "warn": 1.0, "error": 2.0}
 STATUS_POINTS = {"pass": 1.0, "warn": 0.7, "fail": 0.0, "error": 0.0, "unknown": 0.5}
@@ -25,6 +34,14 @@ OPEN_EXCEPTION_STATUS = "open"
 UNASSIGNED_LABEL = "Unassigned"
 EXCEPTION_PENALTY_PER_OPEN = 2.0
 MAX_EXCEPTION_PENALTY = 30.0
+HISTORY_GRAINS: tuple[HistoryGrain, ...] = (
+    "global",
+    "domain",
+    "team",
+    "owner",
+    "importance",
+    "dataset",
+)
 
 
 @dataclass(frozen=True)
@@ -339,3 +356,318 @@ def sort_datasets_for_attention(scores: Iterable[DatasetScore]) -> list[DatasetS
             s.display_name.lower(),
         ),
     )
+
+
+def latest_statuses(
+    db: Session,
+    check_ids: list[int],
+    *,
+    as_of: datetime | None = None,
+    force_unknown_missing: bool = False,
+) -> dict[int, str | None]:
+    """Latest check run statuses, optionally reconstructed at a historical point."""
+    if not check_ids:
+        return {}
+    query = db.query(models.CheckRun).filter(models.CheckRun.check_id.in_(check_ids))
+    if as_of is not None:
+        query = query.filter(models.CheckRun.started_at <= as_of)
+    rows = query.order_by(
+        models.CheckRun.check_id,
+        models.CheckRun.started_at.desc(),
+        models.CheckRun.id.desc(),
+    ).all()
+    latest: dict[int, str | None] = {}
+    for row in rows:
+        latest.setdefault(int(row.check_id), row.status)
+    if force_unknown_missing:
+        for check_id in check_ids:
+            latest.setdefault(int(check_id), "unknown")
+    return latest
+
+
+def open_exception_counts(db: Session, *, include_current: bool = True) -> dict[int, int]:
+    """Current open exception pressure by dataset.
+
+    Historical open-exception state is not reconstructable from metadata, so
+    backfills call this with ``include_current=False`` and document the omission.
+    """
+    if not include_current:
+        return {}
+    rows = (
+        db.query(models.ExceptionRecord.dataset_id, func.count(models.ExceptionRecord.id))
+        .filter(models.ExceptionRecord.status == OPEN_EXCEPTION_STATUS)
+        .group_by(models.ExceptionRecord.dataset_id)
+        .all()
+    )
+    return {int(dataset_id): int(count) for dataset_id, count in rows}
+
+
+def load_dataset_scores(
+    db: Session,
+    *,
+    as_of: datetime | None = None,
+    include_current_exceptions: bool = True,
+) -> list[DatasetScore]:
+    """Load app-metadata score rows using the same scorer as the live API."""
+    datasets = (
+        db.query(models.Dataset)
+        .options(selectinload(models.Dataset.knowledge), selectinload(models.Dataset.checks))
+        .order_by(models.Dataset.id)
+        .all()
+    )
+    active_check_ids = [
+        int(check.id) for ds in datasets for check in ds.checks if check.status == "active"
+    ]
+    latest = latest_statuses(
+        db,
+        active_check_ids,
+        as_of=as_of,
+        force_unknown_missing=as_of is not None,
+    )
+    exception_counts = open_exception_counts(db, include_current=include_current_exceptions)
+    return [
+        score_dataset(
+            ds,
+            ds.knowledge,
+            ds.checks,
+            latest,
+            exception_counts.get(ds.id, 0),
+        )
+        for ds in datasets
+    ]
+
+
+def _rollup_detail(row: RollupScore, *, historical_exception_omitted: bool) -> dict[str, Any]:
+    detail: dict[str, Any] = {
+        "schema_version": 1,
+        "scoring_engine": "scorecards_api_v1",
+        "sparse_history": True,
+        "status_counts": {
+            "pass": row.passing_checks,
+            "warn": row.warning_checks,
+            "fail": row.failing_checks,
+            "error": row.error_checks,
+            "unknown": row.unknown_checks,
+        },
+        "scored_datasets": row.scored_datasets,
+        "unknown_datasets": row.unknown_datasets,
+        "importance_weight": row.importance_weight,
+        "slo_counts": {
+            "met": row.slo_met,
+            "at_risk": row.slo_at_risk,
+            "breached": row.slo_breached,
+            "unknown": row.slo_unknown,
+            "disabled": row.slo_disabled,
+        },
+    }
+    if historical_exception_omitted:
+        detail["exception_pressure"] = "omitted; historical open-exception state is not reconstructable"
+    return detail
+
+
+def _dataset_detail(row: DatasetScore, *, historical_exception_omitted: bool) -> dict[str, Any]:
+    detail: dict[str, Any] = {
+        "schema_version": 1,
+        "scoring_engine": "scorecards_api_v1",
+        "sparse_history": True,
+        "status_counts": {
+            "pass": row.passing_checks,
+            "warn": row.warning_checks,
+            "fail": row.failing_checks,
+            "error": row.error_checks,
+            "unknown": row.unknown_checks,
+        },
+        "base_score": row.base_score,
+        "exception_penalty": row.exception_penalty,
+        "slo_target_source": row.slo_target_source,
+        "score_gap": row.score_gap,
+        "importance": row.importance,
+        "score_drivers": dict(row.score_drivers),
+    }
+    if historical_exception_omitted:
+        detail["exception_pressure"] = "omitted; historical open-exception state is not reconstructable"
+    return detail
+
+
+def _payload_from_rollup(
+    row: RollupScore,
+    *,
+    grain: HistoryGrain,
+    snapshot_date: date,
+    historical_exception_omitted: bool,
+) -> dict[str, Any]:
+    return {
+        "grain": grain,
+        "key": row.key or "global",
+        "label": row.label[:255],
+        "snapshot_date": snapshot_date,
+        "score": row.score,
+        "slo_target": row.slo_target,
+        "slo_status": row.slo_status,
+        "dataset_count": row.total_datasets,
+        "active_check_count": row.active_checks,
+        "open_exception_count": row.open_exceptions,
+        "breached_dataset_count": row.slo_breached,
+        "detail": _rollup_detail(row, historical_exception_omitted=historical_exception_omitted),
+    }
+
+
+def _payload_from_dataset(
+    row: DatasetScore,
+    *,
+    snapshot_date: date,
+    historical_exception_omitted: bool,
+) -> dict[str, Any]:
+    return {
+        "grain": "dataset",
+        "key": str(row.dataset_id),
+        "label": row.display_name[:255],
+        "snapshot_date": snapshot_date,
+        "score": row.score,
+        "slo_target": row.slo_target,
+        "slo_status": row.slo_status,
+        "dataset_count": 1,
+        "active_check_count": row.active_checks,
+        "open_exception_count": row.open_exceptions,
+        "breached_dataset_count": 1 if row.slo_status == "breached" else 0,
+        "detail": _dataset_detail(row, historical_exception_omitted=historical_exception_omitted),
+    }
+
+
+def scorecard_snapshot_payloads(
+    scores: Iterable[DatasetScore],
+    snapshot_date: date,
+    *,
+    historical_exception_omitted: bool = False,
+) -> list[dict[str, Any]]:
+    """Build aggregate-only snapshot payloads from already-scored datasets."""
+    rows = list(scores)
+    payloads = [
+        _payload_from_rollup(
+            aggregate_scores(rows),
+            grain="global",
+            snapshot_date=snapshot_date,
+            historical_exception_omitted=historical_exception_omitted,
+        )
+    ]
+    for dimension in ("domain", "team", "owner", "importance"):
+        for rollup in rollup_scores(rows, dimension):
+            payloads.append(
+                _payload_from_rollup(
+                    rollup,
+                    grain=dimension,
+                    snapshot_date=snapshot_date,
+                    historical_exception_omitted=historical_exception_omitted,
+                )
+            )
+    payloads.extend(
+        _payload_from_dataset(
+            row,
+            snapshot_date=snapshot_date,
+            historical_exception_omitted=historical_exception_omitted,
+        )
+        for row in rows
+    )
+    return payloads
+
+
+def _upsert_snapshot(db: Session, payload: dict[str, Any]) -> models.ScorecardSnapshot:
+    existing = (
+        db.query(models.ScorecardSnapshot)
+        .filter(
+            models.ScorecardSnapshot.grain == payload["grain"],
+            models.ScorecardSnapshot.key == payload["key"],
+            models.ScorecardSnapshot.snapshot_date == payload["snapshot_date"],
+        )
+        .first()
+    )
+    if existing is None:
+        snap = models.ScorecardSnapshot(**payload)
+        db.add(snap)
+        db.flush()
+        return snap
+
+    for attr_name in (
+        "label",
+        "score",
+        "slo_target",
+        "slo_status",
+        "dataset_count",
+        "active_check_count",
+        "open_exception_count",
+        "breached_dataset_count",
+        "detail",
+    ):
+        setattr(existing, attr_name, payload[attr_name])
+    db.flush()
+    return existing
+
+
+def capture_scorecard_snapshots(
+    db: Session,
+    snapshot_date: date | None = None,
+    *,
+    as_of: datetime | None = None,
+    include_current_exceptions: bool = True,
+) -> list[models.ScorecardSnapshot]:
+    """Idempotently capture scorecard snapshots for a day.
+
+    Running this more than once for the same ``(grain, key, snapshot_date)``
+    updates aggregate values in place. The caller owns the transaction.
+    """
+    day = snapshot_date or utcnow().date()
+    scores = load_dataset_scores(
+        db,
+        as_of=as_of,
+        include_current_exceptions=include_current_exceptions,
+    )
+    payloads = scorecard_snapshot_payloads(
+        scores,
+        day,
+        historical_exception_omitted=not include_current_exceptions,
+    )
+    return [_upsert_snapshot(db, payload) for payload in payloads]
+
+
+def backfill_scorecard_snapshots(
+    db: Session,
+    *,
+    days: int = 90,
+    through: date | None = None,
+) -> list[models.ScorecardSnapshot]:
+    """Backfill sparse daily snapshots from existing CheckRun history.
+
+    Historical check status is reconstructed from the latest run at or before
+    each day. Historical open-exception state is not reconstructable from
+    current metadata, so backfilled points explicitly omit that pressure in
+    ``detail``. The caller owns the transaction.
+    """
+    end = through or utcnow().date()
+    start = end - timedelta(days=max(1, days) - 1)
+    start_dt = datetime.combine(start, time.min)
+    end_dt = datetime.combine(end, time.max)
+    run_days = {
+        started_at.date()
+        for (started_at,) in db.query(models.CheckRun.started_at)
+        .filter(models.CheckRun.started_at >= start_dt, models.CheckRun.started_at <= end_dt)
+        .all()
+    }
+    out: list[models.ScorecardSnapshot] = []
+    for day in sorted(run_days):
+        out.extend(
+            capture_scorecard_snapshots(
+                db,
+                day,
+                as_of=datetime.combine(day, time.max),
+                include_current_exceptions=False,
+            )
+        )
+    return out
+
+
+def dataset_score_dict(row: DatasetScore) -> dict[str, Any]:
+    return asdict(row)
+
+
+def rollup_score_dict(row: RollupScore) -> dict[str, Any]:
+    return asdict(row)
