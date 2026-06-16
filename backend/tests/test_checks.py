@@ -1,5 +1,6 @@
 import sqlite3
 import tempfile
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -88,6 +89,74 @@ def test_row_count_anomaly_needs_history(ctx_factory):
     assert r.metrics["row_count"] == SOURCE_ROWS
 
 
+class _MetadataConnector:
+    def __init__(self, columns):
+        self.columns = columns
+
+    def get_columns(self, table, schema=None):
+        assert table == "people"
+        assert schema is None
+        return self.columns
+
+
+def test_schema_contract_passes_with_allowed_additive_column():
+    connector = _MetadataConnector(
+        [
+            {"name": "id", "dtype": "INTEGER", "nullable": False},
+            {"name": "email", "dtype": "TEXT", "nullable": True},
+            {"name": "loaded_at", "dtype": "TIMESTAMP", "nullable": True},
+        ]
+    )
+    ctx = CheckContext(
+        connector=connector,
+        table="people",
+        schema=None,
+        column=None,
+        params={
+            "expected_columns": [
+                {"name": "id", "dtype": "INTEGER", "nullable": False},
+                {"name": "email", "dtype": "TEXT", "nullable": True},
+            ],
+            "allow_additive": True,
+        },
+    )
+    r = run_check_type(ctx, "schema_contract")
+    assert r.violation_count == 0
+    assert r.rows_evaluated is None
+    assert [c["name"] for c in r.metrics["added"]] == ["loaded_at"]
+    assert r.metrics["missing"] == []
+
+
+def test_schema_contract_flags_missing_added_type_and_nullability_changes():
+    connector = _MetadataConnector(
+        [
+            {"name": "id", "dtype": "BIGINT", "nullable": True},
+            {"name": "status", "dtype": "TEXT", "nullable": True},
+            {"name": "loaded_at", "dtype": "TIMESTAMP", "nullable": True},
+        ]
+    )
+    ctx = CheckContext(
+        connector=connector,
+        table="people",
+        schema=None,
+        column=None,
+        params={
+            "expected_columns": [
+                {"name": "id", "dtype": "INTEGER", "nullable": False},
+                {"name": "email", "dtype": "TEXT", "nullable": True},
+                {"name": "status", "dtype": "TEXT", "nullable": True},
+            ],
+            "allow_additive": False,
+        },
+    )
+    r = run_check_type(ctx, "schema_contract")
+    assert r.violation_count == 4
+    assert [c["name"] for c in r.metrics["missing"]] == ["email"]
+    assert [c["name"] for c in r.metrics["added"]] == ["loaded_at"]
+    assert r.metrics["type_changed"] == [{"column": "id", "expected": "INTEGER", "actual": "BIGINT"}]
+    assert r.metrics["nullability_changed"] == [{"column": "id", "expected": False, "actual": True}]
+
+
 def test_custom_sql(ctx_factory):
     r = run_check_type(
         ctx_factory(None, {"sql": "SELECT * FROM people WHERE age > 500"}), "custom_sql"
@@ -120,6 +189,15 @@ def test_validate_check():
         validate_check("regex_match", "email", {"pattern": "("})  # invalid regex
     params = validate_check("accepted_values", "status", {"values": ["a"], "junk": 1})
     assert "junk" not in params
+    contract = validate_check(
+        "schema_contract",
+        None,
+        {"expected_columns": [{"name": "ID", "dtype": "INTEGER"}], "allow_additive": "false"},
+    )
+    assert contract["expected_columns"] == [{"name": "ID", "ordinal": 0, "dtype": "INTEGER"}]
+    assert contract["allow_additive"] is False
+    with pytest.raises(ValueError):
+        validate_check("schema_contract", None, {"expected_columns": []})
 
 
 def test_validate_drift_method():
@@ -245,6 +323,131 @@ def app_db():
         yield db
     finally:
         db.close()
+
+
+def _now_naive() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _monitor_ctx(db, dsn: str, check_type: str, column: str | None, params: dict):
+    _monitor_ctx.seq = getattr(_monitor_ctx, "seq", 0) + 1
+    conn = Connection(name=f"m-{check_type}-{_monitor_ctx.seq}", kind="sqlite", dsn=dsn)
+    db.add(conn)
+    db.flush()
+    ds = Dataset(connection_id=conn.id, schema_name=None, table_name="people")
+    db.add(ds)
+    db.flush()
+    chk = Check(
+        dataset_id=ds.id,
+        name=f"{check_type}-{_monitor_ctx.seq}",
+        check_type=check_type,
+        column_name=column,
+        params=params,
+        severity="warn",
+        status="active",
+    )
+    db.add(chk)
+    db.commit()
+    return (
+        CheckContext(
+            connector=Connector(dsn),
+            table="people",
+            schema=None,
+            column=column,
+            params=params,
+            db=db,
+            check_id=chk.id,
+        ),
+        chk,
+    )
+
+
+def _add_run(db, check: Check, metrics: dict, status: str = "pass") -> None:
+    db.add(
+        CheckRun(
+            check_id=check.id,
+            dataset_id=check.dataset_id,
+            started_at=_now_naive(),
+            status=status,
+            violation_count=0,
+            metrics=metrics,
+        )
+    )
+
+
+def test_freshness_adaptive_uses_default_with_insufficient_history(app_db, source_db):
+    params = {
+        "strategy": "adaptive",
+        "default_max_age_hours": 100,
+        "min_history": 3,
+        "lookback_runs": 5,
+    }
+    ctx, _check = _monitor_ctx(app_db, source_db, "freshness", "created_at", params)
+    r = run_check_type(ctx, "freshness")
+    assert r.violation_count == 0
+    assert r.metrics["threshold_source"] == "default"
+    assert r.metrics["history_n"] == 0
+    assert r.metrics["max_age_hours"] == 100
+    assert r.metrics["note"] == "insufficient freshness history; using configured default"
+
+
+def test_freshness_adaptive_uses_history_threshold(app_db, drift_tmp):
+    now = _now_naive()
+    dsn = _make_source(
+        drift_tmp,
+        "fresh_adaptive",
+        {"ts": [(now - timedelta(hours=6)).strftime("%Y-%m-%d %H:%M:%S")]},
+    )
+    params = {
+        "strategy": "adaptive",
+        "default_max_age_hours": 24,
+        "min_history": 3,
+        "lookback_runs": 5,
+        "multiplier": 0.5,
+        "grace_hours": 0,
+    }
+    ctx, check = _monitor_ctx(app_db, dsn, "freshness", "ts", params)
+    ctx.table = "t"
+    for hours_ago in (18, 12, 6):
+        _add_run(
+            app_db,
+            check,
+            {"latest": (now - timedelta(hours=hours_ago)).isoformat(), "age_hours": hours_ago},
+        )
+    app_db.commit()
+
+    r = run_check_type(ctx, "freshness")
+    assert r.violation_count == 1
+    assert r.metrics["threshold_source"] == "history"
+    assert r.metrics["history_n"] == 3
+    assert r.metrics["intervals_n"] == 2
+    assert r.metrics["observed_interval_hours"] == 6.0
+    assert r.metrics["max_age_hours"] == 3.0
+
+
+def test_row_count_adaptive_builds_baseline(app_db, source_db):
+    params = {"strategy": "adaptive", "min_history": 3}
+    ctx, _check = _monitor_ctx(app_db, source_db, "row_count_anomaly", None, params)
+    r = run_check_type(ctx, "row_count_anomaly")
+    assert r.violation_count == 0
+    assert r.metrics["history_n"] == 0
+    assert r.metrics["note"] == "collecting adaptive baseline"
+    assert r.metrics["row_count"] == SOURCE_ROWS
+
+
+def test_row_count_adaptive_flags_out_of_bounds(app_db, source_db):
+    params = {"strategy": "adaptive", "min_history": 5, "lookback_runs": 10, "multiplier": 3.5}
+    ctx, check = _monitor_ctx(app_db, source_db, "row_count_anomaly", None, params)
+    for row_count in (100, 101, 100, 99, 100):
+        _add_run(app_db, check, {"row_count": row_count})
+    app_db.commit()
+
+    r = run_check_type(ctx, "row_count_anomaly")
+    assert r.violation_count == 1
+    assert r.metrics["history_n"] == 5
+    assert r.metrics["baseline_center"] == 100.0
+    assert r.metrics["lower_bound"] < 100 < r.metrics["upper_bound"]
+    assert r.metrics["row_count"] == SOURCE_ROWS
 
 
 def test_drift_numeric_stable_passes(app_db, drift_tmp):

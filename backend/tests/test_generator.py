@@ -19,11 +19,16 @@ def test_heuristics_from_real_profile(source_db):
     assert any(p["column_name"] == "age" for p in by_type.get("range", []))
     # temporal column + SLA from knowledge -> freshness with that SLA
     fresh = by_type.get("freshness", [])
-    assert fresh and fresh[0]["params"]["max_age_hours"] == 24
+    assert fresh and fresh[0]["params"]["strategy"] == "adaptive"
+    assert fresh[0]["params"]["default_max_age_hours"] == 24
     assert fresh[0]["severity"] == "error"
     # table-level guards always present
+    contract = by_type.get("schema_contract", [])
+    assert contract and contract[0]["params"]["allow_additive"] is True
+    assert {c["name"] for c in contract[0]["params"]["expected_columns"]} >= {"id", "email"}
     assert "row_count_min" in by_type
     assert "row_count_anomaly" in by_type
+    assert by_type["row_count_anomaly"][0]["params"]["strategy"] == "adaptive"
     # every proposal has a schedule and rationale
     assert all(p["schedule_expr"] and p["rationale"] for p in proposals)
 
