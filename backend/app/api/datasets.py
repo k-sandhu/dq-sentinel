@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -8,12 +10,14 @@ from app.config import get_settings
 from app.connectors.sa import connector_for
 from app.core import schema_monitor
 from app.core.deletion import cleanup_dataset_dependents
+from app.core.monitors import ensure_monitor_pack, reconcile_monitor_pack
 from app.core.profiler import jsonable, profile_dataset
 from app.db import get_db
 from app.models import utcnow
 from app.security import get_current_user, require_role
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
+log = logging.getLogger(__name__)
 
 
 @router.get("", response_model=list[schemas.DatasetOut])
@@ -66,7 +70,20 @@ def register_datasets(
         db.add(ds)
         created.append(ds)
     db.commit()
-    return [dataset_out(db, d) for d in created]
+    created_ids = [d.id for d in created]
+    if created_ids:
+        try:
+            for created_id in created_ids:
+                ds = db.get(models.Dataset, created_id)
+                if ds is not None:
+                    ensure_monitor_pack(db, ds)
+            db.commit()
+        except Exception:  # noqa: BLE001 - registration must not fail if pack enrollment fails
+            log.exception("Monitor pack enrollment failed after dataset registration")
+            db.rollback()
+    created_rows = db.query(models.Dataset).filter(models.Dataset.id.in_(created_ids)).all()
+    by_id = {d.id: d for d in created_rows}
+    return [dataset_out(db, by_id[i]) for i in created_ids if i in by_id]
 
 
 def _get_dataset(db: Session, dataset_id: int) -> models.Dataset:
@@ -111,7 +128,7 @@ def preview(
 def run_profile(
     dataset_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(require_role("editor")),
+    user: models.User = Depends(require_role("editor")),
 ):
     ds = _get_dataset(db, dataset_id)
     settings = get_settings()
@@ -139,6 +156,8 @@ def run_profile(
         schema_monitor.capture_schema_snapshot(db, ds.id, cols, source="profile")
     except Exception:  # noqa: BLE001 - schema capture must never fail profiling
         pass
+    db.flush()
+    reconcile_monitor_pack(db, ds, profile, actor_id=user.id)
     db.commit()
     db.refresh(profile)
     return _profile_out(profile)

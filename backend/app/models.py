@@ -72,9 +72,33 @@ class Dataset(Base):
     connection: Mapped[Connection] = relationship(back_populates="datasets")
     checks: Mapped[list["Check"]] = relationship(back_populates="dataset", cascade="all, delete-orphan")
     profiles: Mapped[list["Profile"]] = relationship(back_populates="dataset", cascade="all, delete-orphan")
+    monitor_pack: Mapped["DatasetMonitorPack | None"] = relationship(
+        back_populates="dataset", cascade="all, delete-orphan", uselist=False
+    )
     knowledge: Mapped["TableKnowledge | None"] = relationship(
         back_populates="dataset", cascade="all, delete-orphan", uselist=False
     )
+
+
+class DatasetMonitorPack(Base):
+    __tablename__ = "dataset_monitor_packs"
+    __table_args__ = (
+        UniqueConstraint("dataset_id", name="uq_dataset_monitor_pack_dataset"),
+        Index("ix_dataset_monitor_packs_dataset", "dataset_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id"))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    config: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(20), default="pending_profile")
+    last_result: Mapped[dict] = mapped_column(JSON, default=dict)
+    last_error: Mapped[str] = mapped_column(Text, default="")
+    last_reconciled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+    dataset: Mapped[Dataset] = relationship(back_populates="monitor_pack")
 
 
 class Profile(Base):
@@ -221,6 +245,68 @@ class CheckRun(Base):
         cascade="all, delete-orphan",
         foreign_keys="ExceptionRecord.run_id",
     )
+
+
+class Incident(Base):
+    """Durable lifecycle for a failing check.
+
+    One incident is kept per stable dedupe key so repeated failing runs update
+    state instead of paging repeatedly. The append-only `events` relationship is
+    the human/audit timeline; source row samples remain on ExceptionRecord and
+    are intentionally not copied here.
+    """
+
+    __tablename__ = "incidents"
+    __table_args__ = (
+        Index("ix_incidents_status", "status"),
+        Index("ix_incidents_dataset_status", "dataset_id", "status"),
+        Index("ix_incidents_check_status", "check_id", "status"),
+        Index("ix_incidents_escalation", "status", "next_escalation_at"),
+        UniqueConstraint("dedupe_key", name="uq_incident_dedupe_key"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id"), index=True)
+    check_id: Mapped[int] = mapped_column(ForeignKey("checks.id"), index=True)
+    current_run_id: Mapped[int | None] = mapped_column(ForeignKey("check_runs.id"), nullable=True)
+    dedupe_key: Mapped[str] = mapped_column(String(255))
+    title: Mapped[str] = mapped_column(String(500))
+    severity: Mapped[str] = mapped_column(String(10), default="error")  # info | warn | error
+    status: Mapped[str] = mapped_column(String(20), default="open")  # open | acknowledged | resolved
+    failure_status: Mapped[str] = mapped_column(String(10), default="fail")  # fail | error
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    occurrence_count: Mapped[int] = mapped_column(Integer, default=1)
+    last_notified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    next_escalation_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    escalation_level: Mapped[int] = mapped_column(Integer, default=0)
+    external_refs: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+    events: Mapped[list["IncidentEvent"]] = relationship(
+        cascade="all, delete-orphan", order_by="IncidentEvent.id"
+    )
+
+
+class IncidentEvent(Base):
+    """Append-only incident timeline.
+
+    `kind`: opened | occurred | acknowledged | resolved | recovered |
+    escalated | notified | system. `detail` must never contain source row data
+    or secrets.
+    """
+
+    __tablename__ = "incident_events"
+    __table_args__ = (Index("ix_incident_events_incident", "incident_id", "id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    incident_id: Mapped[int] = mapped_column(ForeignKey("incidents.id"))
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    kind: Mapped[str] = mapped_column(String(30))
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class ExceptionRecord(Base):
@@ -427,9 +513,12 @@ class NotificationRule(Base):
         ForeignKey("datasets.id"), nullable=True, index=True
     )  # None = all datasets
     min_severity: Mapped[str] = mapped_column(String(10), default="error")  # info | warn | error
-    channel: Mapped[str] = mapped_column(String(10))  # slack | email
-    target: Mapped[str] = mapped_column(Text, default="")  # webhook URL or comma-separated emails
+    channel: Mapped[str] = mapped_column(String(20))  # slack | email | webhook | teams | pagerduty | jira | servicenow
+    target: Mapped[str] = mapped_column(Text, default="")  # channel route hint; credentials come from env/settings
     on_error_runs: Mapped[bool] = mapped_column(Boolean, default=True)  # also fire on status == "error"
+    dedupe_window_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    escalation_delay_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_escalation_level: Mapped[int] = mapped_column(Integer, default=0)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 

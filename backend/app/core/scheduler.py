@@ -13,6 +13,7 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import delete, update
 
 from app.config import get_settings
+from app.core.incidents import process_due_escalations
 from app.core.runner import compute_next_run, run_check
 from app.db import session_factory
 from app.models import AuditEntry, Check, utcnow
@@ -113,6 +114,11 @@ def poll_once(executor: ThreadPoolExecutor) -> int:
         maybe_capture_scorecard_snapshots(now)  # self-throttles to once per day
     except Exception:  # noqa: BLE001 - scorecard capture must never block check scheduling
         log.exception("Scorecard snapshot capture failed; continuing")
+    try:
+        with session_factory()() as db:
+            process_due_escalations(db, now)
+    except Exception:  # noqa: BLE001 - escalation sends must never block check scheduling
+        log.exception("Incident escalation pass failed; continuing")
     claimed = 0
     with factory() as db:
         # Initialize schedules that were activated without a next_run_at
