@@ -90,6 +90,28 @@ class Profile(Base):
     dataset: Mapped[Dataset] = relationship(back_populates="profiles")
 
 
+class SchemaSnapshot(Base):
+    """Point-in-time column schema of a dataset (issue #101).
+
+    Captured (deduped by ``fingerprint``) on each profile run and on each
+    ``schema_change`` check run. Powers the schema-history timeline and the
+    ``schema_change`` check's pinned baseline. ``source``: profile | check |
+    baseline; ``is_baseline`` marks the single pinned baseline used by
+    ``baseline=pinned`` checks.
+    """
+
+    __tablename__ = "schema_snapshots"
+    __table_args__ = (Index("ix_schema_snap_dataset", "dataset_id", "captured_at"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id"), index=True)
+    captured_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    source: Mapped[str] = mapped_column(String(20), default="profile")  # profile | check | baseline
+    columns: Mapped[list] = mapped_column(JSON, default=list)  # [{name, dtype, nullable, ordinal}]
+    fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    is_baseline: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
 class TableKnowledge(Base):
     __tablename__ = "table_knowledge"
 
@@ -397,6 +419,58 @@ class AuditEntry(Base):
     request_id: Mapped[str] = mapped_column(String(16), default="")  # joins to request logs
     client_ip: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class SLADefinition(Base):
+    """A reliability target for a dataset or a single check (issue #102).
+
+    Attainment is measured run-over-run from CheckRun history: a window's good
+    runs (pass/warn) over total (pass/warn/fail/error) for the SLA's target
+    checks, compared to ``objective``. ``scope_id`` is a dataset_id or check_id
+    (polymorphic, intentionally not a hard FK). ``target_type`` selects which of
+    a dataset's checks count (freshness | volume | check_success = all).
+    """
+
+    __tablename__ = "sla_definitions"
+    __table_args__ = (Index("ix_sla_enabled", "enabled"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    scope: Mapped[str] = mapped_column(String(10), default="dataset")  # dataset | check
+    scope_id: Mapped[int] = mapped_column(Integer)  # dataset_id or check_id
+    target_type: Mapped[str] = mapped_column(String(20), default="check_success")  # freshness|volume|check_success
+    objective: Mapped[float] = mapped_column(Float, default=0.99)  # target attainment fraction (0,1]
+    window: Mapped[str] = mapped_column(String(20), default="rolling_30d")  # rolling_7d | rolling_30d
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    evaluations: Mapped[list["SLAEvaluation"]] = relationship(
+        back_populates="sla", cascade="all, delete-orphan", order_by="SLAEvaluation.id"
+    )
+
+
+class SLAEvaluation(Base):
+    """A periodic SLA rollup over the window (issue #102): attainment, error
+    budget consumed, good/bad run counts, breach flag, and MTTR."""
+
+    __tablename__ = "sla_evaluations"
+    __table_args__ = (Index("ix_slaeval_sla", "sla_id", "evaluated_at"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    sla_id: Mapped[int] = mapped_column(ForeignKey("sla_definitions.id"), index=True)
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    window_start: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    window_end: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    attainment: Mapped[float] = mapped_column(Float, default=1.0)
+    budget_consumed: Mapped[float] = mapped_column(Float, default=0.0)
+    good: Mapped[int] = mapped_column(Integer, default=0)
+    bad: Mapped[int] = mapped_column(Integer, default=0)
+    breached: Mapped[bool] = mapped_column(Boolean, default=False)
+    mttr_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    mttd_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    sla: Mapped[SLADefinition] = relationship(back_populates="evaluations")
 
 
 class RcaSession(Base):

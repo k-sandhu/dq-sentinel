@@ -174,6 +174,102 @@ class ProfileOut(BaseModel):
     table_facts: dict[str, Any] = {}
 
 
+# ---- schema history (#101) ----
+class SchemaColumnOut(BaseModel):
+    name: str
+    dtype: str
+    nullable: bool
+    ordinal: int
+
+
+class SchemaChangeSummary(BaseModel):
+    added: list[str] = []
+    removed: list[str] = []
+    type_changed: int = 0
+    nullability_changed: int = 0
+    reordered: bool = False
+
+
+class SchemaSnapshotOut(BaseModel):
+    id: int
+    dataset_id: int
+    captured_at: datetime
+    source: str
+    is_baseline: bool
+    fingerprint: str
+    columns: list[SchemaColumnOut]
+    change_summary: SchemaChangeSummary | None = None  # vs the chronologically previous snapshot
+
+
+class SchemaHistoryOut(BaseModel):
+    dataset_id: int
+    pinned_baseline_id: int | None = None
+    snapshots: list[SchemaSnapshotOut]  # newest first
+
+
+# ---- SLA tracking (#102) ----
+SLAScope = Literal["dataset", "check"]
+SLATargetType = Literal["freshness", "volume", "check_success"]
+SLAWindow = Literal["rolling_7d", "rolling_30d"]
+
+
+class SLAIn(BaseModel):
+    name: str = ""
+    scope: SLAScope = "dataset"
+    scope_id: int
+    target_type: SLATargetType = "check_success"
+    objective: float = Field(0.99, gt=0, le=1)
+    window: SLAWindow = "rolling_30d"
+    enabled: bool = True
+
+
+class SLAUpdate(BaseModel):
+    name: str | None = None
+    target_type: SLATargetType | None = None
+    objective: float | None = Field(default=None, gt=0, le=1)
+    window: SLAWindow | None = None
+    enabled: bool | None = None
+
+
+class SLAEvaluationOut(ORMModel):
+    id: int
+    evaluated_at: datetime
+    window_start: datetime
+    window_end: datetime
+    attainment: float
+    budget_consumed: float
+    good: int
+    bad: int
+    breached: bool
+    mttr_seconds: int | None = None
+    mttd_seconds: int | None = None
+
+
+class SLAOut(BaseModel):
+    id: int
+    name: str
+    scope: SLAScope
+    scope_id: int
+    target_type: SLATargetType
+    objective: float
+    window: SLAWindow
+    enabled: bool
+    created_at: datetime
+    scope_label: str = ""  # dataset/check display name
+    dataset_id: int | None = None  # the dataset this SLA rolls up to
+    latest: SLAEvaluationOut | None = None  # most recent rollup
+
+
+class SLADetailOut(SLAOut):
+    evaluations: list[SLAEvaluationOut] = []  # recent rollups, oldest→newest (burn-down)
+
+
+class ReliabilityOut(BaseModel):
+    total: int
+    breached: int
+    slas: list[SLAOut]
+
+
 # ---- knowledge ----
 class KnowledgeIn(BaseModel):
     business_context: str = ""

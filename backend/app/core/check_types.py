@@ -623,6 +623,122 @@ def _run_distribution_drift(ctx: CheckContext) -> CheckResult:
     return result
 
 
+# ---------------------------------------------------------------- schema_change
+def _run_schema_change(ctx: CheckContext) -> CheckResult:
+    """Detect column schema drift vs a baseline (issue #101).
+
+    Baseline modes: ``previous`` (the schema this check saw on its last run,
+    stored in CheckRun.metrics) or ``pinned`` (a SchemaSnapshot marked is_baseline).
+    Each delta becomes a violating "row" so it flows through the normal triage
+    workflow. rows_evaluated is None so a change alert is NOT auto-resolved on the
+    next (matching) run — it stays for an analyst to acknowledge.
+    """
+    from app.core import schema_monitor as sm
+    from app.models import Check, CheckRun
+
+    p = ctx.params
+    ignore = {str(x) for x in (p.get("ignore_columns") or [])}
+    flags = {
+        "added": bool(p.get("on_added", False)),
+        "removed": bool(p.get("on_removed", True)),
+        "type_changed": bool(p.get("on_type_change", True)),
+        "nullability_changed": bool(p.get("on_nullability_change", True)),
+        "reordered": bool(p.get("on_reorder", False)),
+    }
+    mode = str(p.get("baseline") or "previous").lower()
+
+    full = sm.introspect_columns(ctx.connector, ctx.table, ctx.schema)
+    current = [c for c in full if c["name"] not in ignore]
+    cur_fp = sm.schema_fingerprint(current)
+
+    dataset_id: int | None = None
+    if ctx.db is not None and ctx.check_id is not None:
+        chk = ctx.db.get(Check, ctx.check_id)
+        dataset_id = chk.dataset_id if chk else None
+
+    baseline: list[dict[str, Any]] | None = None
+    if mode == "pinned":
+        if ctx.db is not None and dataset_id is not None:
+            pin = sm.latest_pinned_baseline(ctx.db, dataset_id)
+            if pin is not None:
+                baseline = [c for c in pin.columns if c["name"] not in ignore]
+    elif ctx.db is not None and ctx.check_id is not None:  # previous run
+        prev = (
+            ctx.db.query(CheckRun)
+            .filter(CheckRun.check_id == ctx.check_id, CheckRun.status != "error")
+            .order_by(CheckRun.started_at.desc())
+            .first()
+        )
+        if prev is not None and isinstance(prev.metrics, dict) and prev.metrics.get("schema"):
+            baseline = [c for c in prev.metrics["schema"] if c["name"] not in ignore]
+
+    # Record the current schema for the history timeline (deduped, full schema).
+    # On the first pinned run with no baseline yet, establish one to enforce against
+    # (pin first so the dedupe collapses the two into a single row).
+    if ctx.db is not None and dataset_id is not None:
+        if mode == "pinned" and baseline is None:
+            sm.pin_baseline(ctx.db, dataset_id, full)
+        sm.capture_schema_snapshot(ctx.db, dataset_id, full, source="check")
+
+    base_metrics = {"baseline": mode, "schema": current, "schema_fingerprint": cur_fp, "column_count": len(current)}
+
+    if baseline is None:
+        return CheckResult(
+            violation_count=0,
+            rows_evaluated=None,
+            metrics={**base_metrics, "note": "baseline captured"},
+            detail="Schema baseline captured — changes flagged from the next run",
+        )
+
+    delta = sm.diff_schemas(baseline, current)
+    sample_rows: list[dict[str, Any]] = []
+    reasons: list[str] = []
+
+    def _add(kind: str, column: str | None, frm: Any, to: Any, msg: str) -> None:
+        sample_rows.append({"change_type": kind, "column": column, "from": frm, "to": to})
+        reasons.append(msg)
+
+    if flags["removed"]:
+        for col in delta["removed"]:
+            _add("removed", col["name"], col.get("dtype"), None, f"column '{col['name']}' was removed")
+    if flags["type_changed"]:
+        for ch in delta["type_changed"]:
+            _add("type_changed", ch["column"], ch["from"], ch["to"],
+                 f"column '{ch['column']}' type changed {ch['from']} → {ch['to']}")
+    if flags["nullability_changed"]:
+        for ch in delta["nullability_changed"]:
+            frm, to = ("NULL" if ch["from"] else "NOT NULL"), ("NULL" if ch["to"] else "NOT NULL")
+            _add("nullability_changed", ch["column"], ch["from"], ch["to"],
+                 f"column '{ch['column']}' nullability changed {frm} → {to}")
+    if flags["added"]:
+        for col in delta["added"]:
+            _add("added", col["name"], None, col.get("dtype"), f"new column '{col['name']}' ({col.get('dtype')})")
+    if flags["reordered"] and delta["reordered"]:
+        _add("reordered", None, None, None, "column order changed")
+
+    metrics = {
+        **base_metrics,
+        "added": [c["name"] for c in delta["added"]],
+        "removed": [c["name"] for c in delta["removed"]],
+        "type_changed": delta["type_changed"],
+        "nullability_changed": delta["nullability_changed"],
+        "reordered": delta["reordered"],
+    }
+    any_delta = any(delta[k] for k in ("added", "removed", "type_changed", "nullability_changed")) or delta["reordered"]
+    if sample_rows:
+        detail = f"{len(sample_rows)} schema change(s) vs {mode} baseline: " + "; ".join(reasons[:4])
+    else:
+        detail = "Schema matches baseline" if not any_delta else "Only non-alerting schema changes"
+    return CheckResult(
+        violation_count=len(sample_rows),
+        rows_evaluated=None,
+        sample_rows=sample_rows,
+        reasons=reasons,
+        metrics=metrics,
+        detail=detail,
+    )
+
+
 def _p(name: str, type_: str, required: bool = False, default: Any = None, desc: str = "") -> dict:
     return {"name": name, "type": type_, "required": required, "default": default, "description": desc}
 
@@ -691,6 +807,18 @@ CHECK_TYPES: dict[str, CheckType] = {
              _p("max_rows", "number", False, None, "Sample cap for current data (default settings.ml_max_rows)")],
             _run_distribution_drift,
         ),
+        CheckType(
+            "schema_change", "Schema change",
+            "Alert when the column schema drifts (added/removed/retyped/nullability/reorder)", False,
+            [_p("baseline", "string", False, "previous", "previous | pinned"),
+             _p("on_removed", "boolean", False, True, "Flag removed columns"),
+             _p("on_type_change", "boolean", False, True, "Flag column type changes"),
+             _p("on_nullability_change", "boolean", False, True, "Flag NULL/NOT NULL changes"),
+             _p("on_added", "boolean", False, False, "Flag new columns"),
+             _p("on_reorder", "boolean", False, False, "Flag column-order changes"),
+             _p("ignore_columns", "list", False, None, "Column names to ignore")],
+            _run_schema_change,
+        ),
     ]
 }
 
@@ -719,6 +847,11 @@ def validate_check(check_type: str, column_name: str | None, params: dict[str, A
         if method not in ("psi", "ks"):
             raise ValueError("distribution_drift 'method' must be 'psi' or 'ks'")
         normalized["method"] = method
+    if check_type == "schema_change":
+        mode = str(normalized.get("baseline") or "previous").lower()
+        if mode not in ("previous", "pinned"):
+            raise ValueError("schema_change 'baseline' must be 'previous' or 'pinned'")
+        normalized["baseline"] = mode
     return normalized
 
 

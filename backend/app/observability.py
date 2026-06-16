@@ -71,6 +71,14 @@ NOTIFICATIONS_SENT = Counter(
     "Notification deliveries by channel and outcome (issue #27)",
     ["channel", "outcome"],  # channel: slack|email ; outcome: success|failure
 )
+# SLA tracking (#102). Labelled by SLA id — operator-defined and few, so the
+# cardinality stays bounded (unlike per-dataset/per-check labels we avoid).
+SLA_ATTAINMENT = Gauge(
+    "dq_sla_attainment", "Latest SLA attainment fraction (0..1) over its window", ["sla"]
+)
+SLA_BREACHES = Counter(
+    "dq_sla_breaches_total", "SLA breach events (transitions into breached)", ["sla"]
+)
 
 
 # ---------------------------------------------------------------- logging

@@ -6,6 +6,7 @@ from app import models, schemas
 from app.api.serialize import dataset_out
 from app.config import get_settings
 from app.connectors.sa import connector_for
+from app.core import schema_monitor
 from app.core.deletion import cleanup_dataset_dependents
 from app.core.profiler import jsonable, profile_dataset
 from app.db import get_db
@@ -132,6 +133,12 @@ def run_profile(
     ds.row_count = result["row_count"]
     ds.last_profiled_at = utcnow()
     db.add(profile)
+    # Schema-history snapshot (#101): deduped, seeds the timeline + a pinnable baseline.
+    try:
+        cols = schema_monitor.introspect_columns(connector, ds.table_name, ds.schema_name)
+        schema_monitor.capture_schema_snapshot(db, ds.id, cols, source="profile")
+    except Exception:  # noqa: BLE001 - schema capture must never fail profiling
+        pass
     db.commit()
     db.refresh(profile)
     return _profile_out(profile)
@@ -162,6 +169,74 @@ def latest_profile(
     if profile is None:
         raise HTTPException(404, "Dataset has not been profiled yet")
     return _profile_out(profile)
+
+
+@router.get("/{dataset_id}/schema-history", response_model=schemas.SchemaHistoryOut)
+def schema_history(
+    dataset_id: int,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """Deduped schema snapshots (newest first) with a change summary vs the prior one (#101)."""
+    _get_dataset(db, dataset_id)
+    snaps = (
+        db.query(models.SchemaSnapshot)
+        .filter(models.SchemaSnapshot.dataset_id == dataset_id)
+        .order_by(models.SchemaSnapshot.id.asc())
+        .all()
+    )
+    pinned = next((s.id for s in reversed(snaps) if s.is_baseline), None)
+    out: list[schemas.SchemaSnapshotOut] = []
+    prev_cols: list[dict] | None = None
+    for s in snaps:
+        summary = None
+        if prev_cols is not None:
+            summary = schemas.SchemaChangeSummary(
+                **schema_monitor.summarize_delta(schema_monitor.diff_schemas(prev_cols, s.columns))
+            )
+        out.append(
+            schemas.SchemaSnapshotOut(
+                id=s.id,
+                dataset_id=s.dataset_id,
+                captured_at=s.captured_at,
+                source=s.source,
+                is_baseline=s.is_baseline,
+                fingerprint=s.fingerprint,
+                columns=s.columns,
+                change_summary=summary,
+            )
+        )
+        prev_cols = s.columns
+    out.reverse()  # newest first
+    return schemas.SchemaHistoryOut(dataset_id=dataset_id, pinned_baseline_id=pinned, snapshots=out[:limit])
+
+
+@router.post("/{dataset_id}/schema-baseline", response_model=schemas.SchemaSnapshotOut, status_code=201)
+def pin_schema_baseline(
+    dataset_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_role("editor")),
+):
+    """Pin the dataset's CURRENT schema as the baseline for ``baseline=pinned`` checks (#101)."""
+    ds = _get_dataset(db, dataset_id)
+    connector = connector_for(ds.connection)
+    try:
+        cols = schema_monitor.introspect_columns(connector, ds.table_name, ds.schema_name)
+    except Exception as exc:  # noqa: BLE001 - surface introspection failures
+        raise HTTPException(502, f"Could not read schema: {exc}") from exc
+    snap = schema_monitor.pin_baseline(db, ds.id, cols)
+    db.commit()
+    db.refresh(snap)
+    return schemas.SchemaSnapshotOut(
+        id=snap.id,
+        dataset_id=snap.dataset_id,
+        captured_at=snap.captured_at,
+        source=snap.source,
+        is_baseline=snap.is_baseline,
+        fingerprint=snap.fingerprint,
+        columns=snap.columns,
+    )
 
 
 @router.get("/{dataset_id}/exploration")

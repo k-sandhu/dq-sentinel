@@ -32,6 +32,7 @@ const NAV_GROUPS: {
       { to: "/checks", label: "Checks", icon: "shield" },
       { to: "/runs", label: "Runs", icon: "play" },
       { to: "/exceptions", label: "Exceptions", icon: "alert" },
+      { to: "/reliability", label: "Reliability", icon: "bolt" },
     ],
   },
   {

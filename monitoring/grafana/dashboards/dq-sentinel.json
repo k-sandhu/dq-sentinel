@@ -80,6 +80,19 @@
       "datasource": { "uid": "dq-loki" },
       "options": { "showLabels": false, "showTime": true, "wrapLogMessage": true, "enableLogDetails": true },
       "targets": [{ "expr": "{service=~\"api|worker\"}" }]
+    },
+    {
+      "id": 12, "type": "timeseries", "title": "SLA attainment (latest, by SLA id)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 34 },
+      "datasource": { "uid": "dq-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
+      "targets": [{ "expr": "dq_sla_attainment", "legendFormat": "sla {{sla}}" }]
+    },
+    {
+      "id": 13, "type": "timeseries", "title": "SLA breaches/hour",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 34 },
+      "datasource": { "uid": "dq-prometheus" },
+      "targets": [{ "expr": "sum by (sla) (increase(dq_sla_breaches_total[1h]))", "legendFormat": "sla {{sla}}" }]
     }
   ]
 }

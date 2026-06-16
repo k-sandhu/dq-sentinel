@@ -85,6 +85,9 @@ class Settings(BaseSettings):
     worker_poll_seconds: int = 15
     worker_concurrency: int = 4
     worker_metrics_port: int = 9100
+    # SLA evaluation cadence (#102): the worker recomputes SLA rollups at most
+    # this often (a row per SLA per pass, so don't set it as low as the poll).
+    sla_eval_seconds: int = 300
 
     # Notifications (issue #27 — Slack webhook + SMTP email). All optional:
     # with nothing set there are zero sends and zero behaviour change. Rules in

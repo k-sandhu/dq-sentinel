@@ -1,6 +1,6 @@
 """Deletion helpers for app metadata entities with cross-feature dependents."""
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app import models
@@ -31,6 +31,20 @@ def cleanup_dataset_dependents(db: Session, dataset_id: int) -> None:
     db.query(models.AdhocDashboard).filter(
         models.AdhocDashboard.dataset_id == dataset_id
     ).delete(synchronize_session=False)
+    db.query(models.SchemaSnapshot).filter(
+        models.SchemaSnapshot.dataset_id == dataset_id
+    ).delete(synchronize_session=False)
+    # SLAs scoped to this dataset or to any of its checks (#102) — drop evaluations first (FK).
+    check_ids = select(models.Check.id).where(models.Check.dataset_id == dataset_id)
+    sla_filter = or_(
+        and_(models.SLADefinition.scope == "dataset", models.SLADefinition.scope_id == dataset_id),
+        and_(models.SLADefinition.scope == "check", models.SLADefinition.scope_id.in_(check_ids)),
+    )
+    sla_ids = select(models.SLADefinition.id).where(sla_filter)
+    db.query(models.SLAEvaluation).filter(models.SLAEvaluation.sla_id.in_(sla_ids)).delete(
+        synchronize_session=False
+    )
+    db.query(models.SLADefinition).filter(sla_filter).delete(synchronize_session=False)
     db.query(models.NotificationRule).filter(
         models.NotificationRule.dataset_id == dataset_id
     ).delete(synchronize_session=False)

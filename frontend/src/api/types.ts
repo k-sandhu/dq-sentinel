@@ -121,6 +121,39 @@ export interface Profile {
   };
 }
 
+// ---- schema history (#101) ----
+export interface SchemaColumn {
+  name: string;
+  dtype: string;
+  nullable: boolean;
+  ordinal: number;
+}
+
+export interface SchemaChangeSummary {
+  added: string[];
+  removed: string[];
+  type_changed: number;
+  nullability_changed: number;
+  reordered: boolean;
+}
+
+export interface SchemaSnapshot {
+  id: number;
+  dataset_id: number;
+  captured_at: string;
+  source: string; // profile | check | baseline
+  is_baseline: boolean;
+  fingerprint: string;
+  columns: SchemaColumn[];
+  change_summary: SchemaChangeSummary | null; // vs the chronologically previous snapshot
+}
+
+export interface SchemaHistory {
+  dataset_id: number;
+  pinned_baseline_id: number | null;
+  snapshots: SchemaSnapshot[]; // newest first
+}
+
 export interface Knowledge {
   dataset_id?: number;
   business_context: string;
@@ -345,6 +378,50 @@ export interface Health {
   llm_enabled: boolean;
   llm_provider: string | null;
   llm_model: string | null;
+}
+
+// ---- SLA tracking (#102) ----
+export type SLAScope = "dataset" | "check";
+export type SLATargetType = "freshness" | "volume" | "check_success";
+export type SLAWindow = "rolling_7d" | "rolling_30d";
+
+export interface SLAEvaluation {
+  id: number;
+  evaluated_at: string;
+  window_start: string;
+  window_end: string;
+  attainment: number; // 0..1
+  budget_consumed: number; // 0..2 (clamped)
+  good: number;
+  bad: number;
+  breached: boolean;
+  mttr_seconds: number | null;
+  mttd_seconds: number | null;
+}
+
+export interface Sla {
+  id: number;
+  name: string;
+  scope: SLAScope;
+  scope_id: number;
+  target_type: SLATargetType;
+  objective: number; // 0..1
+  window: SLAWindow;
+  enabled: boolean;
+  created_at: string;
+  scope_label: string;
+  dataset_id: number | null;
+  latest: SLAEvaluation | null;
+}
+
+export interface SlaDetail extends Sla {
+  evaluations: SLAEvaluation[]; // oldest -> newest
+}
+
+export interface Reliability {
+  total: number;
+  breached: number;
+  slas: Sla[];
 }
 
 // ---- workbench ----

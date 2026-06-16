@@ -3,9 +3,11 @@ FROM python:3.12-slim
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 
-COPY pyproject.toml ./
+COPY pyproject.toml alembic.ini ./
 COPY app ./app
 RUN pip install --no-cache-dir ".[postgres]"
+# Migrations run at startup via init_db() (Alembic); ship them in the image.
+COPY migrations ./migrations
 
 EXPOSE 8000
 # API by default; the worker service overrides the command (see docker-compose.yml)
