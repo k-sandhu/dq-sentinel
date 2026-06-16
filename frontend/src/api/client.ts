@@ -78,15 +78,15 @@ async function download(path: string, filename: string): Promise<void> {
 
   const blob = await resp.blob();
   const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.style.display = "none";
   try {
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.style.display = "none";
     document.body.appendChild(a);
     a.click();
-    a.remove();
   } finally {
+    a.remove();
     URL.revokeObjectURL(url);
   }
 }
