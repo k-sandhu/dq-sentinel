@@ -28,6 +28,7 @@ dependencies = [
     "httpx>=0.27",
     "prometheus-client>=0.21",
     "sqlglot>=26.0",
+    "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]

@@ -7,6 +7,7 @@ from app.api import (
     chat,
     checks,
     connections,
+    contracts,
     custom_dashboards,
     dashboard,
     datasets,
@@ -28,6 +29,7 @@ api_router.include_router(chat.router)
 api_router.include_router(connections.router)
 api_router.include_router(datasets.router)
 api_router.include_router(knowledge.router)
+api_router.include_router(contracts.router)
 api_router.include_router(checks.router)
 api_router.include_router(runs.router)
 api_router.include_router(exceptions_api.router)

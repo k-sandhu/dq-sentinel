@@ -5,6 +5,8 @@ export type Severity = "info" | "warn" | "error";
 export type CheckStatus = "proposed" | "active" | "disabled" | "archived";
 export type RunStatus = "pass" | "warn" | "fail" | "error";
 export type ExceptionStatus = "open" | "acknowledged" | "expected" | "resolved" | "muted";
+export type ContractStatus = "draft" | "active" | "deprecated";
+export type ContractConformanceStatus = "pass" | "breached" | "unknown";
 
 export interface User {
   id: number;
@@ -200,6 +202,70 @@ export interface GenerateResult {
   mode: "llm" | "heuristic";
   explored: boolean;
   checks: Check[];
+}
+
+// ---- data contracts (#105) ----
+export interface DataContract {
+  id: number;
+  dataset_id: number;
+  name: string;
+  version: string;
+  status: ContractStatus;
+  spec: Record<string, unknown>;
+  created_by_id: number | null;
+  created_at: string;
+  activated_at: string | null;
+  version_count: number;
+}
+
+export interface DataContractVersion {
+  id: number;
+  contract_id: number;
+  version: string;
+  spec: Record<string, unknown>;
+  created_by_id: number | null;
+  created_at: string;
+}
+
+export interface DataContractExport {
+  format: "odcs";
+  yaml: string;
+}
+
+export interface DataContractApplyResult {
+  contract: DataContract;
+  created_checks: Check[];
+  updated_checks: Check[];
+  schema_pinned: boolean;
+}
+
+export interface ContractClauseConformance {
+  clause_id: string;
+  kind: "schema" | "freshness" | "volume" | "quality";
+  label: string;
+  status: ContractConformanceStatus;
+  check_id: number | null;
+  check_status: RunStatus | null;
+  detail: string;
+  expected: Record<string, unknown>;
+  observed: Record<string, unknown>;
+}
+
+export interface DataContractConformance {
+  contract_id: number;
+  dataset_id: number;
+  status: ContractConformanceStatus;
+  clauses: ContractClauseConformance[];
+  generated_at: string;
+}
+
+export interface DataContractDiff {
+  contract_id: number;
+  from_version_id: number;
+  to_version_id: number;
+  added: string[];
+  removed: string[];
+  changed: string[];
 }
 
 export interface Run {
@@ -546,6 +612,15 @@ export interface AdhocDashboard extends AdhocDashboardMeta {
 // --- DDL & lineage (issue #51) ---
 export type LineageHealth = "pass" | "warn" | "fail" | "unknown";
 
+export interface ColumnLineageNode {
+  id: string;
+  table_id: string;
+  column: string;
+  dtype: string;
+  nullable: boolean;
+  dataset_id: number | null;
+}
+
 export interface LineageNode {
   id: string; // lowercased "schema.table" when schema_name is set, else "table"
   schema_name: string | null;
@@ -555,6 +630,9 @@ export interface LineageNode {
   health: LineageHealth;
   failing_checks: number;
   open_exceptions: number;
+  owner: string;
+  importance: string;
+  columns: ColumnLineageNode[];
 }
 
 export interface LineageEdge {
@@ -562,10 +640,19 @@ export interface LineageEdge {
   target: string; // the view selecting from source
 }
 
+export interface ColumnLineageEdge {
+  source: string;
+  target: string;
+  kind: "direct" | "derived" | "aggregate" | "unresolved";
+  expression: string | null;
+}
+
 export interface LineageGraph {
   nodes: LineageNode[];
   edges: LineageEdge[];
+  column_edges: ColumnLineageEdge[];
   parse_errors: number; // view definitions that could not be parsed
+  qualify_errors: number; // view column lineage could not be resolved
   truncated: boolean; // graph capped at 300 nodes
 }
 

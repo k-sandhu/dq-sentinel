@@ -6,6 +6,7 @@ import App from "./App";
 import { AuthProvider } from "./auth";
 import { ConfirmProvider } from "./components/confirm";
 import ErrorBoundary from "./components/ErrorBoundary";
+import "@xyflow/react/dist/style.css";
 import "./styles.css";
 
 const queryClient = new QueryClient({

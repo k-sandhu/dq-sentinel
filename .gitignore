@@ -20,6 +20,7 @@ frontend/dist/
 *.sqlite
 *.sqlite3
 *.db
+*.db-*
 *.duckdb
 *.duckdb.wal
 samples/

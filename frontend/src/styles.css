@@ -224,6 +224,9 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
 .dense-item.clickable:hover { border-color: var(--brand-light); background: var(--hover-soft); }
 .dense-item .title { font-weight: 700; color: var(--text-dark); }
 .dense-item .meta { color: var(--text-light); font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
+.muted { color: var(--text-light); font-size: 12.5px; }
+.plain-fieldset { border: none; padding: 0; margin: 0; }
+.section-title.compact { margin: 0 0 12px; }
 
 /* ---------- heatmap ---------- */
 .heatmap { display: grid; grid-template-columns: 140px repeat(5, minmax(58px, 1fr)); gap: 6px; align-items: stretch; font-size: 12px; }
@@ -529,6 +532,115 @@ details.step .body { padding: 4px 12px 10px; }
 .lineage-badge { fill: var(--brand-light); }
 .lineage-badge-text { fill: var(--brand-dark); font-size: 9px; font-weight: 700; letter-spacing: 0.4px; }
 .lineage-note { font-size: 11.5px; color: var(--text-light); margin-top: 6px; }
+
+/* --- Lineage Explorer 2.0 (#107) --- */
+.lf-root { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.lf-root.fullscreen {
+  position: fixed; inset: 0; z-index: 80; background: var(--bg); padding: 14px;
+}
+.lf-toolbar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  background: var(--card2); border: 1px solid var(--border-light); border-radius: 7px;
+  padding: 8px 10px;
+}
+.lf-toolbar select, .lf-toolbar input { margin-top: 0; min-height: 30px; font-size: 12.5px; }
+.lf-search { display: flex; align-items: center; gap: 6px; min-width: min(420px, 100%); flex: 1; }
+.lf-search input { flex: 1; min-width: 160px; padding-left: 8px; }
+.lf-body {
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-height: 560px;
+}
+.lf-body:has(.lf-panel) { grid-template-columns: minmax(0, 1fr) 360px; }
+.lf-canvas {
+  height: min(72vh, 760px); min-height: 520px; border: 1px solid var(--border-light);
+  border-radius: 7px; overflow: hidden; background: var(--card2);
+}
+.lf-root.fullscreen .lf-canvas { height: calc(100vh - 120px); }
+.lf-node {
+  border: 1px solid var(--border); border-radius: 8px; background: var(--card);
+  box-shadow: var(--shadow); padding: 10px 12px; width: 100%; height: 100%;
+  transition: opacity 0.12s, border-color 0.12s, box-shadow 0.12s;
+}
+.lf-node.table { width: 224px; height: 76px; }
+.lf-node.column { width: 250px; height: 62px; }
+.lf-node.pass { border-color: var(--ok); }
+.lf-node.warn { border-color: var(--warn-strong); }
+.lf-node.fail { border-color: var(--danger); }
+.lf-node.dim { opacity: 0.28; }
+.lf-node.hit { box-shadow: 0 0 0 3px var(--brand-light), var(--shadow); }
+.lf-node-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.lf-node-title { color: var(--text-dark); font-weight: 800; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lf-node-meta { color: var(--text-light); font-size: 11.5px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lf-node-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-light); font-size: 10.5px; margin-top: 7px; text-transform: uppercase; letter-spacing: 0.3px; }
+.lf-panel {
+  border: 1px solid var(--border); border-radius: 7px; background: var(--card); box-shadow: var(--shadow);
+  min-width: 0; max-height: min(72vh, 760px); overflow: hidden; display: flex; flex-direction: column;
+}
+.lf-panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border-light); }
+.lf-panel-head h3 { margin: 0 0 2px; font-size: 14px; }
+.lf-panel-body { padding: 14px; display: flex; flex-direction: column; gap: 15px; overflow-y: auto; }
+.lf-kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.lf-kpis > div { border: 1px solid var(--border-light); border-radius: 6px; padding: 10px; background: var(--card2); }
+.lf-kpis strong { display: block; color: var(--text-dark); font-size: 22px; line-height: 1; }
+.lf-kpis span { display: block; color: var(--text-light); font-size: 11px; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.4px; }
+.lf-panel-section { display: flex; flex-direction: column; gap: 6px; }
+.lf-panel-label { font-size: 11px; font-weight: 800; letter-spacing: 0.6px; text-transform: uppercase; color: var(--text-light); }
+.lf-panel-badges { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; }
+.lf-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.lf-legend { margin-top: 0; }
+.react-flow__node { border-radius: 8px; }
+.react-flow__edge-textbg { fill: var(--card); }
+.react-flow__edge-text { fill: var(--text-light); font-size: 11px; font-weight: 700; }
+.react-flow__controls, .react-flow__minimap { box-shadow: var(--shadow); border: 1px solid var(--border-light); }
+.react-flow__controls-button { background: var(--card); border-bottom-color: var(--border-light); }
+html[data-theme="dark"] .react-flow__minimap { background: var(--card); }
+@media (max-width: 1100px) {
+  .lf-body:has(.lf-panel) { grid-template-columns: 1fr; }
+  .lf-panel { max-height: none; }
+}
+
+/* --- Data contracts (#105) --- */
+.contract-empty { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: 16px; align-items: start; }
+.contract-root { display: flex; flex-direction: column; gap: 14px; }
+.contract-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; flex-wrap: wrap; }
+.contract-title-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.contract-modebar { display: flex; gap: 6px; flex-wrap: wrap; }
+.contract-grid { align-items: start; }
+.contract-wide { grid-column: 1 / -1; }
+.contract-yaml { min-height: 360px; font-family: var(--mono); font-size: 12px; resize: vertical; }
+.contract-switches { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; font-size: 12.5px; }
+.contract-switches input { width: auto; margin: 0 5px 0 0; }
+.contract-table-editor, .contract-quality-list { display: flex; flex-direction: column; gap: 7px; margin-bottom: 10px; }
+.contract-column-row {
+  display: grid; grid-template-columns: minmax(120px, 1.2fr) minmax(90px, 0.8fr) auto auto auto;
+  gap: 7px; align-items: center;
+}
+.contract-column-row input, .contract-quality-row input, .contract-quality-row select { margin-top: 0; }
+.contract-column-row label, .contract-quality-row label { font-size: 12px; color: var(--text); white-space: nowrap; }
+.contract-column-row input[type="checkbox"] { width: auto; margin: 0 4px 0 0; }
+.contract-quality-row {
+  display: grid; grid-template-columns: minmax(140px, 1.2fr) 140px 140px 90px minmax(160px, 1fr) auto;
+  gap: 7px; align-items: center;
+}
+.contract-clause-list { display: flex; flex-direction: column; gap: 8px; }
+.contract-clause {
+  display: flex; justify-content: space-between; gap: 12px; align-items: flex-start;
+  border: 1px solid var(--border-light); border-radius: 7px; padding: 10px 12px; background: var(--card);
+}
+.contract-clause.ok { border-color: #cfe4bd; background: #f8fcf4; }
+.contract-clause.danger { border-color: #f5c6c6; background: #fff8f8; }
+.contract-clause-title { color: var(--text-dark); font-weight: 800; font-size: 12.5px; }
+.contract-clause-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.contract-diff {
+  margin: 0; min-height: 260px; max-height: 520px; overflow: auto; padding: 12px;
+  background: var(--card2); border: 1px solid var(--border-light); border-radius: 6px;
+}
+html[data-theme="dark"] .contract-clause.ok { border-color: #3a5230; background: #1c2418; }
+html[data-theme="dark"] .contract-clause.danger { border-color: #5a2e2e; background: #241a1a; }
+@media (max-width: 900px) {
+  .contract-empty { grid-template-columns: 1fr; }
+  .contract-wide { grid-column: auto; }
+  .contract-column-row, .contract-quality-row { grid-template-columns: 1fr; }
+}
 .legend-row .swatch.ok { background: var(--ok); }
 .legend-row .swatch.warn { background: var(--warn-strong); }
 .legend-row .swatch.fail { background: var(--danger); }
