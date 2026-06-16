@@ -236,6 +236,13 @@ def export_csv(
     matching_count = base_query.count()
     query = _apply_sort(base_query, sort).limit(EXPORT_CAP)
     rows = query.all()
+    # Resolve display fields without N+1 per row.
+    ds_names = {d.id: d.table_name for d in db.query(models.Dataset).all()}
+    user_names = {u.id: (u.name or u.email) for u in db.query(models.User).all()}
+    checks = {
+        c.id: c
+        for c in db.query(models.Check.id, models.Check.name, models.Check.check_type, models.Check.severity)
+    }
     audit(
         db,
         user,
@@ -250,13 +257,6 @@ def export_csv(
         truncated=matching_count > len(rows),
     )
     db.commit()
-    # Resolve display fields without N+1 per row.
-    ds_names = {d.id: d.table_name for d in db.query(models.Dataset).all()}
-    user_names = {u.id: (u.name or u.email) for u in db.query(models.User).all()}
-    checks = {
-        c.id: c
-        for c in db.query(models.Check.id, models.Check.name, models.Check.check_type, models.Check.severity)
-    }
     columns = [
         "id", "dataset", "check", "check_type", "severity", "status", "reason",
         "occurrence_count", "first_seen_at", "last_seen_at", "assigned_to", "note", "row_data",
