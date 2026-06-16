@@ -287,3 +287,26 @@ def test_export_csv_audit_records_truncation(client, seeded, monkeypatch):
     assert detail["exported_count"] == 2
     assert detail["export_cap"] == 2
     assert detail["truncated"] is True
+
+
+def test_export_csv_audit_redacts_free_text_query_params(client, seeded):
+    h = seeded["h"]
+    sentinel = "sqlite:///AUDIT_SHOULD_NOT_LOG"
+
+    before = _audit(client, h, action="exception.export")["total"]
+    resp = client.get(
+        "/api/v1/exceptions/export.csv",
+        params={"dataset_id": seeded["dataset_id"], "q": sentinel, "sort": sentinel},
+        headers=h,
+    )
+    assert resp.status_code == 200
+
+    after = _audit(client, h, action="exception.export")
+    assert after["total"] == before + 1
+    detail = after["items"][0]["detail"]
+    assert detail["filters"] == {
+        "dataset_id": seeded["dataset_id"],
+        "q": {"present": True, "length": len(sentinel)},
+    }
+    assert detail["sort"] == "newest"
+    assert sentinel not in json.dumps(detail, sort_keys=True)

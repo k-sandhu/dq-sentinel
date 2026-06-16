@@ -23,6 +23,7 @@ router = APIRouter(prefix="/exceptions", tags=["exceptions"])
 MAX_BULK_IDS = 1000
 # Data-egress control (#57): exports are capped, not just for performance.
 EXPORT_CAP = 10_000
+SORT_OPTIONS = {"newest", "oldest", "occurrences", "severity"}
 SEVERITY_ORDER = case(
     (models.Check.severity == "error", 0),
     (models.Check.severity == "warn", 1),
@@ -220,6 +221,10 @@ def _audit_safe_filters(filters: dict) -> dict:
     return safe
 
 
+def _audit_safe_sort(sort: str) -> str:
+    return sort if sort in SORT_OPTIONS else "newest"
+
+
 @router.get("/export.csv")
 def export_csv(
     filters: dict = Depends(_common_filters),
@@ -238,7 +243,7 @@ def export_csv(
         "exception",
         None,
         filters=_audit_safe_filters(filters),
-        sort=sort,
+        sort=_audit_safe_sort(sort),
         matching_count=matching_count,
         exported_count=len(rows),
         export_cap=EXPORT_CAP,
