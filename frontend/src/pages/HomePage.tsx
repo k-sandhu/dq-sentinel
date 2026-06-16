@@ -7,6 +7,8 @@ import RunsTable from "../components/RunsTable";
 import { EmptyState, ErrorBox, Icon, Spinner, StatCard, StatusPill } from "../components/ui";
 import { fmtNum, fmtPct } from "../lib/format";
 
+type TrendDatum = Dashboard["trend"][number] & { date: string; day: string };
+
 const TOOLTIP_STYLE = {
   fontSize: 12,
   borderRadius: 8,
@@ -27,7 +29,17 @@ export default function HomePage() {
   if (error) return <div className="page"><ErrorBox error={error} /></div>;
   if (!data) return null;
 
-  const trend = data.trend.map((t) => ({ ...t, day: t.day.slice(5) }));
+  const trend: TrendDatum[] = data.trend.map((t) => ({ ...t, date: t.day, day: t.day.slice(5) }));
+  const runsFor = (params: Record<string, string>) => `/runs?${new URLSearchParams(params).toString()}`;
+  const openRunsFor = (date: string, status?: string) => {
+    const params: Record<string, string> = { day: date };
+    if (status) params.status = status;
+    navigate(runsFor(params));
+  };
+  const trendClick = (status: string) => (entry: unknown) => {
+    const point = (entry as { payload?: TrendDatum }).payload;
+    if (point) openRunsFor(point.date, status);
+  };
 
   return (
     <div className="page">
@@ -42,9 +54,13 @@ export default function HomePage() {
                 LLM disabled — heuristic mode
               </span>
             )}{" "}
-            <span className="badge">{fmtNum(data.runs_24h)} runs in 24h</span>{" "}
+            <Link to={runsFor({ since: "24h" })} className="badge badge-link">
+              {fmtNum(data.runs_24h)} runs in 24h
+            </Link>{" "}
             {data.pass_rate_7d != null && (
-              <span className="badge">7-day pass rate {fmtPct(data.pass_rate_7d)}</span>
+              <Link to={runsFor({ since: "7d" })} className="badge badge-link">
+                7-day pass rate {fmtPct(data.pass_rate_7d)}
+              </Link>
             )}
           </div>
         </div>
@@ -57,23 +73,38 @@ export default function HomePage() {
       </div>
 
       <div className="grid cols-4" style={{ marginBottom: 16 }}>
-        <StatCard label="Datasets monitored" value={fmtNum(data.datasets)} />
+        <StatCard
+          label="Datasets monitored"
+          value={fmtNum(data.datasets)}
+          to="/datasets"
+          title="Open monitored datasets"
+          ariaLabel={`${fmtNum(data.datasets)} monitored datasets. Open datasets.`}
+        />
         <StatCard
           label="Active checks"
           value={fmtNum(data.active_checks)}
           hint={data.proposed_checks ? `${data.proposed_checks} proposals awaiting review` : undefined}
+          to="/checks?status=active"
+          title="Open active checks"
+          ariaLabel={`${fmtNum(data.active_checks)} active checks. Open active checks.`}
         />
         <StatCard
           label="Failing checks"
           value={fmtNum(data.failing_checks)}
           tone={data.failing_checks ? "danger" : "ok"}
           hint={`${fmtNum(data.runs_24h)} runs in 24h`}
+          to="/checks?status=active&last_status=fail&last_status=error"
+          title="Open active checks with failing or errored latest results"
+          ariaLabel={`${fmtNum(data.failing_checks)} failing checks. Open failing checks.`}
         />
         <StatCard
           label="Open exceptions"
           value={fmtNum(data.open_exceptions)}
           tone={data.open_exceptions ? "danger" : "ok"}
           hint={data.pass_rate_7d != null ? `7-day pass rate ${fmtPct(data.pass_rate_7d)}` : undefined}
+          to="/exceptions?status=open"
+          title="Open the triage queue filtered to open exceptions"
+          ariaLabel={`${fmtNum(data.open_exceptions)} open exceptions. Open triage queue.`}
         />
       </div>
 
@@ -86,7 +117,7 @@ export default function HomePage() {
               Runs
             </Link>
           </div>
-          <ResponsiveContainer width="100%" height={210}>
+          <ResponsiveContainer width="100%" height={210} className="drilldown-chart">
             <BarChart data={trend} margin={{ top: 4, right: 4, left: -22, bottom: 0 }}>
               <XAxis
                 dataKey="day"
@@ -101,10 +132,17 @@ export default function HomePage() {
                 allowDecimals={false}
               />
               <Tooltip cursor={{ fill: "var(--hover)" }} contentStyle={TOOLTIP_STYLE} />
-              <Bar dataKey="passed" stackId="a" fill="var(--ok)" />
-              <Bar dataKey="warned" stackId="a" fill="var(--yellow)" />
-              <Bar dataKey="failed" stackId="a" fill="var(--danger)" />
-              <Bar dataKey="errored" stackId="a" fill="var(--danger-deep)" radius={[2, 2, 0, 0]} />
+              <Bar dataKey="passed" stackId="a" fill="var(--ok)" onClick={trendClick("pass")} cursor="pointer" />
+              <Bar dataKey="warned" stackId="a" fill="var(--yellow)" onClick={trendClick("warn")} cursor="pointer" />
+              <Bar dataKey="failed" stackId="a" fill="var(--danger)" onClick={trendClick("fail")} cursor="pointer" />
+              <Bar
+                dataKey="errored"
+                stackId="a"
+                fill="var(--danger-deep)"
+                radius={[2, 2, 0, 0]}
+                onClick={trendClick("error")}
+                cursor="pointer"
+              />
             </BarChart>
           </ResponsiveContainer>
           <div className="legend-row">
@@ -128,7 +166,15 @@ export default function HomePage() {
                 <div
                   key={d.id}
                   className="dense-item clickable"
+                  role="link"
+                  tabIndex={0}
                   onClick={() => navigate(`/datasets/${d.id}/exceptions`)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      navigate(`/datasets/${d.id}/exceptions`);
+                    }
+                  }}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
                     <div>

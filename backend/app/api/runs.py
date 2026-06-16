@@ -1,32 +1,62 @@
+from datetime import datetime, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.api.serialize import exception_out, run_out
 from app.db import get_db
+from app.models import utcnow
 from app.security import get_current_user
 
 router = APIRouter(prefix="/runs", tags=["runs"])
+
+SINCE_WINDOWS = {
+    "24h": timedelta(hours=24),
+    "7d": timedelta(days=7),
+    "14d": timedelta(days=14),
+}
+
+
+def _day_bounds(day: str) -> tuple[datetime, datetime]:
+    try:
+        start = datetime.strptime(day, "%Y-%m-%d")
+    except ValueError as exc:
+        raise HTTPException(422, "day must be YYYY-MM-DD") from exc
+    return start, start + timedelta(days=1)
 
 
 @router.get("", response_model=list[schemas.RunOut])
 def list_runs(
     response: Response,
+    run_id: int | None = None,
     dataset_id: int | None = None,
     check_id: int | None = None,
     status: str | None = None,
+    day: str | None = None,
+    since: str | None = None,
     limit: int = 50,
     offset: int = 0,
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
     q = db.query(models.CheckRun)
+    if run_id is not None:
+        q = q.filter(models.CheckRun.id == run_id)
     if dataset_id is not None:
         q = q.filter(models.CheckRun.dataset_id == dataset_id)
     if check_id is not None:
         q = q.filter(models.CheckRun.check_id == check_id)
     if status:
         q = q.filter(models.CheckRun.status == status)
+    if day:
+        start, end = _day_bounds(day)
+        q = q.filter(models.CheckRun.started_at >= start, models.CheckRun.started_at < end)
+    if since:
+        delta = SINCE_WINDOWS.get(since)
+        if delta is None:
+            raise HTTPException(422, "since must be one of: 24h, 7d, 14d")
+        q = q.filter(models.CheckRun.started_at >= utcnow() - delta)
     response.headers["X-Total-Count"] = str(q.count())
     runs = q.order_by(models.CheckRun.id.desc()).offset(offset).limit(min(limit, 200)).all()
     return [run_out(db, r) for r in runs]
