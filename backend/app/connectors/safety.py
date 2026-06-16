@@ -9,8 +9,9 @@ Defense layers:
 
 import re
 
-# Keywords that indicate writes/DDL/session changes. Checked on a copy of the SQL
-# with string literals and comments stripped, so values like 'create' don't trip it.
+# Keywords that indicate writes/DDL/session changes. Checked on a masked copy of the
+# SQL with comments, string/dollar-quoted literals, and quoted identifiers hidden,
+# so inert values like 'create' and identifiers like "delete" don't trip it.
 _DENY = re.compile(
     r"\b(insert|update|delete|drop|alter|create|replace|attach|detach|copy|merge|grant|revoke"
     r"|truncate|vacuum|pragma|call|exec|execute|reset|load|install|export|import|begin|commit|rollback)\b",
