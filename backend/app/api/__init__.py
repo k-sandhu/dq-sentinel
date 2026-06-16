@@ -18,8 +18,8 @@ from app.api import (
     rca,
     runs,
     saved_queries,
-    search,
     scorecards,
+    search,
     sla,
 )
 
