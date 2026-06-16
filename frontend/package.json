@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.62.0",
+    "@xyflow/react": "^12.11.0",
+    "dagre": "^0.8.5",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",
@@ -19,6 +21,7 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@types/dagre": "^0.7.54",
     "@types/node": "^25.9.2",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",

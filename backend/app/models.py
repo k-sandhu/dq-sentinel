@@ -78,6 +78,9 @@ class Dataset(Base):
     knowledge: Mapped["TableKnowledge | None"] = relationship(
         back_populates="dataset", cascade="all, delete-orphan", uselist=False
     )
+    data_contracts: Mapped[list["DataContract"]] = relationship(
+        back_populates="dataset", cascade="all, delete-orphan"
+    )
 
 
 class DatasetMonitorPack(Base):
@@ -192,6 +195,49 @@ class ScorecardSnapshot(Base):
     breached_dataset_count: Mapped[int] = mapped_column(Integer, default=0)
     detail: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class DataContract(Base):
+    """Versioned, enforceable agreement for one dataset (#105).
+
+    The normalized ``spec`` intentionally stays JSON so it can track ODCS fields
+    without a migration per clause shape. Immutable versions live in
+    DataContractVersion rows for audit/diff.
+    """
+
+    __tablename__ = "data_contracts"
+    __table_args__ = (Index("ix_data_contract_dataset_status", "dataset_id", "status"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id"), index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    version: Mapped[str] = mapped_column(String(50), default="0.1.0")
+    status: Mapped[str] = mapped_column(String(20), default="draft")  # draft | active | deprecated
+    spec: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    dataset: Mapped[Dataset] = relationship(back_populates="data_contracts")
+    versions: Mapped[list["DataContractVersion"]] = relationship(
+        back_populates="contract", cascade="all, delete-orphan", order_by="DataContractVersion.id"
+    )
+
+
+class DataContractVersion(Base):
+    """Immutable contract spec snapshot for review, diffing, and rollback."""
+
+    __tablename__ = "data_contract_versions"
+    __table_args__ = (Index("ix_data_contract_versions_contract", "contract_id", "id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    contract_id: Mapped[int] = mapped_column(ForeignKey("data_contracts.id"), index=True)
+    version: Mapped[str] = mapped_column(String(50))
+    spec: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    contract: Mapped[DataContract] = relationship(back_populates="versions")
 
 
 class Check(Base):

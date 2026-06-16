@@ -8,6 +8,7 @@ import { Breadcrumbs, ErrorBox, Icon, Spinner, StatusPill } from "../components/
 import { fmtNum, timeAgo } from "../lib/format";
 import { isFavorite, pushRecent, subscribePrefs, toggleFavorite } from "../lib/prefs";
 import ChecksTab from "./dataset/ChecksTab";
+import ContractTab from "./dataset/ContractTab";
 import CodeTab from "./dataset/CodeTab";
 import DashboardsTab from "./dataset/DashboardsTab";
 import ExceptionsTab from "./dataset/ExceptionsTab";
@@ -18,7 +19,7 @@ import RcaTab from "./dataset/RcaTab";
 import RunsTab from "./dataset/RunsTab";
 import SchemaTab from "./dataset/SchemaTab";
 
-const TABS = ["profile", "code", "schema", "lineage", "checks", "runs", "exceptions", "dashboards", "knowledge", "rca"] as const;
+const TABS = ["profile", "code", "schema", "lineage", "contract", "checks", "runs", "exceptions", "dashboards", "knowledge", "rca"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function DatasetDetailPage() {
@@ -134,6 +135,7 @@ export default function DatasetDetailPage() {
       {active === "code" && <CodeTab datasetId={datasetId} />}
       {active === "schema" && <SchemaTab datasetId={datasetId} />}
       {active === "lineage" && <LineageTab dataset={dataset} />}
+      {active === "contract" && <ContractTab dataset={dataset} />}
       {active === "checks" && <ChecksTab datasetId={datasetId} hasProfile={!!profileQuery.data} />}
       {active === "runs" && <RunsTab datasetId={datasetId} />}
       {active === "exceptions" && <ExceptionsTab datasetId={datasetId} />}

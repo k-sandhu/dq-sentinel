@@ -11,6 +11,8 @@ CheckStatus = Literal["proposed", "active", "disabled", "archived"]
 RunStatus = Literal["pass", "warn", "fail", "error"]
 ExceptionStatus = Literal["open", "acknowledged", "expected", "resolved", "muted"]
 IncidentStatus = Literal["open", "acknowledged", "resolved"]
+ContractStatus = Literal["draft", "active", "deprecated"]
+ContractConformanceStatus = Literal["pass", "breached", "unknown"]
 
 
 class ORMModel(BaseModel):
@@ -522,6 +524,89 @@ class CheckTypeInfo(BaseModel):
     params: list[dict[str, Any]]
 
 
+# ---- data contracts (#105) ----
+class DataContractCreate(BaseModel):
+    name: str = Field(default="", max_length=255)
+    version: str = Field(default="0.1.0", min_length=1, max_length=50)
+    status: ContractStatus = "draft"
+    spec: dict[str, Any] | None = None
+
+
+class DataContractUpdate(BaseModel):
+    name: str | None = Field(default=None, max_length=255)
+    version: str | None = Field(default=None, min_length=1, max_length=50)
+    status: ContractStatus | None = None
+    spec: dict[str, Any] | None = None
+
+
+class DataContractOut(ORMModel):
+    id: int
+    dataset_id: int
+    name: str
+    version: str
+    status: ContractStatus
+    spec: dict[str, Any]
+    created_by_id: int | None
+    created_at: datetime
+    activated_at: datetime | None
+    version_count: int = 0
+
+
+class DataContractVersionOut(ORMModel):
+    id: int
+    contract_id: int
+    version: str
+    spec: dict[str, Any]
+    created_by_id: int | None
+    created_at: datetime
+
+
+class DataContractImportIn(BaseModel):
+    yaml: str = Field(min_length=1)
+    activate: bool = False
+
+
+class DataContractExportOut(BaseModel):
+    format: Literal["odcs"] = "odcs"
+    yaml: str
+
+
+class DataContractApplyOut(BaseModel):
+    contract: DataContractOut
+    created_checks: list[CheckOut] = Field(default_factory=list)
+    updated_checks: list[CheckOut] = Field(default_factory=list)
+    schema_pinned: bool = False
+
+
+class ContractClauseConformance(BaseModel):
+    clause_id: str
+    kind: Literal["schema", "freshness", "volume", "quality"]
+    label: str
+    status: ContractConformanceStatus
+    check_id: int | None = None
+    check_status: RunStatus | None = None
+    detail: str = ""
+    expected: dict[str, Any] = Field(default_factory=dict)
+    observed: dict[str, Any] = Field(default_factory=dict)
+
+
+class DataContractConformanceOut(BaseModel):
+    contract_id: int
+    dataset_id: int
+    status: ContractConformanceStatus
+    clauses: list[ContractClauseConformance] = Field(default_factory=list)
+    generated_at: datetime
+
+
+class DataContractDiffOut(BaseModel):
+    contract_id: int
+    from_version_id: int
+    to_version_id: int
+    added: list[str] = Field(default_factory=list)
+    removed: list[str] = Field(default_factory=list)
+    changed: list[str] = Field(default_factory=list)
+
+
 # ---- runs ----
 class RunOut(ORMModel):
     id: int
@@ -967,6 +1052,15 @@ class DatasetDdlOut(BaseModel):
     kind: Literal["table", "view"] = "table"
 
 
+class ColumnLineageNode(BaseModel):
+    id: str
+    table_id: str
+    column: str
+    dtype: str = ""
+    nullable: bool = True
+    dataset_id: int | None = None
+
+
 class LineageNode(BaseModel):
     id: str  # "schema.table" when schema_name is set, else "table" (lowercased)
     schema_name: str | None = None
@@ -976,6 +1070,9 @@ class LineageNode(BaseModel):
     health: Literal["pass", "warn", "fail", "unknown"] = "unknown"
     failing_checks: int = 0
     open_exceptions: int = 0
+    owner: str = ""
+    importance: str = ""
+    columns: list[ColumnLineageNode] = Field(default_factory=list)
 
 
 class LineageEdge(BaseModel):
@@ -983,10 +1080,19 @@ class LineageEdge(BaseModel):
     target: str  # the view selecting from source
 
 
+class ColumnLineageEdge(BaseModel):
+    source: str
+    target: str
+    kind: Literal["direct", "derived", "aggregate", "unresolved"] = "direct"
+    expression: str | None = None
+
+
 class LineageGraph(BaseModel):
-    nodes: list[LineageNode] = []
-    edges: list[LineageEdge] = []
+    nodes: list[LineageNode] = Field(default_factory=list)
+    edges: list[LineageEdge] = Field(default_factory=list)
+    column_edges: list[ColumnLineageEdge] = Field(default_factory=list)
     parse_errors: int = 0  # view definitions sqlglot could not parse
+    qualify_errors: int = 0  # view column lineage could not be resolved
     truncated: bool = False  # graph exceeded the node cap and was cut off
 
 

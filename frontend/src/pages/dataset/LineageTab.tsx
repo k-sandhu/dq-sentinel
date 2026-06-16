@@ -12,9 +12,10 @@ const DEPTHS = [1, 2, 3];
 
 export default function LineageTab({ dataset }: { dataset: Dataset }) {
   const [depth, setDepth] = useState(2);
+  const [granularity, setGranularity] = useState<"table" | "column">("table");
   const { data, isLoading, error } = useQuery({
-    queryKey: ["lineage-dataset", dataset.id, depth],
-    queryFn: () => api.get<LineageGraphData>(`/datasets/${dataset.id}/lineage?depth=${depth}`),
+    queryKey: ["lineage-dataset", dataset.id, depth, granularity],
+    queryFn: () => api.get<LineageGraphData>(`/datasets/${dataset.id}/lineage?depth=${depth}&granularity=${granularity}`),
     staleTime: 30_000,
     placeholderData: (prev) => prev, // keep the old graph while a new depth loads
   });
@@ -52,6 +53,10 @@ export default function LineageTab({ dataset }: { dataset: Dataset }) {
         <LineageGraph
           graph={data}
           currentId={currentId}
+          granularity={granularity}
+          onGranularityChange={setGranularity}
+          depth={depth}
+          onDepthChange={setDepth}
           emptyHint="No parsed view definitions feed or read from this dataset."
         />
       )}
