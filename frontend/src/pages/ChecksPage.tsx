@@ -18,10 +18,10 @@ export default function ChecksPage() {
   const lastStatuses = params.getAll("last_status").filter(Boolean);
   const search = params.get("q") ?? "";
 
-  const patchParams = (mutate: (p: URLSearchParams) => void) => {
+  const patchParams = (mutate: (p: URLSearchParams) => void, replace = false) => {
     const next = new URLSearchParams(params);
     mutate(next);
-    setParams(next);
+    setParams(next, { replace });
   };
   const setFilter = (nextFilter: CheckFilter) =>
     patchParams((p) => {
@@ -32,7 +32,7 @@ export default function ChecksPage() {
     patchParams((p) => {
       if (value) p.set("q", value);
       else p.delete("q");
-    });
+    }, true);
   const clearLastStatuses = () => patchParams((p) => p.delete("last_status"));
 
   const { data, isLoading, error } = useQuery({
