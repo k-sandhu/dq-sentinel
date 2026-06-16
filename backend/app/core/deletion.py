@@ -45,6 +45,16 @@ def cleanup_dataset_dependents(db: Session, dataset_id: int) -> None:
         synchronize_session=False
     )
     db.query(models.SLADefinition).filter(sla_filter).delete(synchronize_session=False)
+    incident_filter = or_(
+        models.Incident.dataset_id == dataset_id,
+        models.Incident.check_id.in_(check_ids),
+        models.Incident.current_run_id.in_(run_ids),
+    )
+    incident_ids = select(models.Incident.id).where(incident_filter)
+    db.query(models.IncidentEvent).filter(
+        models.IncidentEvent.incident_id.in_(incident_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.Incident).filter(incident_filter).delete(synchronize_session=False)
     db.query(models.NotificationRule).filter(
         models.NotificationRule.dataset_id == dataset_id
     ).delete(synchronize_session=False)

@@ -10,6 +10,7 @@ Severity = Literal["info", "warn", "error"]
 CheckStatus = Literal["proposed", "active", "disabled", "archived"]
 RunStatus = Literal["pass", "warn", "fail", "error"]
 ExceptionStatus = Literal["open", "acknowledged", "expected", "resolved", "muted"]
+IncidentStatus = Literal["open", "acknowledged", "resolved"]
 
 
 class ORMModel(BaseModel):
@@ -373,6 +374,48 @@ class RunOut(ORMModel):
     exception_count: int = 0
 
 
+# ---- incidents (issues #112 / #110) ----
+class IncidentEventOut(ORMModel):
+    id: int
+    incident_id: int
+    kind: str
+    detail: dict[str, Any]
+    user: str | None = None
+    created_at: datetime
+
+
+class IncidentOut(ORMModel):
+    id: int
+    dataset_id: int
+    dataset_name: str = ""
+    check_id: int
+    check_name: str = ""
+    current_run_id: int | None
+    dedupe_key: str
+    title: str
+    severity: Severity
+    status: IncidentStatus
+    failure_status: RunStatus
+    first_seen_at: datetime
+    last_seen_at: datetime
+    resolved_at: datetime | None
+    occurrence_count: int
+    last_notified_at: datetime | None
+    next_escalation_at: datetime | None
+    escalation_level: int
+    external_refs: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+
+
+class IncidentDetailOut(IncidentOut):
+    events: list[IncidentEventOut] = []
+
+
+class IncidentActionIn(BaseModel):
+    note: str = Field(default="", max_length=2_000)
+
+
 # ---- exceptions (workbench: #55 identity, #56 triage workflow, #57 API v2) ----
 class ExceptionOut(ORMModel):
     id: int
@@ -616,7 +659,7 @@ class McpServerOut(ORMModel):
 
 
 # ---- notification rules (issue #27) ----
-NotifyChannel = Literal["slack", "email"]
+NotifyChannel = Literal["slack", "email", "webhook", "teams", "pagerduty", "jira", "servicenow"]
 
 
 class NotificationRuleIn(BaseModel):
@@ -625,6 +668,9 @@ class NotificationRuleIn(BaseModel):
     channel: NotifyChannel
     target: str = ""  # webhook URL or comma-separated emails ("" = global Slack default)
     on_error_runs: bool = True
+    dedupe_window_minutes: int = Field(default=60, ge=1, le=10_080)
+    escalation_delay_minutes: int | None = Field(default=None, ge=1, le=10_080)
+    max_escalation_level: int = Field(default=0, ge=0, le=10)
     enabled: bool = True
 
 
@@ -634,6 +680,9 @@ class NotificationRuleUpdate(BaseModel):
     channel: NotifyChannel | None = None
     target: str | None = None
     on_error_runs: bool | None = None
+    dedupe_window_minutes: int | None = Field(default=None, ge=1, le=10_080)
+    escalation_delay_minutes: int | None = Field(default=None, ge=1, le=10_080)
+    max_escalation_level: int | None = Field(default=None, ge=0, le=10)
     enabled: bool | None = None
 
 
@@ -645,6 +694,9 @@ class NotificationRuleOut(ORMModel):
     channel: NotifyChannel
     target: str
     on_error_runs: bool
+    dedupe_window_minutes: int
+    escalation_delay_minutes: int | None
+    max_escalation_level: int
     enabled: bool
     created_at: datetime
 

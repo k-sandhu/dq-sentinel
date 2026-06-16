@@ -101,6 +101,19 @@ class Settings(BaseSettings):
     smtp_from_addr: str = ""
     smtp_starttls: bool = True
     base_url: str = "http://localhost:3000"  # for building links in notification bodies
+    webhook_url: str = ""  # generic incident webhook default (rules may override target)
+    webhook_hmac_secret: str = ""  # signs generic webhook payloads when configured
+    teams_webhook_url: str = ""  # Microsoft Teams incoming webhook default
+    pagerduty_routing_key: str = ""
+    jira_base_url: str = ""
+    jira_email: str = ""
+    jira_api_token: str = ""
+    jira_project_key: str = ""
+    jira_issue_type: str = "Bug"
+    servicenow_instance_url: str = ""
+    servicenow_user: str = ""
+    servicenow_password: str = ""
+    servicenow_assignment_group: str = ""
 
     # Audit log retention (issue #30): rows older than this are purged by a
     # daily pass in the worker. 0 disables purging (keep everything).
