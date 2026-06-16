@@ -79,6 +79,11 @@ when symlinks are unavailable). Read this top-to-bottom before making changes.
 7. **Reference GitHub issues** in commits (`Refs #N` / `Closes #N`). Track new feature work as issues first (`gh issue create`).
 8. **Privacy in prompts:** LLM prompts may include aggregates and ≤25 sample rows. Columns listed
    in a dataset's knowledge `pii_columns` are redacted before being sent. Keep it that way.
+9. **App-DB schema changes need an Alembic revision (#23).** Any change to `models.py` must ship
+   with a migration in the same change: `cd backend && alembic revision --autogenerate -m "..."`,
+   then review it (autogen misses some things). `init_db()` runs `upgrade head` at startup (and
+   *stamps* a pre-Alembic DB instead of re-applying the baseline). Don't re-introduce a
+   `create_all`/ALTER shim. `tests/test_migrations.py` fails if migrations drift from the models.
 
 ## Dev setup (Windows-first; POSIX equivalents in parentheses)
 
@@ -127,6 +132,8 @@ Push coherent checkpoints to `main` frequently (CI gates them) rather than batch
 |---|---|
 | Backend tests | `cd backend && pytest -q` |
 | Backend lint | `cd backend && ruff check app tests` |
+| New DB migration | `cd backend && alembic revision --autogenerate -m "..."` (then review the file) |
+| Apply migrations | `cd backend && alembic upgrade head` (also runs automatically on app startup) |
 | Frontend typecheck | `cd frontend && npm run typecheck` |
 | Frontend build | `cd frontend && npm run build` (runs typecheck first) |
 | Regenerate sample data | `python data/generate_sample_data.py --force` |
