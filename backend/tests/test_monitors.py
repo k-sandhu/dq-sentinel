@@ -147,7 +147,7 @@ def test_malformed_numeric_config_falls_back_during_reconcile(client, admin_head
                 "cadence": {"freshness_minutes": "soon"},
                 "sensitivity": {
                     "freshness_max_age_hours": "late",
-                    "volume_sigma": "wide",
+                    "volume_sigma": "NaN",
                     "drift_threshold": "high",
                 },
                 "limits": {"max_drift_checks": "many"},

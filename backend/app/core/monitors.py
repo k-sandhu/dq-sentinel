@@ -351,7 +351,13 @@ def _float_config(value: Any, default: float, *, min_value: float | None = None)
 
 
 def _int_config(value: Any, default: int, *, min_value: int | None = None) -> int:
-    parsed = int(_float_config(value, float(default), min_value=float(min_value) if min_value is not None else None))
+    parsed = int(
+        _float_config(
+            value,
+            float(default),
+            min_value=float(min_value) if min_value is not None else None,
+        )
+    )
     if min_value is not None:
         parsed = max(min_value, parsed)
     return parsed
@@ -428,7 +434,9 @@ def _volume_spec(dataset: models.Dataset, config: dict[str, Any]) -> MonitorSpec
     sensitivity = config.get("sensitivity") or {}
     override = _kind_override(config, "volume")
     params = {
-        "sigma": _float_config(override.get("sigma", sensitivity.get("volume_sigma", 3.0)), 3.0, min_value=0.0),
+        "sigma": _float_config(
+            override.get("sigma", sensitivity.get("volume_sigma", 3.0)), 3.0, min_value=0.0
+        ),
         "lookback_runs": _int_config(
             override.get("lookback_runs", sensitivity.get("volume_lookback_runs", 14)), 14, min_value=1
         ),
@@ -505,7 +513,9 @@ def _drift_specs(
 ) -> list[MonitorSpec]:
     override = _kind_override(config, "drift")
     sensitivity = config.get("sensitivity") or {}
-    threshold = _float_config(override.get("threshold", sensitivity.get("drift_threshold", 0.2)), 0.2, min_value=0.0)
+    threshold = _float_config(
+        override.get("threshold", sensitivity.get("drift_threshold", 0.2)), 0.2, min_value=0.0
+    )
     max_checks = _int_config((config.get("limits") or {}).get("max_drift_checks", 4), 4, min_value=0)
     max_checks = max(0, max_checks)
     if not max_checks:
