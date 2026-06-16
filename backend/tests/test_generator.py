@@ -1,4 +1,5 @@
 from app.connectors.sa import Connector
+from app.core.check_types import CHECK_TYPES
 from app.core.generator import heuristic_proposals
 from app.core.profiler import profile_dataset
 
@@ -12,6 +13,7 @@ def test_heuristics_from_real_profile(source_db):
     for p in proposals:
         by_type.setdefault(p["check_type"], []).append(p)
 
+    assert all(p["check_type"] in CHECK_TYPES for p in proposals)
     # id is a fully-distinct pk candidate -> not_null + unique
     assert any(p["column_name"] == "id" for p in by_type.get("not_null", []))
     assert any(p["column_name"] == "id" for p in by_type.get("unique", []))
