@@ -8,7 +8,7 @@ run a single worker against SQLite). See issue #25 for the queue-based design.
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import delete, update
 
@@ -24,6 +24,7 @@ log = logging.getLogger(__name__)
 # worker is the only long-lived process that calls poll_once on a loop).
 _last_audit_purge: datetime | None = None
 _last_sla_eval: datetime | None = None
+_last_scorecard_snapshot: date | None = None
 
 
 def maybe_evaluate_slas(now: datetime | None = None) -> int:
@@ -43,6 +44,23 @@ def maybe_evaluate_slas(now: datetime | None = None) -> int:
     factory = session_factory()
     with factory() as db:
         return len(evaluate_all(db, now))
+
+
+def maybe_capture_scorecard_snapshots(now: datetime | None = None) -> int:
+    """Capture aggregate scorecard history once per UTC day (#119)."""
+    global _last_scorecard_snapshot
+    now = now or utcnow()
+    today = now.date()
+    if _last_scorecard_snapshot == today:
+        return 0
+    from app.core.scorecard_history import capture_scorecard_snapshots
+
+    factory = session_factory()
+    with factory() as db:
+        snapshots = capture_scorecard_snapshots(db, today)
+        db.commit()
+    _last_scorecard_snapshot = today
+    return len(snapshots)
 
 
 def purge_audit_log(now: datetime | None = None) -> int:
@@ -91,6 +109,10 @@ def poll_once(executor: ThreadPoolExecutor) -> int:
         maybe_evaluate_slas(now)  # self-throttles to sla_eval_seconds
     except Exception:  # noqa: BLE001 - SLA evaluation must never block check scheduling
         log.exception("SLA evaluation pass failed; continuing")
+    try:
+        maybe_capture_scorecard_snapshots(now)  # self-throttles to once per day
+    except Exception:  # noqa: BLE001 - scorecard capture must never block check scheduling
+        log.exception("Scorecard snapshot capture failed; continuing")
     claimed = 0
     with factory() as db:
         # Initialize schedules that were activated without a next_run_at
