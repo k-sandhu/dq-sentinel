@@ -104,6 +104,46 @@ def test_first_failure_creates_incident_and_notifies(source_db, sends):
     assert "failing" in sends[0]["subject"]
 
 
+def test_first_failure_without_rules_does_not_mark_notified(source_db, sends):
+    with session_factory()() as db:
+        ds = _make_dataset(db, source_db)
+        check = _make_check(db, ds, last_status="pass")
+        db.commit()
+        run = run_check(db, check)
+
+        incident = db.query(Incident).filter(Incident.check_id == check.id).one()
+        events = [e.kind for e in incident.events]
+
+    assert run.status == "fail"
+    assert incident.status == "open"
+    assert incident.last_notified_at is None
+    assert "notified" not in events
+    assert sends == []
+
+
+def test_rule_added_after_unnotified_failure_pages_on_repeated_failure(source_db, sends):
+    with session_factory()() as db:
+        ds = _make_dataset(db, source_db)
+        check = _make_check(db, ds, last_status="pass")
+        db.commit()
+        run_check(db, check)
+        incident = db.query(Incident).filter(Incident.check_id == check.id).one()
+        assert incident.last_notified_at is None
+
+        _add_rule(db, ds.id)
+        db.commit()
+        run2 = run_check(db, check)
+        db.refresh(incident)
+        events = [e.kind for e in incident.events]
+
+    assert run2.status == "fail"
+    assert incident.occurrence_count == 2
+    assert incident.last_notified_at is not None
+    assert "notified" in events
+    assert len(sends) == 1
+    assert "failing" in sends[0]["subject"]
+
+
 def test_repeated_failure_dedupes_and_does_not_notify(source_db, sends):
     with session_factory()() as db:
         ds = _make_dataset(db, source_db)

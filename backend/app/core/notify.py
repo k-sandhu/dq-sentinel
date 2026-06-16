@@ -532,15 +532,17 @@ def dispatch_recovery(db: Session, check: Check, run: CheckRun) -> None:
     _dispatch(db, check, run, subject=subject, body_prefix=f"Check '{check.name}' has recovered (now passing).")
 
 
-def dispatch_incident(db: Session, incident: Incident, check: Check, run: CheckRun, action: str) -> None:
+def dispatch_incident(db: Session, incident: Incident, check: Check, run: CheckRun, action: str) -> int:
     """Incident-aware dispatch used by the lifecycle service.
 
     Ticketing transports may return external refs; those refs are merged onto the
     incident but not committed here so the caller controls the transaction.
+    Returns the count of channel deliveries attempted, including failed sends.
     """
     event = _incident_event(db, incident, check, run, action)
     subject = _subject_for(event)
     body = _incident_text(event)
+    attempted = 0
     for rule in incident_rules(db, check, run):
         channel = _channel_for(rule)
         if channel is None:
@@ -550,8 +552,10 @@ def dispatch_incident(db: Session, incident: Incident, check: Check, run: CheckR
                 extra={"event": "notify_skipped", "channel": rule.channel},
             )
             continue
+        attempted += 1
         refs = _deliver(rule.channel, channel, subject, body, event.link, event=event)
         _merge_external_refs(incident, refs)
+    return attempted
 
 
 def dispatch_sla_breach(db: Session, sla, evaluation) -> None:

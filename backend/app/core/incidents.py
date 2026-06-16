@@ -72,21 +72,19 @@ def record_failure(db: Session, check: Check, run: CheckRun, prev_status: str | 
                 failure_status=run.status,
                 occurrence_count=incident.occurrence_count,
             )
-            if prev_status in ("pass", "warn", None) and _outside_dedupe_window(db, incident, check, run, now):
+            if incident.last_notified_at is None:
+                should_notify = True
+            elif prev_status in ("pass", "warn", None) and _outside_dedupe_window(db, incident, check, run, now):
                 should_notify = True
 
-    if should_notify:
-        incident.last_notified_at = now
-        incident.next_escalation_at = _next_escalation_at(db, incident, check, run, now)
-        _event(db, incident, "notified", action="triggered", run_id=run.id)
-    elif incident.next_escalation_at is None and incident.last_notified_at is not None:
+    if not should_notify and incident.next_escalation_at is None and incident.last_notified_at is not None:
         incident.next_escalation_at = _next_escalation_at(db, incident, check, run, incident.last_notified_at)
 
     db.commit()
     db.refresh(incident)
 
     if should_notify:
-        _dispatch_best_effort(db, incident, check, run, "triggered")
+        _dispatch_best_effort(db, incident, check, run, "triggered", now)
     return incident
 
 
@@ -111,16 +109,14 @@ def record_recovery(db: Session, check: Check, run: CheckRun, prev_status: str |
             last_seen_at=now,
             resolved_at=now,
             occurrence_count=1,
-            last_notified_at=now,
             external_refs={},
         )
         db.add(incident)
         db.flush()
         _event(db, incident, "recovered", run_id=run.id, previous_status=prev_status, legacy=True)
-        _event(db, incident, "notified", action="recovered", run_id=run.id)
         db.commit()
         db.refresh(incident)
-        _dispatch_best_effort(db, incident, check, run, "recovered")
+        _dispatch_best_effort(db, incident, check, run, "recovered", now)
         return incident
     if incident.status == "resolved":
         return incident
@@ -131,11 +127,9 @@ def record_recovery(db: Session, check: Check, run: CheckRun, prev_status: str |
     incident.resolved_at = now
     incident.next_escalation_at = None
     _event(db, incident, "recovered", run_id=run.id, previous_status=prev_status)
-    incident.last_notified_at = now
-    _event(db, incident, "notified", action="recovered", run_id=run.id)
     db.commit()
     db.refresh(incident)
-    _dispatch_best_effort(db, incident, check, run, "recovered")
+    _dispatch_best_effort(db, incident, check, run, "recovered", now)
     return incident
 
 
@@ -194,24 +188,33 @@ def process_due_escalations(db: Session, now: datetime | None = None) -> int:
             db.commit()
             continue
 
-        incident.escalation_level += 1
-        incident.last_notified_at = now
-        incident.next_escalation_at = (
-            _next_escalation_at(db, incident, check, run, now)
-            if incident.escalation_level < max_level
-            else None
-        )
-        _event(
-            db,
-            incident,
-            "escalated",
-            run_id=run.id,
-            escalation_level=incident.escalation_level,
-        )
+        old_level = incident.escalation_level
+        incident.escalation_level = old_level + 1
         db.commit()
         db.refresh(incident)
-        _dispatch_best_effort(db, incident, check, run, "escalated")
-        processed += 1
+        attempted = _dispatch_best_effort(db, incident, check, run, "escalated", now)
+        if attempted:
+            incident.next_escalation_at = (
+                _next_escalation_at(db, incident, check, run, now)
+                if incident.escalation_level < max_level
+                else None
+            )
+            _event(
+                db,
+                incident,
+                "escalated",
+                run_id=run.id,
+                escalation_level=incident.escalation_level,
+            )
+            db.commit()
+            db.refresh(incident)
+            processed += 1
+        else:
+            incident.escalation_level = old_level
+            incident.next_escalation_at = None
+            _event(db, incident, "system", reason="escalation skipped: no deliverable channels")
+            db.commit()
+            db.refresh(incident)
     return processed
 
 
@@ -273,11 +276,26 @@ def _next_escalation_at(
     return base + timedelta(minutes=max(1, delay))
 
 
-def _dispatch_best_effort(db: Session, incident: Incident, check: Check, run: CheckRun, action: str) -> None:
+def _dispatch_best_effort(
+    db: Session,
+    incident: Incident,
+    check: Check,
+    run: CheckRun,
+    action: str,
+    notified_at: datetime,
+) -> int:
     try:
-        notify.dispatch_incident(db, incident, check, run, action)
+        attempted = notify.dispatch_incident(db, incident, check, run, action)
+        if attempted:
+            incident.last_notified_at = notified_at
+            if action == "triggered":
+                incident.next_escalation_at = _next_escalation_at(db, incident, check, run, notified_at)
+            elif action == "recovered":
+                incident.next_escalation_at = None
+            _event(db, incident, "notified", action=action, run_id=run.id, attempted=attempted)
         db.commit()
         db.refresh(incident)
+        return attempted
     except Exception:  # noqa: BLE001 - notifications must never fail incident persistence
         db.rollback()
         log.warning(
@@ -285,3 +303,4 @@ def _dispatch_best_effort(db: Session, incident: Incident, check: Check, run: Ch
             extra={"event": "incident_notify_failed", "incident_id": incident.id},
             exc_info=True,
         )
+        return 0
