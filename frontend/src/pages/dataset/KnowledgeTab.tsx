@@ -20,6 +20,12 @@ const EMPTY: Knowledge = {
   notes: "",
 };
 
+function parseOptionalNumber(raw: string): { value: number | null; invalid: boolean } {
+  if (raw.trim() === "") return { value: null, invalid: false };
+  const value = Number(raw);
+  return Number.isFinite(value) ? { value, invalid: false } : { value: null, invalid: true };
+}
+
 export default function KnowledgeTab({
   datasetId,
   dirtyRef,
@@ -33,6 +39,8 @@ export default function KnowledgeTab({
   const editable = canEdit(user);
   const [form, setForm] = useState<Knowledge>(EMPTY);
   const [piiText, setPiiText] = useState("");
+  const [sloTargetText, setSloTargetText] = useState("");
+  const [sloWindowText, setSloWindowText] = useState("");
   const [saved, setSaved] = useState(false);
 
   const { data, isLoading, error } = useQuery({
@@ -44,18 +52,30 @@ export default function KnowledgeTab({
     if (data) {
       setForm({ ...EMPTY, ...data });
       setPiiText((data.pii_columns ?? []).join(", "));
+      setSloTargetText(data.slo_target_score == null ? "" : String(data.slo_target_score));
+      setSloWindowText(data.slo_window_days == null ? "" : String(data.slo_window_days));
     }
   }, [data]);
 
+  const set = <K extends keyof Knowledge>(key: K, value: Knowledge[K]) =>
+    setForm((f) => ({ ...f, [key]: value }));
+  const targetParsed = parseOptionalNumber(sloTargetText);
+  const windowParsed = parseOptionalNumber(sloWindowText);
+  const targetInvalid =
+    targetParsed.invalid || (targetParsed.value !== null && (targetParsed.value < 0 || targetParsed.value > 100));
+  const windowInvalid = windowParsed.invalid || (windowParsed.value !== null && windowParsed.value <= 0);
+
   const save = useMutation({
-    mutationFn: () =>
-      api.put<Knowledge>(`/datasets/${datasetId}/knowledge`, {
+    mutationFn: () => {
+      if (targetInvalid || windowInvalid) throw new Error("Fix invalid SLO fields before saving.");
+      return api.put<Knowledge>(`/datasets/${datasetId}/knowledge`, {
         ...form,
         freshness_sla_hours: form.freshness_sla_hours || null,
-        slo_target_score: form.slo_target_score ?? null,
-        slo_window_days: form.slo_window_days || null,
+        slo_target_score: targetParsed.value,
+        slo_window_days: windowParsed.value,
         pii_columns: piiText.split(",").map((s) => s.trim()).filter(Boolean),
-      }),
+      });
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["knowledge", datasetId] });
       setSaved(true);
@@ -66,9 +86,12 @@ export default function KnowledgeTab({
   // Dirty = the loaded form differs from what's on the server (and we're not mid-save).
   const baseline =
     data != null
-      ? `${JSON.stringify({ ...EMPTY, ...data })}|${(data.pii_columns ?? []).join(", ")}`
+      ? `${JSON.stringify({ ...EMPTY, ...data })}|${(data.pii_columns ?? []).join(", ")}|${
+          data.slo_target_score ?? ""
+        }|${data.slo_window_days ?? ""}`
       : null;
-  const dirty = baseline !== null && !save.isPending && `${JSON.stringify(form)}|${piiText}` !== baseline;
+  const dirty =
+    baseline !== null && !save.isPending && `${JSON.stringify(form)}|${piiText}|${sloTargetText}|${sloWindowText}` !== baseline;
 
   useEffect(() => {
     if (dirtyRef) dirtyRef.current = dirty;
@@ -89,14 +112,11 @@ export default function KnowledgeTab({
 
   if (isLoading) return <Spinner />;
 
-  const set = <K extends keyof Knowledge>(key: K, value: Knowledge[K]) =>
-    setForm((f) => ({ ...f, [key]: value }));
-  const targetInvalid =
-    form.slo_target_score !== null && (form.slo_target_score < 0 || form.slo_target_score > 100);
-  const windowInvalid = form.slo_window_days !== null && form.slo_window_days <= 0;
   const sloTargetLabel = !form.slo_enabled
     ? "disabled"
-    : form.slo_target_score === null
+    : targetInvalid
+      ? "invalid target"
+      : targetParsed.value === null
       ? "importance default"
       : "explicit target";
 
@@ -190,8 +210,13 @@ export default function KnowledgeTab({
                 min={0}
                 max={100}
                 step={0.1}
-                value={form.slo_target_score ?? ""}
-                onChange={(e) => set("slo_target_score", e.target.value === "" ? null : Number(e.target.value))}
+                value={sloTargetText}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  setSloTargetText(raw);
+                  const parsed = parseOptionalNumber(raw);
+                  if (!parsed.invalid) set("slo_target_score", parsed.value);
+                }}
                 placeholder="Importance default"
                 aria-invalid={targetInvalid}
               />
@@ -203,8 +228,13 @@ export default function KnowledgeTab({
                 type="number"
                 min={1}
                 step={1}
-                value={form.slo_window_days ?? ""}
-                onChange={(e) => set("slo_window_days", e.target.value === "" ? null : Number(e.target.value))}
+                value={sloWindowText}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  setSloWindowText(raw);
+                  const parsed = parseOptionalNumber(raw);
+                  if (!parsed.invalid) set("slo_window_days", parsed.value);
+                }}
                 placeholder="30"
                 aria-invalid={windowInvalid}
               />
