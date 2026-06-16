@@ -31,6 +31,9 @@ def cleanup_dataset_dependents(db: Session, dataset_id: int) -> None:
     db.query(models.AdhocDashboard).filter(
         models.AdhocDashboard.dataset_id == dataset_id
     ).delete(synchronize_session=False)
+    db.query(models.SchemaSnapshot).filter(
+        models.SchemaSnapshot.dataset_id == dataset_id
+    ).delete(synchronize_session=False)
     db.query(models.NotificationRule).filter(
         models.NotificationRule.dataset_id == dataset_id
     ).delete(synchronize_session=False)

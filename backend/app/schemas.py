@@ -174,6 +174,39 @@ class ProfileOut(BaseModel):
     table_facts: dict[str, Any] = {}
 
 
+# ---- schema history (#101) ----
+class SchemaColumnOut(BaseModel):
+    name: str
+    dtype: str
+    nullable: bool
+    ordinal: int
+
+
+class SchemaChangeSummary(BaseModel):
+    added: list[str] = []
+    removed: list[str] = []
+    type_changed: int = 0
+    nullability_changed: int = 0
+    reordered: bool = False
+
+
+class SchemaSnapshotOut(BaseModel):
+    id: int
+    dataset_id: int
+    captured_at: datetime
+    source: str
+    is_baseline: bool
+    fingerprint: str
+    columns: list[SchemaColumnOut]
+    change_summary: SchemaChangeSummary | None = None  # vs the chronologically previous snapshot
+
+
+class SchemaHistoryOut(BaseModel):
+    dataset_id: int
+    pinned_baseline_id: int | None = None
+    snapshots: list[SchemaSnapshotOut]  # newest first
+
+
 # ---- knowledge ----
 class KnowledgeIn(BaseModel):
     business_context: str = ""

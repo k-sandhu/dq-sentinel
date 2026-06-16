@@ -128,6 +128,16 @@ def heuristic_proposals(
             )
             break  # one freshness check on the best candidate
 
+    # schema-change monitor (#101): cheap, valuable on every dataset — a dropped
+    # or retyped column is a classic silent break. Default baseline = previous run.
+    out.append(
+        _proposal(
+            "schema_change", None, {"baseline": "previous"}, "warn",
+            "Alert when columns are added/removed/retyped vs the previous run",
+            schedule_minutes=360,
+        )
+    )
+
     if rows >= 100:
         out.append(
             _proposal(

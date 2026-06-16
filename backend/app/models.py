@@ -90,6 +90,28 @@ class Profile(Base):
     dataset: Mapped[Dataset] = relationship(back_populates="profiles")
 
 
+class SchemaSnapshot(Base):
+    """Point-in-time column schema of a dataset (issue #101).
+
+    Captured (deduped by ``fingerprint``) on each profile run and on each
+    ``schema_change`` check run. Powers the schema-history timeline and the
+    ``schema_change`` check's pinned baseline. ``source``: profile | check |
+    baseline; ``is_baseline`` marks the single pinned baseline used by
+    ``baseline=pinned`` checks.
+    """
+
+    __tablename__ = "schema_snapshots"
+    __table_args__ = (Index("ix_schema_snap_dataset", "dataset_id", "captured_at"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id"), index=True)
+    captured_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    source: Mapped[str] = mapped_column(String(20), default="profile")  # profile | check | baseline
+    columns: Mapped[list] = mapped_column(JSON, default=list)  # [{name, dtype, nullable, ordinal}]
+    fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    is_baseline: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
 class TableKnowledge(Base):
     __tablename__ = "table_knowledge"
 

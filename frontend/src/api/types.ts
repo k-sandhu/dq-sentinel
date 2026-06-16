@@ -121,6 +121,39 @@ export interface Profile {
   };
 }
 
+// ---- schema history (#101) ----
+export interface SchemaColumn {
+  name: string;
+  dtype: string;
+  nullable: boolean;
+  ordinal: number;
+}
+
+export interface SchemaChangeSummary {
+  added: string[];
+  removed: string[];
+  type_changed: number;
+  nullability_changed: number;
+  reordered: boolean;
+}
+
+export interface SchemaSnapshot {
+  id: number;
+  dataset_id: number;
+  captured_at: string;
+  source: string; // profile | check | baseline
+  is_baseline: boolean;
+  fingerprint: string;
+  columns: SchemaColumn[];
+  change_summary: SchemaChangeSummary | null; // vs the chronologically previous snapshot
+}
+
+export interface SchemaHistory {
+  dataset_id: number;
+  pinned_baseline_id: number | null;
+  snapshots: SchemaSnapshot[]; // newest first
+}
+
 export interface Knowledge {
   dataset_id?: number;
   business_context: string;

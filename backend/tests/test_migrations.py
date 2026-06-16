@@ -11,6 +11,7 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect
 
 from app.config import BACKEND_DIR
@@ -83,5 +84,8 @@ def test_existing_create_all_db_is_stamped(monkeypatch):
     assert insp.has_table("alembic_version")
     with engine.connect() as c:
         version = c.exec_driver_sql("SELECT version_num FROM alembic_version").scalar()
-    assert version == "0001_baseline"  # stamped at head, baseline not re-applied
+    # Stamped at head (not re-migrated): equals the latest revision, whatever it is.
+    cfg = Config(str(BACKEND_DIR / "alembic.ini"))
+    head = ScriptDirectory.from_config(cfg).get_current_head()
+    assert version == head
     engine.dispose()
