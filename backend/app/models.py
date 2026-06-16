@@ -4,11 +4,12 @@ Status/enum-ish fields are plain strings validated at the schema layer to keep
 migrations trivial. JSON columns use sa.JSON (TEXT on SQLite, JSON on Postgres).
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import (
     JSON,
     Boolean,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -133,6 +134,40 @@ class TableKnowledge(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
     dataset: Mapped[Dataset] = relationship(back_populates="knowledge")
+
+
+class ScorecardSnapshot(Base):
+    """Daily aggregate quality scorecard point (#119).
+
+    This table intentionally stores app-metadata aggregates only: no source SQL,
+    source rows, DSNs, secrets, or row-level exception payloads.
+    """
+
+    __tablename__ = "scorecard_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "grain",
+            "key",
+            "snapshot_date",
+            name="uq_scorecard_snapshot_grain_key_date",
+        ),
+        Index("ix_scorecard_history_lookup", "grain", "key", "snapshot_date"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    grain: Mapped[str] = mapped_column(String(20))  # global|domain|team|owner|importance|dataset
+    key: Mapped[str] = mapped_column(String(255))
+    label: Mapped[str] = mapped_column(String(255), default="")
+    snapshot_date: Mapped[date] = mapped_column(Date)
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    slo_target: Mapped[float | None] = mapped_column(Float, nullable=True)
+    slo_status: Mapped[str] = mapped_column(String(20), default="unknown")
+    dataset_count: Mapped[int] = mapped_column(Integer, default=0)
+    active_check_count: Mapped[int] = mapped_column(Integer, default=0)
+    open_exception_count: Mapped[int] = mapped_column(Integer, default=0)
+    breached_dataset_count: Mapped[int] = mapped_column(Integer, default=0)
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class Check(Base):

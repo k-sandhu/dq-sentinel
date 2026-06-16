@@ -159,6 +159,33 @@ export interface SchemaHistory {
   snapshots: SchemaSnapshot[]; // newest first
 }
 
+// ---- scorecard history (#119) ----
+export type ScorecardHistoryGrain = "global" | "domain" | "team" | "owner" | "importance" | "dataset";
+
+export interface ScorecardHistoryPoint {
+  grain: ScorecardHistoryGrain;
+  key: string;
+  label: string;
+  snapshot_date: string;
+  score: number | null;
+  slo_target: number | null;
+  slo_status: string;
+  dataset_count: number;
+  active_check_count: number;
+  open_exception_count: number;
+  breached_dataset_count: number;
+  detail: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ScorecardHistory {
+  grain: ScorecardHistoryGrain;
+  key: string | null;
+  days: number;
+  sparse: boolean; // missing days are omitted; clients should render gaps
+  points: ScorecardHistoryPoint[]; // oldest first, then key for multi-series requests
+}
+
 export interface Knowledge {
   dataset_id?: number;
   business_context: string;

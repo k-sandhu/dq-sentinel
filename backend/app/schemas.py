@@ -1,6 +1,6 @@
 """Pydantic request/response schemas. Mirror changes into frontend/src/api/types.ts."""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
@@ -210,6 +210,34 @@ class SchemaHistoryOut(BaseModel):
     dataset_id: int
     pinned_baseline_id: int | None = None
     snapshots: list[SchemaSnapshotOut]  # newest first
+
+
+# ---- scorecard history (#119) ----
+ScorecardHistoryGrain = Literal["global", "domain", "team", "owner", "importance", "dataset"]
+
+
+class ScorecardHistoryPoint(ORMModel):
+    grain: ScorecardHistoryGrain
+    key: str
+    label: str
+    snapshot_date: date
+    score: float | None = None
+    slo_target: float | None = None
+    slo_status: str
+    dataset_count: int
+    active_check_count: int
+    open_exception_count: int
+    breached_dataset_count: int
+    detail: dict[str, Any] = {}
+    created_at: datetime
+
+
+class ScorecardHistoryOut(BaseModel):
+    grain: ScorecardHistoryGrain
+    key: str | None = None
+    days: int
+    sparse: bool = True  # missing days are omitted; clients should render gaps
+    points: list[ScorecardHistoryPoint] = []  # oldest first, then key for multi-series requests
 
 
 # ---- SLA tracking (#102) ----

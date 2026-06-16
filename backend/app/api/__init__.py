@@ -18,8 +18,8 @@ from app.api import (
     rca,
     runs,
     saved_queries,
-    search,
     scorecards,
+    search,
     sla,
 )
 
@@ -36,11 +36,11 @@ api_router.include_router(rca.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(query.router)
 api_router.include_router(saved_queries.router)
+api_router.include_router(scorecards.router)
 api_router.include_router(adhoc_dashboards.router)
 api_router.include_router(custom_dashboards.router)
 api_router.include_router(mcp.router)
 api_router.include_router(notifications.router)
 api_router.include_router(audit.router)
 api_router.include_router(search.router)
-api_router.include_router(scorecards.router)
 api_router.include_router(sla.router)
