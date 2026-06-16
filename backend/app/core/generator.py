@@ -33,6 +33,18 @@ def _proposal(
     }
 
 
+def _profile_contract_columns(profile: dict[str, Any]) -> list[dict[str, Any]]:
+    columns: list[dict[str, Any]] = []
+    for col in profile.get("columns", []):
+        expected: dict[str, Any] = {"name": col["name"]}
+        if col.get("dtype") is not None:
+            expected["dtype"] = col["dtype"]
+        if col.get("nullable") is not None:
+            expected["nullable"] = col["nullable"]
+        columns.append(expected)
+    return columns
+
+
 def heuristic_proposals(
     profile: dict[str, Any], knowledge: dict[str, Any] | None = None
 ) -> list[dict[str, Any]]:
@@ -119,14 +131,39 @@ def heuristic_proposals(
     for t in facts.get("temporal_columns", []):
         lname = t["name"].lower()
         if any(h in lname for h in ("created", "updated", "date", "time", "_at", "ts")):
+            fallback_hours = sla or 48
             out.append(
                 _proposal(
-                    "freshness", t["name"], {"max_age_hours": sla or 48}, "error" if sla else "warn",
+                    "freshness",
+                    t["name"],
+                    {
+                        "strategy": "adaptive",
+                        "default_max_age_hours": fallback_hours,
+                        "min_history": 3,
+                        "lookback_runs": 14,
+                        "multiplier": 2.0,
+                        "grace_hours": 1.0,
+                    },
+                    "error" if sla else "warn",
                     ("Freshness SLA from table knowledge" if sla else "Temporal column — default 48h SLA"),
                     schedule_minutes=360,
                 )
             )
             break  # one freshness check on the best candidate
+
+    # Schema contract: pin the profiled columns as the expected table contract.
+    contract_columns = _profile_contract_columns(profile)
+    if contract_columns:
+        out.append(
+            _proposal(
+                "schema_contract",
+                None,
+                {"expected_columns": contract_columns, "allow_additive": True, "case_sensitive": False},
+                "warn",
+                "Validate the current table columns against the profiled schema contract",
+                schedule_minutes=360,
+            )
+        )
 
     # schema-change monitor (#101): cheap, valuable on every dataset — a dropped
     # or retyped column is a classic silent break. Default baseline = previous run.
@@ -147,8 +184,11 @@ def heuristic_proposals(
         )
         out.append(
             _proposal(
-                "row_count_anomaly", None, {"sigma": 3.0}, "warn",
-                "Detect unusual row-count jumps/drops against recent history",
+                "row_count_anomaly",
+                None,
+                {"strategy": "adaptive", "lookback_runs": 14, "min_history": 5, "multiplier": 3.5},
+                "warn",
+                "Detect unusual row-count jumps/drops against a robust recent baseline",
             )
         )
 

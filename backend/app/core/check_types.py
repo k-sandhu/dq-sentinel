@@ -102,6 +102,46 @@ def _lit(v: Any) -> str:
     return "'" + str(v).replace("'", "''") + "'"
 
 
+def _bool_param(value: Any, default: bool) -> bool:
+    if value in (None, ""):
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in {"1", "true", "yes", "y", "on"}:
+            return True
+        if v in {"0", "false", "no", "n", "off"}:
+            return False
+    return bool(value)
+
+
+def _successful_runs(ctx: CheckContext, lookback: int) -> list[Any]:
+    if ctx.db is None or ctx.check_id is None:
+        return []
+    from app.models import CheckRun  # local import to avoid cycle
+
+    return (
+        ctx.db.query(CheckRun)
+        .filter(CheckRun.check_id == ctx.check_id, CheckRun.status != "error")
+        .order_by(CheckRun.started_at.desc())
+        .limit(lookback)
+        .all()
+    )
+
+
+def _numeric_metric_history(ctx: CheckContext, metric: str, lookback: int) -> list[float]:
+    values: list[float] = []
+    for run in _successful_runs(ctx, lookback):
+        if not isinstance(run.metrics, dict) or metric not in run.metrics:
+            continue
+        try:
+            values.append(float(run.metrics[metric]))
+        except (TypeError, ValueError):
+            continue
+    return values
+
+
 # ---------------------------------------------------------------- not_null
 def _run_not_null(ctx: CheckContext) -> CheckResult:
     r = _sample_where(ctx, f"{ctx.col} IS NULL")
@@ -230,13 +270,218 @@ def _run_regex(ctx: CheckContext) -> CheckResult:
     return r
 
 
+# ---------------------------------------------------------------- schema_contract
+def _nullable_value(value: Any) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        v = value.strip().lower().replace("_", " ")
+        if v in {"true", "1", "yes", "y", "nullable", "null"}:
+            return True
+        if v in {"false", "0", "no", "n", "not null", "required"}:
+            return False
+    return bool(value)
+
+
+def _contract_columns(raw_columns: list[Any]) -> list[dict[str, Any]]:
+    columns: list[dict[str, Any]] = []
+    for i, raw in enumerate(raw_columns):
+        if isinstance(raw, str):
+            name = raw
+            dtype = None
+            nullable = None
+        elif isinstance(raw, dict):
+            name = raw.get("name") or raw.get("column") or raw.get("column_name")
+            dtype = raw.get("dtype", raw.get("type", raw.get("data_type")))
+            nullable = _nullable_value(raw.get("nullable"))
+        else:
+            raise ValueError("schema_contract expected_columns entries must be strings or objects")
+        if not name:
+            raise ValueError("schema_contract expected_columns entries require a column name")
+        col: dict[str, Any] = {"name": str(name), "ordinal": i}
+        if dtype is not None:
+            col["dtype"] = str(dtype)
+        if nullable is not None:
+            col["nullable"] = nullable
+        columns.append(col)
+    return columns
+
+
+def _contract_key(name: str, case_sensitive: bool) -> str:
+    return name if case_sensitive else name.lower()
+
+
+def _contract_type(dtype: Any) -> str | None:
+    if dtype is None:
+        return None
+    return " ".join(str(dtype).strip().lower().split())
+
+
+def _contract_public_col(col: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {"name": col["name"]}
+    if "dtype" in col:
+        out["dtype"] = col["dtype"]
+    if "nullable" in col:
+        out["nullable"] = col["nullable"]
+    return out
+
+
+def _contract_diff_summary(metrics: dict[str, Any], count_added: bool) -> str:
+    counts = [
+        (len(metrics["missing"]), "missing"),
+        (len(metrics["type_changed"]), "type change"),
+        (len(metrics["nullability_changed"]), "nullability change"),
+    ]
+    if count_added:
+        counts.append((len(metrics["added"]), "added"))
+    parts = [f"{n} {label}{'' if n == 1 else 's'}" for n, label in counts if n]
+    return ", ".join(parts)
+
+
+def _run_schema_contract(ctx: CheckContext) -> CheckResult:
+    expected_raw = ctx.params.get("expected_columns") or []
+    expected = _contract_columns(expected_raw)
+    if not expected:
+        raise ValueError("schema_contract requires non-empty 'expected_columns'")
+
+    current = _contract_columns(ctx.connector.get_columns(ctx.table, ctx.schema))
+    allow_additive = _bool_param(ctx.params.get("allow_additive"), True)
+    case_sensitive = _bool_param(ctx.params.get("case_sensitive"), False)
+
+    expected_by_key = {_contract_key(c["name"], case_sensitive): c for c in expected}
+    current_by_key = {_contract_key(c["name"], case_sensitive): c for c in current}
+
+    missing = [
+        _contract_public_col(col)
+        for key, col in expected_by_key.items()
+        if key not in current_by_key
+    ]
+    added = [
+        _contract_public_col(col)
+        for key, col in current_by_key.items()
+        if key not in expected_by_key
+    ]
+    type_changed: list[dict[str, Any]] = []
+    nullability_changed: list[dict[str, Any]] = []
+    for key, expected_col in expected_by_key.items():
+        current_col = current_by_key.get(key)
+        if current_col is None:
+            continue
+        expected_type = _contract_type(expected_col.get("dtype"))
+        current_type = _contract_type(current_col.get("dtype"))
+        if expected_type is not None and current_type is not None and expected_type != current_type:
+            type_changed.append(
+                {
+                    "column": expected_col["name"],
+                    "expected": expected_col.get("dtype"),
+                    "actual": current_col.get("dtype"),
+                }
+            )
+        if "nullable" in expected_col and "nullable" in current_col:
+            expected_nullable = bool(expected_col["nullable"])
+            current_nullable = bool(current_col["nullable"])
+            if expected_nullable != current_nullable:
+                nullability_changed.append(
+                    {
+                        "column": expected_col["name"],
+                        "expected": expected_nullable,
+                        "actual": current_nullable,
+                    }
+                )
+
+    violation_count = len(missing) + len(type_changed) + len(nullability_changed)
+    if not allow_additive:
+        violation_count += len(added)
+    metrics = {
+        "expected_count": len(expected),
+        "current_count": len(current),
+        "allow_additive": allow_additive,
+        "case_sensitive": case_sensitive,
+        "missing": missing,
+        "added": added,
+        "type_changed": type_changed,
+        "nullability_changed": nullability_changed,
+    }
+    if violation_count:
+        detail = f"Schema contract drift: {_contract_diff_summary(metrics, not allow_additive)}"
+    elif added:
+        detail = f"Schema contract matches; {len(added)} additive column(s) allowed"
+    else:
+        detail = "Schema contract matches"
+    return CheckResult(
+        violation_count=violation_count,
+        rows_evaluated=None,
+        metrics=metrics,
+        detail=detail,
+    )
+
+
 # ---------------------------------------------------------------- freshness
+def _parse_timestamp(value: Any) -> datetime | None:
+    ts = pd.to_datetime(str(value), errors="coerce", utc=True)
+    if pd.isna(ts):
+        return None
+    return ts.to_pydatetime()
+
+
+def _freshness_adaptive_threshold(ctx: CheckContext, fallback_max_age: float) -> tuple[float, dict[str, Any]]:
+    lookback = int(ctx.params.get("lookback_runs", 14))
+    min_history = int(ctx.params.get("min_history", 3))
+    multiplier = float(ctx.params.get("multiplier", 2.0))
+    grace_hours = float(ctx.params.get("grace_hours", 0.0))
+
+    history: list[datetime] = []
+    for run in reversed(_successful_runs(ctx, lookback)):
+        if not isinstance(run.metrics, dict):
+            continue
+        latest = _parse_timestamp(run.metrics.get("latest"))
+        if latest is not None:
+            history.append(latest)
+
+    intervals = [
+        (newer - older).total_seconds() / 3600
+        for older, newer in zip(history, history[1:], strict=False)
+        if newer > older
+    ]
+    metrics: dict[str, Any] = {
+        "strategy": "adaptive",
+        "default_max_age_hours": fallback_max_age,
+        "history_n": len(history),
+        "intervals_n": len(intervals),
+        "lookback_runs": lookback,
+        "min_history": min_history,
+        "multiplier": multiplier,
+        "grace_hours": grace_hours,
+    }
+
+    required_intervals = max(1, min_history - 1)
+    if len(history) < min_history or len(intervals) < required_intervals:
+        metrics.update(
+            {
+                "threshold_source": "default",
+                "note": "insufficient freshness history; using configured default",
+            }
+        )
+        return fallback_max_age, metrics
+
+    observed_interval = float(np.median(intervals))
+    max_age = max(0.0, observed_interval * multiplier + grace_hours)
+    metrics.update(
+        {
+            "threshold_source": "history",
+            "observed_interval_hours": round(observed_interval, 2),
+        }
+    )
+    return max_age, metrics
+
+
 def _run_freshness(ctx: CheckContext) -> CheckResult:
     """Newest timestamp must be recent. Future-dated rows (themselves a DQ smell)
     are excluded from the staleness computation and reported as a metric, so a
     handful of bad future dates can't mask a stale table.
     """
-    max_age = float(ctx.params.get("max_age_hours", 24))
     now_iso = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
     if ctx.connector.kind == "sqlite":
         not_future = f"datetime({ctx.col}) <= datetime(:now_iso)"
@@ -258,21 +503,42 @@ def _run_freshness(ctx: CheckContext) -> CheckResult:
             detail="No non-future values found for freshness column",
             metrics={"future_rows": future_rows},
         )
-    latest = pd.to_datetime(str(latest_raw), errors="coerce", utc=True)
-    if latest is pd.NaT:
+    latest_dt = _parse_timestamp(latest_raw)
+    if latest_dt is None:
         return CheckResult(violation_count=1, detail=f"Cannot parse {latest_raw!r} as timestamp")
-    age_h = (datetime.now(UTC) - latest.to_pydatetime()).total_seconds() / 3600
+    age_h = (datetime.now(UTC) - latest_dt).total_seconds() / 3600
+    strategy = str(ctx.params.get("strategy") or "static").lower()
+    if strategy == "adaptive":
+        fallback = float(ctx.params.get("default_max_age_hours", ctx.params.get("max_age_hours", 24)))
+        max_age, threshold_metrics = _freshness_adaptive_threshold(ctx, fallback)
+    else:
+        max_age = float(ctx.params.get("max_age_hours", 24))
+        threshold_metrics = {}
     stale = age_h > max_age
+    latest = str(pd.Timestamp(latest_dt))
+    metrics = {
+        "latest": latest,
+        "age_hours": round(age_h, 2),
+        "max_age_hours": round(max_age, 2) if strategy == "adaptive" else max_age,
+        "future_rows": future_rows,
+    }
+    metrics.update(threshold_metrics)
+    if strategy == "adaptive":
+        source = metrics.get("threshold_source")
+        if source == "history":
+            threshold_detail = (
+                f"adaptive max {max_age:.1f}h from median interval "
+                f"{metrics.get('observed_interval_hours')}h"
+            )
+        else:
+            threshold_detail = f"default max {max_age:.1f}h"
+    else:
+        threshold_detail = f"SLA {max_age}h"
     return CheckResult(
         violation_count=1 if stale else 0,
-        metrics={
-            "latest": str(latest),
-            "age_hours": round(age_h, 2),
-            "max_age_hours": max_age,
-            "future_rows": future_rows,
-        },
+        metrics=metrics,
         detail=(
-            f"Newest {ctx.column} is {age_h:.1f}h old (SLA {max_age}h)"
+            f"Newest {ctx.column} is {age_h:.1f}h old ({threshold_detail})"
             if stale
             else f"Fresh: {age_h:.1f}h old"
         )
@@ -294,25 +560,71 @@ def _run_row_count_min(ctx: CheckContext) -> CheckResult:
 
 
 # ---------------------------------------------------------------- row_count_anomaly
-def _run_row_count_anomaly(ctx: CheckContext) -> CheckResult:
-    from app.models import CheckRun  # local import to avoid cycle
+def _run_row_count_adaptive(ctx: CheckContext, count: int) -> CheckResult:
+    lookback = int(ctx.params.get("lookback_runs", 14))
+    min_history = int(ctx.params.get("min_history", 5))
+    multiplier = float(ctx.params.get("multiplier", 3.5))
+    history = _numeric_metric_history(ctx, "row_count", lookback)
+    metrics: dict[str, Any] = {
+        "row_count": count,
+        "strategy": "adaptive",
+        "history_n": len(history),
+        "lookback_runs": lookback,
+        "min_history": min_history,
+        "multiplier": multiplier,
+        "baseline_method": "median_mad",
+    }
 
+    if len(history) < min_history:
+        metrics["note"] = "collecting adaptive baseline"
+        return CheckResult(
+            0,
+            rows_evaluated=count,
+            metrics=metrics,
+            detail="Building adaptive row-count baseline",
+        )
+
+    center = float(np.median(history))
+    abs_dev = [abs(h - center) for h in history]
+    mad = float(np.median(abs_dev))
+    floor = max(1.0, abs(center) * 0.005)
+    robust_sigma = max(mad * 1.4826, floor)
+    lower = max(0.0, center - multiplier * robust_sigma)
+    upper = center + multiplier * robust_sigma
+    score = (count - center) / robust_sigma
+    anomalous = count < lower or count > upper
+    metrics.update(
+        {
+            "baseline_center": round(center, 2),
+            "mad": round(mad, 2),
+            "robust_sigma": round(robust_sigma, 2),
+            "lower_bound": round(lower, 2),
+            "upper_bound": round(upper, 2),
+            "score": round(score, 2),
+        }
+    )
+    return CheckResult(
+        violation_count=1 if anomalous else 0,
+        rows_evaluated=count,
+        metrics=metrics,
+        detail=(
+            f"Row count {count} vs adaptive median {center:.0f} "
+            f"(bounds {lower:.0f}-{upper:.0f}, score={score:+.1f})"
+        ),
+    )
+
+
+def _run_row_count_anomaly(ctx: CheckContext) -> CheckResult:
+    strategy = str(ctx.params.get("strategy") or "sigma").lower()
     sigma = float(ctx.params.get("sigma", 3.0))
     lookback = int(ctx.params.get("lookback_runs", 14))
     min_history = int(ctx.params.get("min_history", 5))
     count = int(ctx.connector.scalar(f"SELECT COUNT(*) FROM {ctx.ref}") or 0)
-    metrics: dict[str, Any] = {"row_count": count}
+    if strategy in ("adaptive", "robust"):
+        return _run_row_count_adaptive(ctx, count)
 
-    history: list[float] = []
-    if ctx.db is not None and ctx.check_id is not None:
-        runs = (
-            ctx.db.query(CheckRun)
-            .filter(CheckRun.check_id == ctx.check_id, CheckRun.status != "error")
-            .order_by(CheckRun.started_at.desc())
-            .limit(lookback)
-            .all()
-        )
-        history = [float(r.metrics["row_count"]) for r in runs if r.metrics and "row_count" in r.metrics]
+    metrics: dict[str, Any] = {"row_count": count}
+    history = _numeric_metric_history(ctx, "row_count", lookback)
 
     if len(history) < min_history:
         metrics.update({"history_n": len(history), "note": "collecting baseline"})
@@ -444,6 +756,28 @@ def _decile_edges(quantiles: dict[str, Any]) -> np.ndarray | None:
     return edges
 
 
+def _drift_pass_detail(
+    detail: str,
+    method: str,
+    threshold: float,
+    baseline_profile_id: int | None = None,
+    kind: str | None = None,
+    note: str | None = None,
+) -> CheckResult:
+    metrics: dict[str, Any] = {
+        "baseline_profile_id": baseline_profile_id,
+        "method": method,
+        "threshold": threshold,
+        "score": None,
+        "bins": [],
+    }
+    if kind is not None:
+        metrics["kind"] = kind
+    if note is not None:
+        metrics["note"] = note
+    return CheckResult(violation_count=0, rows_evaluated=None, metrics=metrics, detail=detail)
+
+
 def _numeric_drift(values: pd.Series, bcol: dict[str, Any], threshold: float) -> CheckResult | None:
     """PSI of current numeric values vs the baseline profile's decile distribution."""
     edges = _decile_edges(bcol.get("quantiles") or {})
@@ -456,6 +790,14 @@ def _numeric_drift(values: pd.Series, bcol: dict[str, Any], threshold: float) ->
         return CheckResult(
             violation_count=0,
             rows_evaluated=0,
+            metrics={
+                "method": "psi",
+                "kind": "numeric",
+                "score": None,
+                "threshold": threshold,
+                "bins": [],
+                "note": "no current numeric values",
+            },
             detail="no current numeric values to compare against baseline",
         )
     counts, _ = np.histogram(nums, bins=edges)
@@ -553,14 +895,17 @@ def _ks_drift(values: pd.Series, ctx: CheckContext, threshold: float) -> CheckRe
     base_metrics = {
         "method": "ks",
         "kind": "numeric",
+        "baseline_profile_id": None,
+        "score": None,
         "threshold": threshold,
         "drift_sample": current_sample,  # persisted by the runner into run.metrics
+        "current_sample_n": len(current_sample),
     }
     if len(prior) < 2 or len(current_sample) < 2:
         return CheckResult(
             violation_count=0,
             rows_evaluated=int(nums.size),
-            metrics={**base_metrics, "note": "baseline captured"},
+            metrics={**base_metrics, "prior_n": len(prior), "note": "baseline captured"},
             detail="KS baseline captured (first run) — drift measured from next run",
         )
     res = ks_2samp(current_sample, prior)
@@ -590,27 +935,41 @@ def _run_distribution_drift(ctx: CheckContext) -> CheckResult:
 
     profile = _latest_baseline_profile(ctx)
     if profile is None:
-        return CheckResult(violation_count=0, detail="no baseline profile — profile the dataset first")
+        return _drift_pass_detail(
+            "no baseline profile - profile the dataset first",
+            method,
+            threshold,
+            note="missing baseline profile",
+        )
     bcol = _baseline_column(profile, ctx.column or "")
     if bcol is None:
-        return CheckResult(
-            violation_count=0,
-            detail=f"column {ctx.column!r} not found in baseline profile #{profile.id}",
+        return _drift_pass_detail(
+            f"column {ctx.column!r} not found in baseline profile #{profile.id}",
+            method,
+            threshold,
+            baseline_profile_id=profile.id,
+            note="column missing from baseline profile",
         )
-
     if bcol.get("quantiles"):
         result = _numeric_drift(values, bcol, threshold)
-        if result is None:  # degenerate baseline (constant column) — can't bin
-            return CheckResult(
-                violation_count=0,
-                detail=f"baseline profile #{profile.id} has no usable numeric distribution",
+        if result is None:
+            return _drift_pass_detail(
+                f"baseline profile #{profile.id} has no usable numeric distribution",
+                method,
+                threshold,
+                baseline_profile_id=profile.id,
+                kind="numeric",
+                note="unusable numeric baseline",
             )
     elif bcol.get("top_values"):
         result = _categorical_drift(values, bcol, profile.sampled_rows, threshold)
     else:
-        return CheckResult(
-            violation_count=0,
-            detail=f"baseline profile #{profile.id} has neither quantiles nor categories for {ctx.column!r}",
+        return _drift_pass_detail(
+            f"baseline profile #{profile.id} has neither quantiles nor categories for {ctx.column!r}",
+            method,
+            threshold,
+            baseline_profile_id=profile.id,
+            note="unusable baseline profile column",
         )
 
     result.metrics["baseline_profile_id"] = profile.id
@@ -771,8 +1130,22 @@ CHECK_TYPES: dict[str, CheckType] = {
             _run_regex,
         ),
         CheckType(
+            "schema_contract", "Schema contract",
+            "Current table columns must match an expected contract", False,
+            [_p("expected_columns", "list", True, [], "Expected columns from profile/metadata"),
+             _p("allow_additive", "boolean", False, True, "Allow extra current columns"),
+             _p("case_sensitive", "boolean", False, False, "Compare column names case-sensitively")],
+            _run_schema_contract,
+        ),
+        CheckType(
             "freshness", "Freshness", "Newest timestamp must be recent", True,
-            [_p("max_age_hours", "number", True, 24, "Maximum age of newest row")],
+            [_p("max_age_hours", "number", False, 24, "Maximum age of newest row"),
+             _p("strategy", "string", False, "static", "static | adaptive"),
+             _p("default_max_age_hours", "number", False, 24, "Fallback age for adaptive mode"),
+             _p("min_history", "number", False, 3, "Prior runs required for adaptive threshold"),
+             _p("lookback_runs", "number", False, 14, "Prior runs to inspect"),
+             _p("multiplier", "number", False, 2.0, "Cadence multiplier for adaptive threshold"),
+             _p("grace_hours", "number", False, 0, "Extra hours added to adaptive threshold")],
             _run_freshness,
         ),
         CheckType(
@@ -782,8 +1155,10 @@ CHECK_TYPES: dict[str, CheckType] = {
         ),
         CheckType(
             "row_count_anomaly", "Row count anomaly", "Row count must track its recent history", False,
-            [_p("sigma", "number", False, 3.0), _p("lookback_runs", "number", False, 14),
-             _p("min_history", "number", False, 5)],
+            [_p("strategy", "string", False, "sigma", "sigma | adaptive"),
+             _p("sigma", "number", False, 3.0), _p("lookback_runs", "number", False, 14),
+             _p("min_history", "number", False, 5),
+             _p("multiplier", "number", False, 3.5, "MAD multiplier for adaptive bounds")],
             _run_row_count_anomaly,
         ),
         CheckType(
@@ -842,6 +1217,33 @@ def validate_check(check_type: str, column_name: str | None, params: dict[str, A
             re.compile(normalized["pattern"])
         except re.error as exc:
             raise ValueError(f"Invalid regex pattern: {exc}") from exc
+    if check_type == "schema_contract":
+        expected = _contract_columns(normalized.get("expected_columns") or [])
+        if not expected:
+            raise ValueError("schema_contract requires non-empty 'expected_columns'")
+        case_sensitive = _bool_param(normalized.get("case_sensitive"), False)
+        keys = [_contract_key(c["name"], case_sensitive) for c in expected]
+        if len(keys) != len(set(keys)):
+            raise ValueError("schema_contract expected_columns contains duplicate column names")
+        normalized["expected_columns"] = expected
+        normalized["allow_additive"] = _bool_param(normalized.get("allow_additive"), True)
+        normalized["case_sensitive"] = case_sensitive
+    if check_type == "freshness":
+        strategy = str(normalized.get("strategy") or "static").lower()
+        if strategy not in ("static", "adaptive"):
+            raise ValueError("freshness 'strategy' must be 'static' or 'adaptive'")
+        if "strategy" in normalized or strategy == "adaptive":
+            normalized["strategy"] = strategy
+        if strategy == "adaptive" and "default_max_age_hours" not in normalized:
+            normalized["default_max_age_hours"] = normalized.get("max_age_hours", 24)
+    if check_type == "row_count_anomaly":
+        strategy = str(normalized.get("strategy") or "sigma").lower()
+        if strategy == "robust":
+            strategy = "adaptive"
+        if strategy not in ("sigma", "adaptive"):
+            raise ValueError("row_count_anomaly 'strategy' must be 'sigma' or 'adaptive'")
+        if "strategy" in normalized or strategy == "adaptive":
+            normalized["strategy"] = strategy
     if check_type == "distribution_drift":
         method = str(normalized.get("method") or "psi").lower()
         if method not in ("psi", "ks"):
