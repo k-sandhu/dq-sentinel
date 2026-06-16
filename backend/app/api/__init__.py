@@ -13,6 +13,7 @@ from app.api import (
     exceptions_api,
     knowledge,
     mcp,
+    monitors,
     notifications,
     query,
     rca,
@@ -27,6 +28,7 @@ api_router.include_router(auth.router)
 api_router.include_router(chat.router)
 api_router.include_router(connections.router)
 api_router.include_router(datasets.router)
+api_router.include_router(monitors.router)
 api_router.include_router(knowledge.router)
 api_router.include_router(checks.router)
 api_router.include_router(runs.router)

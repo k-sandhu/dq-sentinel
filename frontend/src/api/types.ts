@@ -186,6 +186,45 @@ export interface Check {
   created_at: string;
 }
 
+// ---- monitor packs (issue #115) ----
+export type MonitorKind = "freshness" | "volume" | "schema" | "drift";
+
+export interface MonitorPackUpdate {
+  enabled?: boolean | null;
+  config?: Record<string, unknown> | null;
+}
+
+export interface MonitorPackSkipped {
+  kind: MonitorKind | string;
+  column_name: string | null;
+  code: string;
+  reason: string;
+}
+
+export interface MonitorPackReconciliation {
+  status: string;
+  profile_id: number | null;
+  created: number;
+  updated: number;
+  disabled: number;
+  skipped: MonitorPackSkipped[];
+  message: string;
+}
+
+export interface MonitorPack {
+  id: number;
+  dataset_id: number;
+  enabled: boolean;
+  config: Record<string, unknown>;
+  status: string;
+  last_error: string;
+  created_at: string;
+  updated_at: string;
+  last_reconciled_at: string | null;
+  reconciliation: MonitorPackReconciliation | null;
+  managed_checks: Check[];
+}
+
 export interface CheckTypeInfo {
   key: string;
   label: string;

@@ -332,6 +332,46 @@ class CheckOut(ORMModel):
     created_at: datetime
 
 
+# ---- monitor packs (issue #115) ----
+MonitorKind = Literal["freshness", "volume", "schema", "drift"]
+
+
+class MonitorPackUpdate(BaseModel):
+    enabled: bool | None = None
+    config: dict[str, Any] | None = None
+
+
+class MonitorPackSkipped(BaseModel):
+    kind: MonitorKind | str
+    column_name: str | None = None
+    code: str = ""
+    reason: str
+
+
+class MonitorPackReconciliationOut(BaseModel):
+    status: str
+    profile_id: int | None = None
+    created: int = 0
+    updated: int = 0
+    disabled: int = 0
+    skipped: list[MonitorPackSkipped] = []
+    message: str = ""
+
+
+class MonitorPackOut(ORMModel):
+    id: int
+    dataset_id: int
+    enabled: bool
+    config: dict[str, Any]
+    status: str
+    last_error: str
+    created_at: datetime
+    updated_at: datetime
+    last_reconciled_at: datetime | None
+    reconciliation: MonitorPackReconciliationOut | None = None
+    managed_checks: list[CheckOut] = []
+
+
 class GenerateChecksIn(BaseModel):
     dataset_id: int
     use_llm: bool = True  # falls back to heuristics when LLM unavailable
