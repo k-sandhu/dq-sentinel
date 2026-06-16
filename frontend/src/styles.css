@@ -377,6 +377,7 @@ textarea { resize: vertical; min-height: 70px; }
 /* ---------- misc ---------- */
 .empty { padding: 40px; text-align: center; color: var(--text-light); }
 .empty .big { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+.empty.compact { padding: 18px; font-size: 12.5px; }
 .spinner { width: 18px; height: 18px; border: 2.5px solid var(--border); border-top-color: var(--brand); border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .center { display: flex; align-items: center; justify-content: center; padding: 40px; gap: 10px; color: var(--text-light); }
@@ -419,6 +420,58 @@ html[data-theme="dark"] .modal-backdrop { background: rgba(0, 0, 0, 0.55); }
 .tab:hover { color: var(--brand-dark); border-color: transparent; }
 .tab.on { color: var(--brand); border-bottom-color: var(--brand); }
 .tab .count { background: var(--bg); border: 1px solid var(--border); border-radius: 99px; font-size: 11px; padding: 0 7px; margin-left: 6px; color: var(--text-light); }
+
+/* ---------- monitor packs ---------- */
+.monitor-group-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+.monitor-group { overflow: hidden; }
+.monitor-group-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding-bottom: 10px; }
+.monitor-group-head p { margin: 4px 0 0; color: var(--text-light); font-size: 12px; }
+.monitor-kind-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.monitor-kind-toggle {
+  display: flex; gap: 9px; align-items: flex-start; border: 1px solid var(--border-light);
+  border-radius: 6px; padding: 10px 12px; cursor: pointer;
+}
+.monitor-kind-toggle input { margin-top: 2px; flex: none; }
+.monitor-kind-toggle span { display: grid; gap: 2px; }
+.monitor-kind-toggle small { color: var(--text-light); font-weight: 400; line-height: 1.35; }
+
+/* ---------- incidents ---------- */
+.incident-filterbar {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 10px 14px; margin-bottom: 14px;
+}
+.incident-filterbar select, .incident-filterbar input { margin-top: 0; }
+.incident-search { display: flex; gap: 8px; align-items: center; margin-left: auto; flex-wrap: wrap; }
+.incident-search input { min-width: 240px; }
+.incident-title { font-weight: 700; color: var(--text-dark); overflow-wrap: anywhere; }
+.incident-sub { color: var(--text-light); font-size: 11.5px; margin-top: 2px; }
+.incident-refs, .incident-links { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.incident-links a { font-size: 12px; font-weight: 600; white-space: nowrap; }
+.incident-detail-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 14px; }
+.incident-detail-head p { margin: 5px 0 0; color: var(--text-light); font-size: 13px; }
+.incident-badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.incident-stats { margin-bottom: 16px; }
+.incident-stats > div, .incident-metrics > div {
+  border: 1px solid var(--border-light); border-radius: 6px; padding: 10px 12px; background: var(--card2);
+}
+.incident-stats span, .incident-metrics span {
+  display: block; color: var(--text-light); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+}
+.incident-stats strong, .incident-metrics strong {
+  display: block; color: var(--text-dark); font-size: 14px; margin-top: 4px; overflow-wrap: anywhere;
+}
+.incident-detail-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(220px, 0.8fr); gap: 16px; margin-bottom: 16px; }
+.incident-detail-grid h4, .incident-section h4 { font-size: 13px; margin-bottom: 8px; }
+.incident-context-lines { display: grid; gap: 4px; color: var(--text-light); font-size: 12.5px; margin-top: 10px; }
+.incident-section { margin-top: 16px; }
+.incident-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 900px) {
+  .monitor-group-grid, .monitor-kind-controls, .incident-detail-grid { grid-template-columns: 1fr; }
+  .incident-search { margin-left: 0; width: 100%; }
+  .incident-search input { flex: 1; min-width: 180px; }
+  .incident-metrics { grid-template-columns: 1fr; }
+}
 
 /* ---------- profile bars ---------- */
 .mini-bar { height: 6px; border-radius: 3px; background: var(--border-light); overflow: hidden; }

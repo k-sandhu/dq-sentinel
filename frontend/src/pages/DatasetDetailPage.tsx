@@ -13,12 +13,13 @@ import DashboardsTab from "./dataset/DashboardsTab";
 import ExceptionsTab from "./dataset/ExceptionsTab";
 import KnowledgeTab from "./dataset/KnowledgeTab";
 import LineageTab from "./dataset/LineageTab";
+import MonitorPackTab from "./dataset/MonitorPackTab";
 import ProfileTab from "./dataset/ProfileTab";
 import RcaTab from "./dataset/RcaTab";
 import RunsTab from "./dataset/RunsTab";
 import SchemaTab from "./dataset/SchemaTab";
 
-const TABS = ["profile", "code", "schema", "lineage", "checks", "runs", "exceptions", "dashboards", "knowledge", "rca"] as const;
+const TABS = ["profile", "code", "schema", "lineage", "monitors", "checks", "runs", "exceptions", "dashboards", "knowledge", "rca"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function DatasetDetailPage() {
@@ -134,6 +135,14 @@ export default function DatasetDetailPage() {
       {active === "code" && <CodeTab datasetId={datasetId} />}
       {active === "schema" && <SchemaTab datasetId={datasetId} />}
       {active === "lineage" && <LineageTab dataset={dataset} />}
+      {active === "monitors" && (
+        <MonitorPackTab
+          datasetId={datasetId}
+          hasProfile={!!profileQuery.data}
+          onProfileNow={canEdit(user) ? () => runProfile.mutate() : undefined}
+          profiling={runProfile.isPending}
+        />
+      )}
       {active === "checks" && <ChecksTab datasetId={datasetId} hasProfile={!!profileQuery.data} />}
       {active === "runs" && <RunsTab datasetId={datasetId} />}
       {active === "exceptions" && <ExceptionsTab datasetId={datasetId} />}

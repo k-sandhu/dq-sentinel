@@ -186,6 +186,57 @@ export interface Check {
   created_at: string;
 }
 
+// ---- managed monitor packs (issues #111/#113) ----
+export type MonitorKind = "freshness" | "volume" | "schema" | "drift";
+export type MonitorPackStatus = "ready" | "partial" | "pending_profile" | "disabled" | "error" | string;
+
+export interface MonitorPackConfig {
+  version?: number;
+  monitors: Record<MonitorKind, boolean>;
+  cadence: Record<string, number>;
+  sensitivity: Record<string, number>;
+  limits?: Record<string, number>;
+  overrides?: Record<string, unknown>;
+}
+
+export interface MonitorPackSkipped {
+  kind: MonitorKind | string;
+  column_name: string | null;
+  code: string;
+  reason: string;
+}
+
+export interface MonitorPackReconciliation {
+  status: string;
+  profile_id: number | null;
+  created: number;
+  updated: number;
+  disabled: number;
+  skipped: MonitorPackSkipped[];
+  message: string;
+}
+
+export interface MonitorPack {
+  id: number;
+  dataset_id: number;
+  enabled: boolean;
+  config: MonitorPackConfig;
+  status: MonitorPackStatus;
+  last_error: string;
+  created_at: string;
+  updated_at: string;
+  last_reconciled_at: string | null;
+  reconciliation: MonitorPackReconciliation | null;
+  managed_checks: Check[];
+}
+
+export type MonitorPackState = MonitorPack;
+
+export interface MonitorPackUpdate {
+  enabled?: boolean | null;
+  config?: MonitorPackConfig | Record<string, unknown> | null;
+}
+
 export interface CheckTypeInfo {
   key: string;
   label: string;
@@ -493,8 +544,15 @@ export interface McpServer {
   created_at: string;
 }
 
-// ---- notification rules (issue #27) ----
-export type NotifyChannel = "slack" | "email";
+// ---- notification rules / incident integrations (issues #27/#114) ----
+export type NotifyChannel =
+  | "slack"
+  | "email"
+  | "webhook"
+  | "teams"
+  | "pagerduty"
+  | "jira"
+  | "servicenow";
 
 export interface NotificationRule {
   id: number;
@@ -503,9 +561,55 @@ export interface NotificationRule {
   min_severity: Severity;
   channel: NotifyChannel;
   target: string; // webhook URL or comma-separated emails ("" = global Slack default)
+  target_masked?: string | null;
   on_error_runs: boolean;
+  dedupe_window_minutes?: number | null;
+  escalation_delay_minutes?: number | null;
+  max_escalation_level?: number | null;
   enabled: boolean;
   created_at: string;
+}
+
+// ---- incidents (issue #114) ----
+export type IncidentStatus = "open" | "acknowledged" | "resolved";
+export type IncidentSeverity = Severity;
+export type IncidentExternalRefs = Record<string, unknown>;
+
+export interface IncidentRecord {
+  id: number;
+  dataset_id: number;
+  dataset_name: string;
+  check_id: number;
+  check_name: string;
+  current_run_id: number | null;
+  dedupe_key: string;
+  title: string;
+  severity: IncidentSeverity;
+  status: IncidentStatus;
+  failure_status: RunStatus;
+  first_seen_at: string;
+  last_seen_at: string;
+  resolved_at: string | null;
+  occurrence_count: number;
+  last_notified_at: string | null;
+  next_escalation_at: string | null;
+  escalation_level: number;
+  external_refs: IncidentExternalRefs;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface IncidentEvent {
+  id: number;
+  incident_id: number;
+  kind: string;
+  detail: Record<string, unknown>;
+  user: string | null;
+  created_at: string;
+}
+
+export interface IncidentDetail extends IncidentRecord {
+  events: IncidentEvent[];
 }
 
 // ---- ad-hoc dashboards ----

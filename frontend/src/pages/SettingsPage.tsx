@@ -381,6 +381,87 @@ function McpServersCard() {
   );
 }
 
+const CHANNELS: Record<
+  NotifyChannel,
+  {
+    label: string;
+    targetLabel: string;
+    placeholder: string;
+    hint: string;
+    required: boolean;
+    targetSecret: boolean;
+  }
+> = {
+  slack: {
+    label: "Slack",
+    targetLabel: "Webhook URL",
+    placeholder: "Blank = global Slack webhook",
+    hint: "Incoming webhook URL. Leave blank to use DQ_NOTIFY_SLACK_WEBHOOK_URL.",
+    required: false,
+    targetSecret: true,
+  },
+  email: {
+    label: "Email",
+    targetLabel: "Recipients",
+    placeholder: "alice@co.com, oncall@co.com",
+    hint: "Comma-separated recipients. Requires SMTP configured via DQ_SMTP_* env vars.",
+    required: true,
+    targetSecret: false,
+  },
+  webhook: {
+    label: "Webhook",
+    targetLabel: "HTTPS endpoint",
+    placeholder: "https://hooks.example.com/dq",
+    hint: "Generic HTTPS destination. Leave blank to use the backend's configured webhook default.",
+    required: false,
+    targetSecret: true,
+  },
+  teams: {
+    label: "Teams",
+    targetLabel: "Incoming webhook URL",
+    placeholder: "Blank = configured Teams webhook",
+    hint: "Microsoft Teams incoming-webhook URL. Leave blank to use backend environment configuration.",
+    required: false,
+    targetSecret: true,
+  },
+  pagerduty: {
+    label: "PagerDuty",
+    targetLabel: "Service override",
+    placeholder: "Blank = configured routing key",
+    hint: "PagerDuty uses the backend routing key from environment configuration; target is an optional route label.",
+    required: false,
+    targetSecret: false,
+  },
+  jira: {
+    label: "Jira",
+    targetLabel: "Project key",
+    placeholder: "Blank = configured Jira project",
+    hint: "Creates or updates Jira issues. Site URL, credentials, and default project come from backend configuration.",
+    required: false,
+    targetSecret: false,
+  },
+  servicenow: {
+    label: "ServiceNow",
+    targetLabel: "Assignment group or table",
+    placeholder: "Blank = configured assignment group",
+    hint: "Creates or updates ServiceNow incidents. Instance URL, credentials, and defaults come from backend configuration.",
+    required: false,
+    targetSecret: false,
+  },
+};
+
+function displayTarget(rule: NotificationRule): string {
+  if (rule.target_masked) return rule.target_masked;
+  if (!rule.target) return "global default";
+  if (rule.channel === "email" || rule.channel === "jira" || rule.channel === "servicenow") return rule.target;
+  try {
+    const parsed = new URL(rule.target);
+    return `${parsed.hostname}/...`;
+  } catch {
+    return "configured";
+  }
+}
+
 function NotificationsCard() {
   const qc = useQueryClient();
   const [adding, setAdding] = useState(false);
@@ -389,6 +470,9 @@ function NotificationsCard() {
   const [channel, setChannel] = useState<NotifyChannel>("slack");
   const [target, setTarget] = useState("");
   const [onErrorRuns, setOnErrorRuns] = useState(true);
+  const [dedupeWindow, setDedupeWindow] = useState("60");
+  const [escalationDelay, setEscalationDelay] = useState("30");
+  const [maxEscalationLevel, setMaxEscalationLevel] = useState("3");
   const [tested, setTested] = useState<Record<number, string>>({});
 
   const { data, error } = useQuery({
@@ -400,6 +484,7 @@ function NotificationsCard() {
     queryFn: () => api.get<Dataset[]>("/datasets"),
   });
 
+  const meta = CHANNELS[channel];
   const invalidate = () => qc.invalidateQueries({ queryKey: ["notification-rules"] });
   const reset = () => {
     setAdding(false);
@@ -408,16 +493,24 @@ function NotificationsCard() {
     setChannel("slack");
     setTarget("");
     setOnErrorRuns(true);
+    setDedupeWindow("60");
+    setEscalationDelay("30");
+    setMaxEscalationLevel("3");
   };
   const create = useMutation({
-    mutationFn: () =>
-      api.post<NotificationRule>("/notifications/rules", {
+    mutationFn: () => {
+      const body: Record<string, unknown> = {
         dataset_id: datasetId ? Number(datasetId) : null,
         min_severity: minSeverity,
         channel,
         target,
         on_error_runs: onErrorRuns,
-      }),
+      };
+      if (dedupeWindow.trim()) body.dedupe_window_minutes = Number(dedupeWindow);
+      if (escalationDelay.trim()) body.escalation_delay_minutes = Number(escalationDelay);
+      if (maxEscalationLevel.trim()) body.max_escalation_level = Number(maxEscalationLevel);
+      return api.post<NotificationRule>("/notifications/rules", body);
+    },
     onSuccess: () => {
       reset();
       invalidate();
@@ -434,22 +527,19 @@ function NotificationsCard() {
   });
   const test = useMutation({
     mutationFn: (id: number) => api.post<{ ok: boolean; message: string }>(`/notifications/rules/${id}/test`),
-    onSuccess: (res, id) => setTested((t) => ({ ...t, [id]: res.ok ? "✓ sent" : res.message })),
+    onSuccess: (res, id) => setTested((t) => ({ ...t, [id]: res.ok ? "sent" : res.message })),
   });
 
-  // Slack target may be blank (falls back to the global webhook); email needs a target.
-  const addDisabled = create.isPending || (channel === "email" && !target.trim());
+  const addDisabled = create.isPending || (meta.required && !target.trim());
 
   return (
     <div className="card" style={{ marginBottom: 18 }}>
       <div className="card-pad" style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", paddingBottom: 8 }}>
         <div>
-          <h3>Notifications — alerts on failed runs</h3>
+          <h3>Notifications and incident integrations</h3>
           <p style={{ fontSize: 12.5, color: "var(--text-light)", margin: "4px 0 0" }}>
-            Route check failures to Slack or email. Alerts fire on the transition into failure (and once
-            on recovery) — a check that keeps failing stays quiet, so you are not paged twice for the same
-            break. A rule with no dataset applies to all datasets; the severity gate compares against each
-            check's severity. Configure transports (SMTP, a global Slack webhook) via <code>DQ_</code> env vars.
+            Route failed runs and grouped incidents to Slack, email, webhooks, Teams, PagerDuty, Jira, or
+            ServiceNow. Channel credentials live in backend configuration; saved rules show route targets and policy state.
           </p>
         </div>
         <button className="primary small" onClick={() => setAdding(true)} style={{ flex: "none" }}>
@@ -468,6 +558,7 @@ function NotificationsCard() {
                 <th>Min severity</th>
                 <th>Channel</th>
                 <th>Target</th>
+                <th>Policy</th>
                 <th>On errors</th>
                 <th>Status</th>
                 <th />
@@ -480,9 +571,15 @@ function NotificationsCard() {
                     {r.dataset_id === null ? <span className="badge">all datasets</span> : r.dataset_name || `#${r.dataset_id}`}
                   </td>
                   <td><SeverityBadge severity={r.min_severity} /></td>
-                  <td>{r.channel}</td>
+                  <td>{CHANNELS[r.channel]?.label ?? r.channel}</td>
                   <td className="mono" style={{ maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {r.target || <span style={{ color: "var(--text-light)" }}>global default</span>}
+                    {displayTarget(r)}
+                  </td>
+                  <td style={{ fontSize: 12, color: "var(--text-light)", whiteSpace: "nowrap" }}>
+                    {r.dedupe_window_minutes ? `dedupe ${r.dedupe_window_minutes}m` : "dedupe default"}
+                    {" / "}
+                    {r.escalation_delay_minutes ? `escalate ${r.escalation_delay_minutes}m` : "escalate default"}
+                    {r.max_escalation_level ? ` / max L${r.max_escalation_level}` : ""}
                   </td>
                   <td>{r.on_error_runs ? "yes" : "no"}</td>
                   <td>{r.enabled ? <StatusPill value="active" /> : <StatusPill value="disabled" />}</td>
@@ -525,34 +622,45 @@ function NotificationsCard() {
             <label className="field">
               Minimum severity
               <select value={minSeverity} onChange={(e) => setMinSeverity(e.target.value as Severity)}>
-                <option value="info">info — alert on any check</option>
-                <option value="warn">warn — warn & error checks</option>
-                <option value="error">error — error checks only</option>
+                <option value="info">info - alert on any check</option>
+                <option value="warn">warn - warn and error checks</option>
+                <option value="error">error - error checks only</option>
               </select>
             </label>
           </div>
           <label className="field">
             Channel
             <select value={channel} onChange={(e) => setChannel(e.target.value as NotifyChannel)}>
-              <option value="slack">Slack webhook</option>
-              <option value="email">Email (SMTP)</option>
+              {Object.entries(CHANNELS).map(([value, option]) => (
+                <option key={value} value={value}>{option.label}</option>
+              ))}
             </select>
           </label>
           <label className="field">
-            {channel === "slack" ? "Webhook URL" : "Recipients"}
-            {channel === "email" && <span className="req"> *</span>}
+            {meta.targetLabel}
+            {meta.required && <span className="req"> *</span>}
             <input
-              type="text"
+              type={meta.targetSecret ? "password" : "text"}
               value={target}
               onChange={(e) => setTarget(e.target.value)}
-              placeholder={channel === "slack" ? "https://hooks.slack.com/services/… (blank = global default)" : "alice@co.com, oncall@co.com"}
+              placeholder={meta.placeholder}
               style={{ fontFamily: "var(--mono)", fontSize: 12 }}
             />
-            <div className="field-hint">
-              {channel === "slack"
-                ? "Slack incoming-webhook URL. Leave blank to use the global DQ_NOTIFY_SLACK_WEBHOOK_URL."
-                : "Comma-separated email addresses. Requires SMTP configured via DQ_SMTP_* env vars."}
-            </div>
+            <div className="field-hint">{meta.hint}</div>
+          </label>
+          <div className="form-row">
+            <label className="field">
+              Dedupe window (minutes)
+              <input type="number" min={0} value={dedupeWindow} onChange={(e) => setDedupeWindow(e.target.value)} />
+            </label>
+            <label className="field">
+              Escalation delay (minutes)
+              <input type="number" min={0} value={escalationDelay} onChange={(e) => setEscalationDelay(e.target.value)} />
+            </label>
+          </div>
+          <label className="field">
+            Max escalation level
+            <input type="number" min={1} max={9} value={maxEscalationLevel} onChange={(e) => setMaxEscalationLevel(e.target.value)} />
           </label>
           <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
             <input type="checkbox" checked={onErrorRuns} onChange={(e) => setOnErrorRuns(e.target.checked)} style={{ width: "auto" }} />
