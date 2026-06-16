@@ -51,7 +51,9 @@ export default function DatasetsPage() {
         (d) =>
           d.table_name.toLowerCase().includes(needle) ||
           d.connection_name.toLowerCase().includes(needle) ||
-          (d.owner ?? "").toLowerCase().includes(needle),
+          (d.owner ?? "").toLowerCase().includes(needle) ||
+          (d.domain ?? "").toLowerCase().includes(needle) ||
+          (d.team ?? "").toLowerCase().includes(needle),
       );
     }
     if (healthFilter !== "all") list = list.filter((d) => (d.health ?? "unknown") === healthFilter);
@@ -91,7 +93,7 @@ export default function DatasetsPage() {
       <div className="toolbar">
         <input
           type="text"
-          placeholder="Search by table, connection or owner…"
+          placeholder="Search by table, connection, owner, domain or team…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{ maxWidth: 300, marginTop: 0 }}
@@ -144,6 +146,7 @@ export default function DatasetsPage() {
                 <th>Dataset</th>
                 <th>Connection</th>
                 <th>Owner</th>
+                <th>Domain / team</th>
                 <th>Importance</th>
                 <th className="num">Rows</th>
                 <th className="num">Active checks</th>
@@ -172,6 +175,9 @@ export default function DatasetsPage() {
                   </td>
                   <td style={{ color: "var(--text-light)" }}>{d.connection_name}</td>
                   <td style={{ color: "var(--text-light)", fontSize: 12 }}>{d.owner ?? "—"}</td>
+                  <td style={{ color: "var(--text-light)", fontSize: 12 }}>
+                    {[d.domain, d.team].filter(Boolean).join(" / ") || "—"}
+                  </td>
                   <td>
                     {d.importance ? (
                       <span className="badge" style={d.importance === "critical" || d.importance === "high" ? { borderColor: "var(--danger)", color: "var(--danger-dark)" } : undefined}>

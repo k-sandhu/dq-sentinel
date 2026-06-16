@@ -121,7 +121,12 @@ class TableKnowledge(Base):
     known_issues: Mapped[str] = mapped_column(Text, default="")
     importance: Mapped[str] = mapped_column(String(20), default="medium")  # low|medium|high|critical
     owner: Mapped[str] = mapped_column(String(255), default="")
+    domain: Mapped[str] = mapped_column(String(255), default="")
+    team: Mapped[str] = mapped_column(String(255), default="")
     freshness_sla_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    slo_target_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    slo_window_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    slo_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     pii_columns: Mapped[list] = mapped_column(JSON, default=list)  # column names redacted in LLM prompts
     notes: Mapped[str] = mapped_column(Text, default="")
     updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
