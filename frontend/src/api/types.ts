@@ -160,10 +160,10 @@ export interface SchemaHistory {
 }
 
 // ---- scorecard history (#119) ----
-export type ScorecardGrain = "global" | "domain" | "team" | "owner" | "importance" | "dataset";
+export type ScorecardHistoryGrain = "global" | "domain" | "team" | "owner" | "importance" | "dataset";
 
 export interface ScorecardHistoryPoint {
-  grain: ScorecardGrain;
+  grain: ScorecardHistoryGrain;
   key: string;
   label: string;
   snapshot_date: string;
@@ -179,7 +179,7 @@ export interface ScorecardHistoryPoint {
 }
 
 export interface ScorecardHistory {
-  grain: ScorecardGrain;
+  grain: ScorecardHistoryGrain;
   key: string | null;
   days: number;
   sparse: boolean; // missing days are omitted; clients should render gaps

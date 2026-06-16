@@ -1,6 +1,6 @@
 """Pydantic request/response schemas. Mirror changes into frontend/src/api/types.ts."""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
@@ -212,6 +212,34 @@ class SchemaHistoryOut(BaseModel):
     snapshots: list[SchemaSnapshotOut]  # newest first
 
 
+# ---- scorecard history (#119) ----
+ScorecardHistoryGrain = Literal["global", "domain", "team", "owner", "importance", "dataset"]
+
+
+class ScorecardHistoryPoint(ORMModel):
+    grain: ScorecardHistoryGrain
+    key: str
+    label: str
+    snapshot_date: date
+    score: float | None = None
+    slo_target: float | None = None
+    slo_status: str
+    dataset_count: int
+    active_check_count: int
+    open_exception_count: int
+    breached_dataset_count: int
+    detail: dict[str, Any] = {}
+    created_at: datetime
+
+
+class ScorecardHistoryOut(BaseModel):
+    grain: ScorecardHistoryGrain
+    key: str | None = None
+    days: int
+    sparse: bool = True  # missing days are omitted; clients should render gaps
+    points: list[ScorecardHistoryPoint] = []  # oldest first, then key for multi-series requests
+
+
 # ---- SLA tracking (#102) ----
 SLAScope = Literal["dataset", "check"]
 SLATargetType = Literal["freshness", "volume", "check_success"]
@@ -273,6 +301,95 @@ class ReliabilityOut(BaseModel):
     total: int
     breached: int
     slas: list[SLAOut]
+
+
+# ---- scorecards (#118) ----
+ScorecardSloStatus = Literal["met", "at_risk", "breached", "unknown", "disabled"]
+ScorecardSloTargetSource = Literal["explicit", "importance_default", "disabled"]
+ScorecardDimension = Literal["domain", "team", "owner", "importance"]
+
+
+class ScorecardDatasetOut(BaseModel):
+    dataset_id: int
+    table_name: str
+    display_name: str
+    schema_name: str | None = None
+    domain: str = ""
+    team: str = ""
+    owner: str = ""
+    importance: Literal["low", "medium", "high", "critical"] = "medium"
+    score: float | None = None
+    base_score: float | None = None
+    exception_penalty: float = 0.0
+    slo_target: float | None = None
+    slo_target_source: ScorecardSloTargetSource = "importance_default"
+    slo_status: ScorecardSloStatus = "unknown"
+    score_gap: float | None = None
+    active_checks: int = 0
+    passing_checks: int = 0
+    warning_checks: int = 0
+    failing_checks: int = 0
+    error_checks: int = 0
+    unknown_checks: int = 0
+    open_exceptions: int = 0
+    score_drivers: dict[str, Any] = Field(default_factory=dict)
+
+
+class ScorecardDatasetPageOut(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: list[ScorecardDatasetOut]
+
+
+class ScorecardRollupOut(BaseModel):
+    dimension: str
+    key: str
+    label: str
+    score: float | None = None
+    slo_target: float | None = None
+    slo_status: ScorecardSloStatus = "unknown"
+    score_gap: float | None = None
+    total_datasets: int = 0
+    scored_datasets: int = 0
+    unknown_datasets: int = 0
+    active_checks: int = 0
+    passing_checks: int = 0
+    warning_checks: int = 0
+    failing_checks: int = 0
+    error_checks: int = 0
+    unknown_checks: int = 0
+    open_exceptions: int = 0
+    importance_weight: float = 0.0
+    slo_met: int = 0
+    slo_at_risk: int = 0
+    slo_breached: int = 0
+    slo_unknown: int = 0
+    slo_disabled: int = 0
+
+
+class ScorecardSummaryOut(BaseModel):
+    score: float | None = None
+    slo_target: float | None = None
+    slo_status: ScorecardSloStatus = "unknown"
+    score_gap: float | None = None
+    total_datasets: int = 0
+    scored_datasets: int = 0
+    unknown_datasets: int = 0
+    active_checks: int = 0
+    passing_checks: int = 0
+    warning_checks: int = 0
+    failing_checks: int = 0
+    error_checks: int = 0
+    unknown_checks: int = 0
+    open_exceptions: int = 0
+    slo_met: int = 0
+    slo_at_risk: int = 0
+    slo_breached: int = 0
+    slo_unknown: int = 0
+    slo_disabled: int = 0
+    worst_rollups: list[ScorecardRollupOut] = Field(default_factory=list)
+    top_failing_datasets: list[ScorecardDatasetOut] = Field(default_factory=list)
 
 
 # ---- knowledge ----
