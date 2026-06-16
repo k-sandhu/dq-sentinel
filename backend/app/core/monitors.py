@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+from math import isfinite
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -332,12 +333,28 @@ def _monitor_enabled(config: dict[str, Any], kind: str) -> bool:
 def _schedule_minutes(config: dict[str, Any], kind: str) -> int:
     cadence = config.get("cadence") or {}
     default = (DEFAULT_MONITOR_PACK_CONFIG["cadence"] or {}).get(f"{kind}_minutes", 1440)
-    raw = cadence.get(f"{kind}_minutes", default)
+    return _int_config(cadence.get(f"{kind}_minutes", default), int(default), min_value=1)
+
+
+def _float_config(value: Any, default: float, *, min_value: float | None = None) -> float:
+    if isinstance(value, bool):
+        value = default
     try:
-        minutes = int(raw)
+        parsed = float(value)
     except (TypeError, ValueError):
-        minutes = int(default)
-    return max(1, minutes)
+        parsed = float(default)
+    if not isfinite(parsed):
+        parsed = float(default)
+    if min_value is not None:
+        parsed = max(min_value, parsed)
+    return parsed
+
+
+def _int_config(value: Any, default: int, *, min_value: int | None = None) -> int:
+    parsed = int(_float_config(value, float(default), min_value=float(min_value) if min_value is not None else None))
+    if min_value is not None:
+        parsed = max(min_value, parsed)
+    return parsed
 
 
 def _kind_override(config: dict[str, Any], kind: str) -> dict[str, Any]:
@@ -357,20 +374,32 @@ def _freshness_spec(
     preferred = _best_temporal_column(temporal)
     col = preferred["name"]
     override = _kind_override(config, "freshness")
+    sensitivity = config.get("sensitivity") or {}
+    default_max_age = _float_config(sensitivity.get("freshness_max_age_hours"), 48.0, min_value=0.0)
     max_age = override.get("max_age_hours")
     if max_age is None and dataset.knowledge and dataset.knowledge.freshness_sla_hours:
         max_age = dataset.knowledge.freshness_sla_hours
     if max_age is None:
-        max_age = (config.get("sensitivity") or {}).get("freshness_max_age_hours", 48)
-    sensitivity = config.get("sensitivity") or {}
+        max_age = default_max_age
+    max_age = _float_config(max_age, default_max_age, min_value=0.0)
     params = {
         "max_age_hours": max_age,
         "strategy": override.get("strategy", "adaptive"),
-        "default_max_age_hours": override.get("default_max_age_hours", max_age),
-        "min_history": override.get("min_history", sensitivity.get("freshness_min_history", 5)),
-        "lookback_runs": override.get("lookback_runs", sensitivity.get("freshness_lookback_runs", 14)),
-        "multiplier": override.get("multiplier", sensitivity.get("freshness_multiplier", 3.0)),
-        "grace_hours": override.get("grace_hours", sensitivity.get("freshness_grace_hours", 0)),
+        "default_max_age_hours": _float_config(
+            override.get("default_max_age_hours", max_age), max_age, min_value=0.0
+        ),
+        "min_history": _int_config(
+            override.get("min_history", sensitivity.get("freshness_min_history", 5)), 5, min_value=1
+        ),
+        "lookback_runs": _int_config(
+            override.get("lookback_runs", sensitivity.get("freshness_lookback_runs", 14)), 14, min_value=1
+        ),
+        "multiplier": _float_config(
+            override.get("multiplier", sensitivity.get("freshness_multiplier", 3.0)), 3.0, min_value=0.0
+        ),
+        "grace_hours": _float_config(
+            override.get("grace_hours", sensitivity.get("freshness_grace_hours", 0)), 0.0, min_value=0.0
+        ),
     }
     return MonitorSpec(
         kind="freshness",
@@ -399,11 +428,17 @@ def _volume_spec(dataset: models.Dataset, config: dict[str, Any]) -> MonitorSpec
     sensitivity = config.get("sensitivity") or {}
     override = _kind_override(config, "volume")
     params = {
-        "sigma": override.get("sigma", sensitivity.get("volume_sigma", 3.0)),
-        "lookback_runs": override.get("lookback_runs", sensitivity.get("volume_lookback_runs", 14)),
-        "min_history": override.get("min_history", sensitivity.get("volume_min_history", 5)),
+        "sigma": _float_config(override.get("sigma", sensitivity.get("volume_sigma", 3.0)), 3.0, min_value=0.0),
+        "lookback_runs": _int_config(
+            override.get("lookback_runs", sensitivity.get("volume_lookback_runs", 14)), 14, min_value=1
+        ),
+        "min_history": _int_config(
+            override.get("min_history", sensitivity.get("volume_min_history", 5)), 5, min_value=1
+        ),
         "strategy": override.get("strategy", "adaptive"),
-        "multiplier": override.get("multiplier", sensitivity.get("volume_multiplier", 3.0)),
+        "multiplier": _float_config(
+            override.get("multiplier", sensitivity.get("volume_multiplier", 3.0)), 3.0, min_value=0.0
+        ),
     }
     return MonitorSpec(
         kind="volume",
@@ -470,8 +505,8 @@ def _drift_specs(
 ) -> list[MonitorSpec]:
     override = _kind_override(config, "drift")
     sensitivity = config.get("sensitivity") or {}
-    threshold = override.get("threshold", sensitivity.get("drift_threshold", 0.2))
-    max_checks = int((config.get("limits") or {}).get("max_drift_checks", 4))
+    threshold = _float_config(override.get("threshold", sensitivity.get("drift_threshold", 0.2)), 0.2, min_value=0.0)
+    max_checks = _int_config((config.get("limits") or {}).get("max_drift_checks", 4), 4, min_value=0)
     max_checks = max(0, max_checks)
     if not max_checks:
         return []

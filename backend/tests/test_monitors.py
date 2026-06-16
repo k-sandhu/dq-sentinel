@@ -134,3 +134,43 @@ def test_reconcile_missing_profile_returns_status_payload(client, admin_headers,
     assert pack["status"] == "pending_profile"
     assert pack["managed_checks"] == []
     assert {s["code"] for s in pack["reconciliation"]["skipped"]} == {"missing_profile"}
+
+
+def test_malformed_numeric_config_falls_back_during_reconcile(client, admin_headers, source_db):
+    ds = _register_dataset(client, admin_headers, source_db)
+    assert client.post(f"/api/v1/datasets/{ds['id']}/profile", headers=admin_headers).status_code == 200
+
+    resp = client.patch(
+        f"/api/v1/datasets/{ds['id']}/monitor-pack",
+        json={
+            "config": {
+                "cadence": {"freshness_minutes": "soon"},
+                "sensitivity": {
+                    "freshness_max_age_hours": "late",
+                    "volume_sigma": "wide",
+                    "drift_threshold": "high",
+                },
+                "limits": {"max_drift_checks": "many"},
+                "overrides": {
+                    "freshness": {"lookback_runs": "recent"},
+                    "volume": {"multiplier": "large"},
+                    "drift": {"threshold": "sensitive"},
+                },
+            }
+        },
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    pack = resp.json()
+    checks = pack["managed_checks"]
+    freshness = next(c for c in checks if c["check_type"] == "freshness")
+    volume = next(c for c in checks if c["check_type"] == "row_count_anomaly")
+    drift = next((c for c in checks if c["check_type"] == "distribution_drift"), None)
+
+    assert freshness["schedule_expr"] == "360"
+    assert freshness["params"]["max_age_hours"] == 48.0
+    assert freshness["params"]["lookback_runs"] == 14
+    assert volume["params"]["sigma"] == 3.0
+    assert volume["params"]["multiplier"] == 3.0
+    if drift is not None:
+        assert drift["params"]["threshold"] == 0.2
