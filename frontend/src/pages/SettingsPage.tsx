@@ -471,8 +471,8 @@ function NotificationsCard() {
   const [target, setTarget] = useState("");
   const [onErrorRuns, setOnErrorRuns] = useState(true);
   const [dedupeWindow, setDedupeWindow] = useState("60");
-  const [escalationDelay, setEscalationDelay] = useState("30");
-  const [maxEscalationLevel, setMaxEscalationLevel] = useState("3");
+  const [escalationDelay, setEscalationDelay] = useState("");
+  const [maxEscalationLevel, setMaxEscalationLevel] = useState("0");
   const [tested, setTested] = useState<Record<number, string>>({});
 
   const { data, error } = useQuery({
@@ -494,11 +494,12 @@ function NotificationsCard() {
     setTarget("");
     setOnErrorRuns(true);
     setDedupeWindow("60");
-    setEscalationDelay("30");
-    setMaxEscalationLevel("3");
+    setEscalationDelay("");
+    setMaxEscalationLevel("0");
   };
   const create = useMutation({
     mutationFn: () => {
+      const escalationDelayMinutes = Number(escalationDelay);
       const body: Record<string, unknown> = {
         dataset_id: datasetId ? Number(datasetId) : null,
         min_severity: minSeverity,
@@ -507,7 +508,9 @@ function NotificationsCard() {
         on_error_runs: onErrorRuns,
       };
       if (dedupeWindow.trim()) body.dedupe_window_minutes = Number(dedupeWindow);
-      if (escalationDelay.trim()) body.escalation_delay_minutes = Number(escalationDelay);
+      if (Number.isFinite(escalationDelayMinutes) && escalationDelayMinutes > 0) {
+        body.escalation_delay_minutes = escalationDelayMinutes;
+      }
       if (maxEscalationLevel.trim()) body.max_escalation_level = Number(maxEscalationLevel);
       return api.post<NotificationRule>("/notifications/rules", body);
     },
@@ -660,7 +663,7 @@ function NotificationsCard() {
           </div>
           <label className="field">
             Max escalation level
-            <input type="number" min={1} max={9} value={maxEscalationLevel} onChange={(e) => setMaxEscalationLevel(e.target.value)} />
+            <input type="number" min={0} max={9} value={maxEscalationLevel} onChange={(e) => setMaxEscalationLevel(e.target.value)} />
           </label>
           <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
             <input type="checkbox" checked={onErrorRuns} onChange={(e) => setOnErrorRuns(e.target.checked)} style={{ width: "auto" }} />
