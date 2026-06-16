@@ -73,6 +73,11 @@ export interface Dataset {
   health: "pass" | "warn" | "fail" | "unknown" | null;
   importance: string | null;
   owner: string | null;
+  domain: string | null;
+  team: string | null;
+  slo_target_score: number | null;
+  slo_window_days: number | null;
+  slo_enabled: boolean;
 }
 
 export interface Preview {
@@ -160,7 +165,12 @@ export interface Knowledge {
   known_issues: string;
   importance: "low" | "medium" | "high" | "critical";
   owner: string;
+  domain: string;
+  team: string;
   freshness_sla_hours: number | null;
+  slo_target_score: number | null;
+  slo_window_days: number | null;
+  slo_enabled: boolean;
   pii_columns: string[];
   notes: string;
   updated_at?: string | null;

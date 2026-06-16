@@ -117,4 +117,9 @@ def dataset_out(db: Session, ds: models.Dataset) -> schemas.DatasetOut:
     if ds.knowledge:
         out.importance = ds.knowledge.importance
         out.owner = ds.knowledge.owner or None
+        out.domain = ds.knowledge.domain or None
+        out.team = ds.knowledge.team or None
+        out.slo_target_score = ds.knowledge.slo_target_score
+        out.slo_window_days = ds.knowledge.slo_window_days
+        out.slo_enabled = ds.knowledge.slo_enabled
     return out

@@ -87,15 +87,31 @@ def test_full_flow(client, admin_headers, source_db):
             "business_context": "Synthetic people table",
             "known_issues": "emails are sometimes missing",
             "importance": "high",
+            "owner": "data-quality@example.com",
+            "domain": "Customer",
+            "team": "Data quality",
             "freshness_sla_hours": 48,
+            "slo_target_score": 98.5,
+            "slo_window_days": 14,
+            "slo_enabled": True,
             "pii_columns": ["email"],
         },
         headers=h,
     )
     assert resp.status_code == 200
-    assert client.get(f"/api/v1/datasets/{ds['id']}/knowledge", headers=h).json()[
-        "importance"
-    ] == "high"
+    knowledge = client.get(f"/api/v1/datasets/{ds['id']}/knowledge", headers=h).json()
+    assert knowledge["importance"] == "high"
+    assert knowledge["domain"] == "Customer"
+    assert knowledge["team"] == "Data quality"
+    assert knowledge["slo_target_score"] == 98.5
+    assert knowledge["slo_window_days"] == 14
+    detail = client.get(f"/api/v1/datasets/{ds['id']}", headers=h).json()
+    assert detail["owner"] == "data-quality@example.com"
+    assert detail["domain"] == "Customer"
+    assert detail["team"] == "Data quality"
+    assert detail["slo_target_score"] == 98.5
+    assert detail["slo_window_days"] == 14
+    assert detail["slo_enabled"] is True
 
     # generate (no LLM key -> heuristic fallback even with use_llm=True)
     resp = client.post(
@@ -189,6 +205,70 @@ def test_full_flow(client, admin_headers, source_db):
     # check types metadata
     types = client.get("/api/v1/checks/types", headers=h).json()
     assert {t["key"] for t in types} >= {"not_null", "unique", "ml_outlier", "custom_sql"}
+
+
+def test_knowledge_defaults_without_row(client, admin_headers, source_db):
+    h = admin_headers
+    suffix = uuid4().hex[:8]
+    conn = client.post(
+        "/api/v1/connections",
+        json={"name": f"knowledge-defaults-{suffix}", "dsn": source_db},
+        headers=h,
+    ).json()
+    ds = client.post(
+        "/api/v1/datasets/register",
+        json={"connection_id": conn["id"], "tables": [{"table_name": "people"}]},
+        headers=h,
+    ).json()[0]
+
+    knowledge = client.get(f"/api/v1/datasets/{ds['id']}/knowledge", headers=h).json()
+    assert knowledge["domain"] == ""
+    assert knowledge["team"] == ""
+    assert knowledge["slo_target_score"] is None
+    assert knowledge["slo_window_days"] is None
+    assert knowledge["slo_enabled"] is True
+
+    detail = client.get(f"/api/v1/datasets/{ds['id']}", headers=h).json()
+    assert detail["domain"] is None
+    assert detail["team"] is None
+    assert detail["slo_target_score"] is None
+    assert detail["slo_window_days"] is None
+    assert detail["slo_enabled"] is True
+
+
+def test_knowledge_slo_validation(client, admin_headers, source_db):
+    h = admin_headers
+    suffix = uuid4().hex[:8]
+    conn = client.post(
+        "/api/v1/connections",
+        json={"name": f"knowledge-slo-{suffix}", "dsn": source_db},
+        headers=h,
+    ).json()
+    ds = client.post(
+        "/api/v1/datasets/register",
+        json={"connection_id": conn["id"], "tables": [{"table_name": "people"}]},
+        headers=h,
+    ).json()[0]
+    url = f"/api/v1/datasets/{ds['id']}/knowledge"
+
+    for payload in (
+        {"slo_target_score": -0.01},
+        {"slo_target_score": 100.01},
+        {"slo_window_days": 0},
+    ):
+        resp = client.put(url, json=payload, headers=h)
+        assert resp.status_code == 422, resp.text
+
+    resp = client.put(
+        url,
+        json={"slo_target_score": 0, "slo_window_days": 1, "slo_enabled": False},
+        headers=h,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["slo_target_score"] == 0
+    assert body["slo_window_days"] == 1
+    assert body["slo_enabled"] is False
 
 
 def test_delete_dataset_cleans_dependents(client, admin_headers, source_db):

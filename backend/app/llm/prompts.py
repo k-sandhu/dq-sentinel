@@ -29,6 +29,8 @@ def knowledge_block(knowledge: dict[str, Any] | None) -> str:
         ("known_issues", "Known issues"),
         ("importance", "Importance"),
         ("owner", "Owner"),
+        ("domain", "Domain"),
+        ("team", "Team"),
         ("freshness_sla_hours", "Freshness SLA (hours)"),
         ("notes", "Notes"),
     ]:
