@@ -32,7 +32,7 @@ def _latest_statuses(db: Session, check_ids: list[int]) -> dict[int, str | None]
 def _active_exception_counts(db: Session) -> dict[int, int]:
     rows = (
         db.query(models.ExceptionRecord.dataset_id, func.count(models.ExceptionRecord.id))
-        .filter(models.ExceptionRecord.status.in_(sorted(scorecards.ACTIVE_EXCEPTION_STATUSES)))
+        .filter(models.ExceptionRecord.status == scorecards.OPEN_EXCEPTION_STATUS)
         .group_by(models.ExceptionRecord.dataset_id)
         .all()
     )

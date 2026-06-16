@@ -161,7 +161,7 @@ def _insert_scorecard_fixture() -> int:
         )
         db.add(run)
         db.flush()
-        for status in ("open", "expected", "resolved", "muted"):
+        for status in ("open", "acknowledged", "expected", "resolved", "muted"):
             db.add(
                 ExceptionRecord(
                     run_id=run.id,
@@ -195,6 +195,7 @@ def test_scorecard_api_shape_and_exception_status_filtering(client, admin_header
     item = next(row for row in page["items"] if row["dataset_id"] == dataset_id)
     assert item["open_exceptions"] == 1
     assert item["exception_penalty"] == 2
+    assert item["score_drivers"]["open_exceptions"] == 1
     assert item["score"] == 98
     assert item["slo_status"] == "met"
     assert "score_drivers" in item

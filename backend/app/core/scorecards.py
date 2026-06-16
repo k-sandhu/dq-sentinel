@@ -21,7 +21,7 @@ STATUS_POINTS = {"pass": 1.0, "warn": 0.7, "fail": 0.0, "error": 0.0, "unknown":
 IMPORTANCE_WEIGHTS = {"critical": 4.0, "high": 3.0, "medium": 2.0, "low": 1.0}
 DEFAULT_SLO_TARGETS = {"critical": 98.0, "high": 95.0, "medium": 90.0, "low": 85.0}
 
-ACTIVE_EXCEPTION_STATUSES = {"open", "acknowledged"}
+OPEN_EXCEPTION_STATUS = "open"
 UNASSIGNED_LABEL = "Unassigned"
 EXCEPTION_PENALTY_PER_OPEN = 2.0
 MAX_EXCEPTION_PENALTY = 30.0
