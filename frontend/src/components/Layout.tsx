@@ -154,8 +154,8 @@ function GlobalSearch() {
     placeholderData: (prev) => prev, // keep last results while typing — no dropdown flicker
   });
 
-  // Empty-query "Recently viewed" (soft dep on #59); only fetched when the box
-  // is open with no query typed.
+  // Empty-query "Recently viewed" is read from prefs and resolved only while
+  // the box is open with no query typed.
   const recents = useRecentDatasets(open && debounced.length === 0);
 
   const hits = debounced.length > 0 ? (data?.hits ?? []) : recents;
