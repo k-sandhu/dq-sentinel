@@ -1,6 +1,7 @@
 import uuid
 
 from app import models
+from app.core.check_types import CHECK_TYPES
 from app.db import session_factory
 
 
@@ -46,10 +47,26 @@ def test_profile_reconciliation_creates_active_system_checks(client, admin_heade
     assert ("freshness", "created_at") in keys
     assert ("row_count_anomaly", None) in keys
     assert any(c["check_type"] == "distribution_drift" for c in checks)
+    assert all(c["check_type"] in CHECK_TYPES for c in checks)
     assert all(c["origin"] == "system" and c["status"] == "active" for c in checks)
     assert all(c["params"]["monitor_pack"]["managed"] is True for c in checks)
-    assert pack["reconciliation"]["status"] == "partial"
-    assert any(s["kind"] == "schema" for s in pack["reconciliation"]["skipped"])
+    freshness = next(c for c in checks if c["check_type"] == "freshness")
+    assert freshness["params"]["strategy"] == "adaptive"
+    assert freshness["params"]["default_max_age_hours"] == freshness["params"]["max_age_hours"]
+    assert {"min_history", "lookback_runs", "multiplier", "grace_hours"} <= set(freshness["params"])
+    volume = next(c for c in checks if c["check_type"] == "row_count_anomaly")
+    assert volume["params"]["strategy"] == "adaptive"
+    assert "multiplier" in volume["params"]
+    skipped = pack["reconciliation"]["skipped"]
+    if "schema_contract" in CHECK_TYPES:
+        assert ("schema_contract", None) in keys
+        assert not any(
+            s["kind"] == "schema" and s["code"] == "check_type_unavailable" for s in skipped
+        )
+        assert pack["reconciliation"]["status"] in {"ready", "partial"}
+    else:
+        assert pack["reconciliation"]["status"] == "partial"
+        assert any(s["kind"] == "schema" and s["code"] == "check_type_unavailable" for s in skipped)
 
 
 def test_reconcile_twice_is_idempotent(client, admin_headers, source_db):

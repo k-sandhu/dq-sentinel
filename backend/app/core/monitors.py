@@ -32,9 +32,14 @@ DEFAULT_MONITOR_PACK_CONFIG: dict[str, Any] = {
     },
     "sensitivity": {
         "freshness_max_age_hours": 48,
+        "freshness_min_history": 5,
+        "freshness_lookback_runs": 14,
+        "freshness_multiplier": 3.0,
+        "freshness_grace_hours": 0,
         "volume_sigma": 3.0,
         "volume_lookback_runs": 14,
         "volume_min_history": 5,
+        "volume_multiplier": 3.0,
         "drift_threshold": 0.2,
     },
     "limits": {
@@ -357,11 +362,21 @@ def _freshness_spec(
         max_age = dataset.knowledge.freshness_sla_hours
     if max_age is None:
         max_age = (config.get("sensitivity") or {}).get("freshness_max_age_hours", 48)
+    sensitivity = config.get("sensitivity") or {}
+    params = {
+        "max_age_hours": max_age,
+        "strategy": override.get("strategy", "adaptive"),
+        "default_max_age_hours": override.get("default_max_age_hours", max_age),
+        "min_history": override.get("min_history", sensitivity.get("freshness_min_history", 5)),
+        "lookback_runs": override.get("lookback_runs", sensitivity.get("freshness_lookback_runs", 14)),
+        "multiplier": override.get("multiplier", sensitivity.get("freshness_multiplier", 3.0)),
+        "grace_hours": override.get("grace_hours", sensitivity.get("freshness_grace_hours", 0)),
+    }
     return MonitorSpec(
         kind="freshness",
         check_type="freshness",
         column_name=col,
-        params={"max_age_hours": max_age},
+        params=params,
         severity="error" if dataset.knowledge and dataset.knowledge.freshness_sla_hours else "warn",
         name=f"{dataset.table_name}: freshness monitor on {col}",
         rationale="System monitor pack freshness check.",
@@ -387,6 +402,8 @@ def _volume_spec(dataset: models.Dataset, config: dict[str, Any]) -> MonitorSpec
         "sigma": override.get("sigma", sensitivity.get("volume_sigma", 3.0)),
         "lookback_runs": override.get("lookback_runs", sensitivity.get("volume_lookback_runs", 14)),
         "min_history": override.get("min_history", sensitivity.get("volume_min_history", 5)),
+        "strategy": override.get("strategy", "adaptive"),
+        "multiplier": override.get("multiplier", sensitivity.get("volume_multiplier", 3.0)),
     }
     return MonitorSpec(
         kind="volume",
@@ -602,7 +619,8 @@ def _update_managed_check(
 
 
 def _validate_spec(spec: MonitorSpec) -> dict[str, Any]:
-    return validate_check(spec.check_type, spec.column_name, spec.params)
+    validated = validate_check(spec.check_type, spec.column_name, spec.params)
+    return {**spec.params, **validated}
 
 
 def _params_with_identity(
