@@ -17,6 +17,7 @@ import ExceptionsPage from "./pages/ExceptionsPage";
 import HomePage from "./pages/HomePage";
 import LineagePage from "./pages/LineagePage";
 import LoginPage from "./pages/LoginPage";
+import ReliabilityPage from "./pages/ReliabilityPage";
 import RunDetailPage from "./pages/RunDetailPage";
 import RunsPage from "./pages/RunsPage";
 import SettingsPage from "./pages/SettingsPage";
@@ -94,6 +95,7 @@ export default function App() {
         <Route path="/runs" element={<RunsPage />} />
         <Route path="/runs/:id" element={<RunDetailPage />} />
         <Route path="/exceptions" element={<ExceptionsPage />} />
+        <Route path="/reliability" element={<ReliabilityPage />} />
         <Route path="/workbench" element={<WorkbenchPage />} />
         <Route path="/lineage" element={<LineagePage />} />
         <Route path="/assistant" element={<AssistantPage />} />

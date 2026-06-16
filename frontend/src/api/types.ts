@@ -380,6 +380,50 @@ export interface Health {
   llm_model: string | null;
 }
 
+// ---- SLA tracking (#102) ----
+export type SLAScope = "dataset" | "check";
+export type SLATargetType = "freshness" | "volume" | "check_success";
+export type SLAWindow = "rolling_7d" | "rolling_30d";
+
+export interface SLAEvaluation {
+  id: number;
+  evaluated_at: string;
+  window_start: string;
+  window_end: string;
+  attainment: number; // 0..1
+  budget_consumed: number; // 0..2 (clamped)
+  good: number;
+  bad: number;
+  breached: boolean;
+  mttr_seconds: number | null;
+  mttd_seconds: number | null;
+}
+
+export interface Sla {
+  id: number;
+  name: string;
+  scope: SLAScope;
+  scope_id: number;
+  target_type: SLATargetType;
+  objective: number; // 0..1
+  window: SLAWindow;
+  enabled: boolean;
+  created_at: string;
+  scope_label: string;
+  dataset_id: number | null;
+  latest: SLAEvaluation | null;
+}
+
+export interface SlaDetail extends Sla {
+  evaluations: SLAEvaluation[]; // oldest -> newest
+}
+
+export interface Reliability {
+  total: number;
+  breached: number;
+  slas: Sla[];
+}
+
 // ---- workbench ----
 export interface QueryRunResult {
   columns: string[];

@@ -196,7 +196,8 @@ Push coherent checkpoints to `main` frequently (CI gates them) rather than batch
 - Metrics: prometheus-client. API serves `/metrics` (unauthenticated by design — counts only;
   keep it network-internal in prod); worker exposes `:9100`. Domain metrics: `dq_check_runs_total`,
   `dq_source_queries_total{engine}`, `dq_llm_requests_total{provider,model,outcome}`,
-  `dq_llm_tokens_total`, `dq_worker_*`. Label cardinality discipline: route templates, engine
+  `dq_llm_tokens_total`, `dq_worker_*`, `dq_sla_attainment{sla}`, `dq_sla_breaches_total{sla}`.
+  Label cardinality discipline: route templates, engine
   names, providers — never raw paths/SQL/dataset names.
 - Stack (all OSS): Prometheus + Grafana OSS + Loki + Promtail in docker-compose; configs under
   `monitoring/`. Grafana on :3001 (admin/admin) auto-provisions the "DQ Sentinel Overview"

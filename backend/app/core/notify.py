@@ -186,3 +186,40 @@ def dispatch_recovery(db: Session, check: Check, run: CheckRun) -> None:
     dataset_label = _dataset_label(db, check)
     subject = f"[DQ] {check.name} recovered on {dataset_label}"
     _dispatch(db, check, run, subject=subject, body_prefix=f"Check '{check.name}' has recovered (now passing).")
+
+
+def dispatch_sla_breach(db: Session, sla, evaluation) -> None:
+    """An SLA newly dropped below its objective — notify matching rules (#102).
+
+    Routes by the SLA's dataset (check-scoped SLAs resolve to their check's
+    dataset). A breach is error-level, so every enabled rule whose dataset gate
+    matches qualifies. Best-effort like the check paths.
+    """
+    from app.models import Check as _Check
+
+    dataset_id = sla.scope_id
+    if sla.scope == "check":
+        chk = db.get(_Check, sla.scope_id)
+        dataset_id = chk.dataset_id if chk else None
+
+    rules = (
+        db.query(NotificationRule)
+        .filter(
+            NotificationRule.enabled.is_(True),
+            or_(NotificationRule.dataset_id.is_(None), NotificationRule.dataset_id == dataset_id),
+        )
+        .all()
+    )
+    if not rules:
+        return
+    pct, obj = round(evaluation.attainment * 100, 2), round(sla.objective * 100, 2)
+    subject = f"[DQ] SLA breached: {sla.name}"
+    body = (
+        f"SLA '{sla.name}' attainment {pct}% is below its {obj}% objective over {sla.window} "
+        f"({evaluation.bad} bad / {evaluation.good + evaluation.bad} runs)."
+    )
+    link = f"{get_settings().base_url.rstrip('/')}/reliability"
+    for rule in rules:
+        channel = _channel_for(rule)
+        if channel is not None:
+            _deliver(rule.channel, channel, subject, body, link)

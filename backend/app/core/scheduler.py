@@ -20,9 +20,29 @@ from app.observability import WORKER_CLAIMS, WORKER_UP
 
 log = logging.getLogger(__name__)
 
-# Last time the audit-retention purge ran (process-local; the worker is the only
-# long-lived process that calls poll_once on a loop).
+# Last time the audit-retention purge / SLA evaluation ran (process-local; the
+# worker is the only long-lived process that calls poll_once on a loop).
 _last_audit_purge: datetime | None = None
+_last_sla_eval: datetime | None = None
+
+
+def maybe_evaluate_slas(now: datetime | None = None) -> int:
+    """Recompute SLA rollups (#102), self-throttled to ``sla_eval_seconds``.
+
+    Returns the number of SLAs evaluated (0 when throttled). Runs in the worker
+    loop alongside check scheduling; failures are swallowed by poll_once's guard.
+    """
+    global _last_sla_eval
+    now = now or utcnow()
+    interval = timedelta(seconds=max(30, get_settings().sla_eval_seconds))
+    if _last_sla_eval is not None and now - _last_sla_eval < interval:
+        return 0
+    _last_sla_eval = now
+    from app.core.sla import evaluate_all
+
+    factory = session_factory()
+    with factory() as db:
+        return len(evaluate_all(db, now))
 
 
 def purge_audit_log(now: datetime | None = None) -> int:
@@ -67,6 +87,7 @@ def poll_once(executor: ThreadPoolExecutor) -> int:
     factory = session_factory()
     now = utcnow()
     purge_audit_log(now)  # self-throttles to at most once per day
+    maybe_evaluate_slas(now)  # self-throttles to sla_eval_seconds
     claimed = 0
     with factory() as db:
         # Initialize schedules that were activated without a next_run_at
