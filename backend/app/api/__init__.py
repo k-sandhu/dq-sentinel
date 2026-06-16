@@ -19,6 +19,7 @@ from app.api import (
     runs,
     saved_queries,
     search,
+    scorecards,
     sla,
 )
 
@@ -41,4 +42,5 @@ api_router.include_router(mcp.router)
 api_router.include_router(notifications.router)
 api_router.include_router(audit.router)
 api_router.include_router(search.router)
+api_router.include_router(scorecards.router)
 api_router.include_router(sla.router)
