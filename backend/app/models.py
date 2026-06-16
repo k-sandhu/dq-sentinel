@@ -71,9 +71,33 @@ class Dataset(Base):
     connection: Mapped[Connection] = relationship(back_populates="datasets")
     checks: Mapped[list["Check"]] = relationship(back_populates="dataset", cascade="all, delete-orphan")
     profiles: Mapped[list["Profile"]] = relationship(back_populates="dataset", cascade="all, delete-orphan")
+    monitor_pack: Mapped["DatasetMonitorPack | None"] = relationship(
+        back_populates="dataset", cascade="all, delete-orphan", uselist=False
+    )
     knowledge: Mapped["TableKnowledge | None"] = relationship(
         back_populates="dataset", cascade="all, delete-orphan", uselist=False
     )
+
+
+class DatasetMonitorPack(Base):
+    __tablename__ = "dataset_monitor_packs"
+    __table_args__ = (
+        UniqueConstraint("dataset_id", name="uq_dataset_monitor_pack_dataset"),
+        Index("ix_dataset_monitor_packs_dataset", "dataset_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id"))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    config: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(20), default="pending_profile")
+    last_result: Mapped[dict] = mapped_column(JSON, default=dict)
+    last_error: Mapped[str] = mapped_column(Text, default="")
+    last_reconciled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+    dataset: Mapped[Dataset] = relationship(back_populates="monitor_pack")
 
 
 class Profile(Base):
