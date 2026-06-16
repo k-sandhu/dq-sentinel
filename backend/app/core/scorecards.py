@@ -30,7 +30,7 @@ STATUS_POINTS = {"pass": 1.0, "warn": 0.7, "fail": 0.0, "error": 0.0, "unknown":
 IMPORTANCE_WEIGHTS = {"critical": 4.0, "high": 3.0, "medium": 2.0, "low": 1.0}
 DEFAULT_SLO_TARGETS = {"critical": 98.0, "high": 95.0, "medium": 90.0, "low": 85.0}
 
-ACTIVE_EXCEPTION_STATUSES = {"open", "acknowledged"}
+OPEN_EXCEPTION_STATUS = "open"
 UNASSIGNED_LABEL = "Unassigned"
 EXCEPTION_PENALTY_PER_OPEN = 2.0
 MAX_EXCEPTION_PENALTY = 30.0
@@ -385,17 +385,17 @@ def latest_statuses(
     return latest
 
 
-def active_exception_counts(db: Session, *, include_current: bool = True) -> dict[int, int]:
-    """Current active exception pressure by dataset.
+def open_exception_counts(db: Session, *, include_current: bool = True) -> dict[int, int]:
+    """Current open exception pressure by dataset.
 
-    Historical active-exception state is not reconstructable from metadata, so
+    Historical open-exception state is not reconstructable from metadata, so
     backfills call this with ``include_current=False`` and document the omission.
     """
     if not include_current:
         return {}
     rows = (
         db.query(models.ExceptionRecord.dataset_id, func.count(models.ExceptionRecord.id))
-        .filter(models.ExceptionRecord.status.in_(sorted(ACTIVE_EXCEPTION_STATUSES)))
+        .filter(models.ExceptionRecord.status == OPEN_EXCEPTION_STATUS)
         .group_by(models.ExceptionRecord.dataset_id)
         .all()
     )
@@ -424,7 +424,7 @@ def load_dataset_scores(
         as_of=as_of,
         force_unknown_missing=as_of is not None,
     )
-    exception_counts = active_exception_counts(db, include_current=include_current_exceptions)
+    exception_counts = open_exception_counts(db, include_current=include_current_exceptions)
     return [
         score_dataset(
             ds,
@@ -461,7 +461,7 @@ def _rollup_detail(row: RollupScore, *, historical_exception_omitted: bool) -> d
         },
     }
     if historical_exception_omitted:
-        detail["exception_pressure"] = "omitted; historical active-exception state is not reconstructable"
+        detail["exception_pressure"] = "omitted; historical open-exception state is not reconstructable"
     return detail
 
 
@@ -485,7 +485,7 @@ def _dataset_detail(row: DatasetScore, *, historical_exception_omitted: bool) ->
         "score_drivers": dict(row.score_drivers),
     }
     if historical_exception_omitted:
-        detail["exception_pressure"] = "omitted; historical active-exception state is not reconstructable"
+        detail["exception_pressure"] = "omitted; historical open-exception state is not reconstructable"
     return detail
 
 
@@ -587,7 +587,7 @@ def _upsert_snapshot(db: Session, payload: dict[str, Any]) -> models.ScorecardSn
         db.flush()
         return snap
 
-    for field in (
+    for attr_name in (
         "label",
         "score",
         "slo_target",
@@ -598,7 +598,7 @@ def _upsert_snapshot(db: Session, payload: dict[str, Any]) -> models.ScorecardSn
         "breached_dataset_count",
         "detail",
     ):
-        setattr(existing, field, payload[field])
+        setattr(existing, attr_name, payload[attr_name])
     db.flush()
     return existing
 
@@ -638,7 +638,7 @@ def backfill_scorecard_snapshots(
     """Backfill sparse daily snapshots from existing CheckRun history.
 
     Historical check status is reconstructed from the latest run at or before
-    each day. Historical active-exception state is not reconstructable from
+    each day. Historical open-exception state is not reconstructable from
     current metadata, so backfilled points explicitly omit that pressure in
     ``detail``. The caller owns the transaction.
     """

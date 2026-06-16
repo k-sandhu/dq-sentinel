@@ -172,7 +172,7 @@ def _insert_scorecard_fixture() -> int:
         )
         db.add(run)
         db.flush()
-        for status in ("open", "expected", "resolved", "muted"):
+        for status in ("open", "acknowledged", "expected", "resolved", "muted"):
             db.add(
                 ExceptionRecord(
                     run_id=run.id,
@@ -207,6 +207,7 @@ def test_scorecard_api_shape_and_exception_status_filtering(client, admin_header
     item = next(row for row in page["items"] if row["dataset_id"] == dataset_id)
     assert item["open_exceptions"] == 1
     assert item["exception_penalty"] == 2
+    assert item["score_drivers"]["open_exceptions"] == 1
     assert item["score"] == 98
     assert item["slo_status"] == "met"
     assert "score_drivers" in item
@@ -299,7 +300,7 @@ def test_snapshot_capture_matches_live_scorecard_scoring_and_is_idempotent():
         active_run = (
             db.query(models.CheckRun).filter(models.CheckRun.check_id == checks[2].id).one()
         )
-        active_exceptions = []
+        open_exceptions = []
         for status in ("open", "acknowledged", "expected", "resolved"):
             exc = models.ExceptionRecord(
                 run_id=active_run.id,
@@ -310,8 +311,8 @@ def test_snapshot_capture_matches_live_scorecard_scoring_and_is_idempotent():
                 status=status,
             )
             db.add(exc)
-            if status in scorecards.ACTIVE_EXCEPTION_STATUSES:
-                active_exceptions.append(exc)
+            if status == scorecards.OPEN_EXCEPTION_STATUS:
+                open_exceptions.append(exc)
         db.commit()
 
         snapshots = scorecards.capture_scorecard_snapshots(db, day)
@@ -319,12 +320,12 @@ def test_snapshot_capture_matches_live_scorecard_scoring_and_is_idempotent():
         live_score = next(s for s in scorecards.load_dataset_scores(db) if s.dataset_id == dataset.id)
 
         assert live_score.base_score == 34.29
-        assert live_score.exception_penalty == 4.0
-        assert live_score.score == 30.29
+        assert live_score.exception_penalty == 2.0
+        assert live_score.score == 32.29
         assert live_score.slo_target == 80.0
         assert live_score.slo_target_source == "explicit"
         assert live_score.slo_status == "breached"
-        assert live_score.open_exceptions == 2
+        assert live_score.open_exceptions == 1
 
         dataset_snap = (
             db.query(models.ScorecardSnapshot)
@@ -385,7 +386,7 @@ def test_snapshot_capture_matches_live_scorecard_scoring_and_is_idempotent():
             == 0
         )
 
-        for exc in active_exceptions:
+        for exc in open_exceptions:
             exc.status = "resolved"
         db.add(
             models.CheckRun(
