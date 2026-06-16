@@ -7,7 +7,7 @@ from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.config import get_settings
+from app.config import BACKEND_DIR, get_settings
 
 log = logging.getLogger(__name__)
 
@@ -51,66 +51,53 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
-def _ensure_columns(engine: Engine) -> None:
-    """Poor-man's migration until Alembic lands (#23): add missing columns in place.
+# Arbitrary constant key for the Postgres advisory lock that serializes startup
+# migrations across the concurrently-booting api and worker processes.
+_MIGRATION_LOCK_KEY = 0x6451_5343  # "dQSC"
 
-    `init_db()` only calls `create_all`, which will NOT add columns to existing
-    tables — and the standing Docker demo runs Postgres with a persistent volume.
-    So new ORM columns on existing tables need an explicit ALTER. Sibling issues
-    (snooze, RCA report_json, ...) extend the `wanted` dict here.
+
+def _run_migrations(engine: Engine) -> None:
+    """Bring the app DB schema to head via Alembic (issue #23; see backend/migrations/).
+
+    Adoption path: a database created by the pre-Alembic ``create_all`` path
+    already has the full current schema but no ``alembic_version`` table — stamp
+    it at head rather than re-applying the baseline (which would fail on existing
+    tables). Everything else (fresh DBs, already-migrated DBs) runs ``upgrade head``.
     """
-    wanted: dict[str, dict[str, str]] = {
-        "exception_records": {
-            # --- exceptions workbench: identity & recurrence (#55) ---
-            "fingerprint": "VARCHAR(64)",
-            "first_seen_at": "TIMESTAMP",  # TIMESTAMP (not DATETIME): valid on SQLite + Postgres
-            "last_seen_at": "TIMESTAMP",
-            "last_run_id": "INTEGER",
-            "occurrence_count": "INTEGER DEFAULT 1",
-            # --- exceptions workbench: triage workflow (#56) ---
-            "assigned_to_id": "INTEGER",
-        },
-    }
-    insp = inspect(engine)
-    with engine.begin() as conn:
-        for table, cols in wanted.items():
-            if not insp.has_table(table):
-                continue
-            existing = {c["name"] for c in insp.get_columns(table)}
-            for name, ddl in cols.items():
-                if name not in existing:
-                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
-        # Backfill idempotently: historical rows predate these columns. Leave
-        # `fingerprint` NULL (the runner only matches non-NULL fingerprints).
-        if insp.has_table("exception_records"):
-            conn.execute(
-                text(
-                    "UPDATE exception_records SET first_seen_at = created_at "
-                    "WHERE first_seen_at IS NULL"
-                )
-            )
-            conn.execute(
-                text(
-                    "UPDATE exception_records SET last_seen_at = created_at "
-                    "WHERE last_seen_at IS NULL"
-                )
-            )
-            conn.execute(
-                text(
-                    "UPDATE exception_records SET occurrence_count = 1 "
-                    "WHERE occurrence_count IS NULL"
-                )
-            )
+    from alembic import command
+    from alembic.config import Config
+
+    cfg = Config(str(BACKEND_DIR / "alembic.ini"))
+    cfg.set_main_option("sqlalchemy.url", get_settings().database_url)
+
+    def _migrate() -> None:
+        insp = inspect(engine)
+        if insp.has_table("users") and not insp.has_table("alembic_version"):
+            command.stamp(cfg, "head")
+        else:
+            command.upgrade(cfg, "head")
+
+    # api + worker boot concurrently in docker-compose and both call init_db().
+    # On Postgres, hold a session advisory lock so only one runs DDL at a time;
+    # the other then sees `head` and no-ops. SQLite (dev/test) is single-writer.
+    if engine.dialect.name == "postgresql":
+        with engine.connect() as conn:
+            conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": _MIGRATION_LOCK_KEY})
+            try:
+                _migrate()
+            finally:
+                conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _MIGRATION_LOCK_KEY})
+    else:
+        _migrate()
 
 
 def init_db() -> None:
-    """Create tables and seed the bootstrap admin if no users exist."""
+    """Migrate the app DB to head and seed the bootstrap admin if no users exist."""
     from app import models
     from app.security import hash_password
 
     engine = get_engine()
-    models.Base.metadata.create_all(engine)
-    _ensure_columns(engine)
+    _run_migrations(engine)
 
     settings = get_settings()
     with session_factory()() as db:

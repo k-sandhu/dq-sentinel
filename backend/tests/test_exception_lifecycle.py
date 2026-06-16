@@ -7,7 +7,7 @@ fingerprint/reconcile/auto-resolve path is exercised end to end.
 import uuid
 
 from app.core.runner import exception_fingerprint, run_check
-from app.db import _ensure_columns, get_engine, init_db, session_factory
+from app.db import init_db, session_factory
 from app.models import (
     Check,
     Connection,
@@ -219,9 +219,8 @@ def test_fingerprint_used_with_profile_pk(source_db):
             assert r.fingerprint == exception_fingerprint(check_id, r.row_data, ["id"])
 
 
-def test_ensure_columns_idempotent():
+def test_init_db_idempotent():
+    # Migration-based init_db (#23) must be safe to call repeatedly:
+    # `alembic upgrade head` is a no-op once the DB is already at head.
     init_db()
-    engine = get_engine()
-    # Calling the shim repeatedly must not error (columns already exist).
-    _ensure_columns(engine)
-    _ensure_columns(engine)
+    init_db()

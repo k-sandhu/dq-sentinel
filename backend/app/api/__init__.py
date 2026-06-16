@@ -19,6 +19,7 @@ from app.api import (
     runs,
     saved_queries,
     search,
+    sla,
 )
 
 api_router = APIRouter()
@@ -40,3 +41,4 @@ api_router.include_router(mcp.router)
 api_router.include_router(notifications.router)
 api_router.include_router(audit.router)
 api_router.include_router(search.router)
+api_router.include_router(sla.router)

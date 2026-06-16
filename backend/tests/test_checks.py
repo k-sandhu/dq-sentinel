@@ -129,6 +129,40 @@ def test_validate_drift_method():
         validate_check("distribution_drift", "x", {"method": "wasserstein"})
 
 
+def test_validate_schema_change():
+    assert validate_check("schema_change", None, {"baseline": "pinned"})["baseline"] == "pinned"
+    assert validate_check("schema_change", None, {})["baseline"] == "previous"  # default applied
+    with pytest.raises(ValueError):
+        validate_check("schema_change", None, {"baseline": "yesterday"})
+
+
+def test_schema_change_baseline_captured(ctx_factory):
+    # No db context -> first-run baseline capture, no violation.
+    r = run_check_type(ctx_factory(None, {"baseline": "previous"}), "schema_change")
+    assert r.violation_count == 0
+    assert r.metrics["note"] == "baseline captured"
+    assert r.metrics["column_count"] == 6  # people: id, email, age, status, score, created_at
+
+
+def test_diff_schemas_unit():
+    from app.core.schema_monitor import diff_schemas
+
+    base = [
+        {"name": "a", "dtype": "INTEGER", "nullable": True, "ordinal": 0},
+        {"name": "b", "dtype": "TEXT", "nullable": True, "ordinal": 1},
+    ]
+    cur = [
+        {"name": "a", "dtype": "BIGINT", "nullable": False, "ordinal": 0},
+        {"name": "c", "dtype": "TEXT", "nullable": True, "ordinal": 1},
+    ]
+    d = diff_schemas(base, cur)
+    assert [x["name"] for x in d["removed"]] == ["b"]
+    assert [x["name"] for x in d["added"]] == ["c"]
+    assert d["type_changed"] == [{"column": "a", "from": "INTEGER", "to": "BIGINT"}]
+    assert d["nullability_changed"] == [{"column": "a", "from": True, "to": False}]
+    assert d["reordered"] is False
+
+
 # --------------------------------------------------------------- distribution_drift
 # These tests need a baseline Profile (PSI) and run history (KS), so they build a
 # real source table, profile it into the app DB, and run via a db-aware context.
