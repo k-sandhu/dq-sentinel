@@ -34,6 +34,13 @@ def cleanup_dataset_dependents(db: Session, dataset_id: int) -> None:
     db.query(models.SchemaSnapshot).filter(
         models.SchemaSnapshot.dataset_id == dataset_id
     ).delete(synchronize_session=False)
+    # Scorecard history is aggregate-only. Dataset-grain rows are keyed directly
+    # to this dataset and should disappear with it; global/domain/owner/etc.
+    # aggregate history is retained because it is no longer dataset-addressable.
+    db.query(models.ScorecardSnapshot).filter(
+        models.ScorecardSnapshot.grain == "dataset",
+        models.ScorecardSnapshot.key == str(dataset_id),
+    ).delete(synchronize_session=False)
     # SLAs scoped to this dataset or to any of its checks (#102) — drop evaluations first (FK).
     check_ids = select(models.Check.id).where(models.Check.dataset_id == dataset_id)
     sla_filter = or_(
