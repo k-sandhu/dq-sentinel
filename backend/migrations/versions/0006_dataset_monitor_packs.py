@@ -13,8 +13,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "0004_dataset_monitor_packs"
-down_revision: str | None = "0003_sla_tracking"
+revision: str = "0006_dataset_monitor_packs"
+down_revision: str | None = "0005_scorecard_snapshots"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

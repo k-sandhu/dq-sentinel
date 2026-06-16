@@ -66,6 +66,8 @@ def _build_context(db, session: RcaSession) -> dict[str, Any]:
             "known_issues": knowledge.known_issues,
             "importance": knowledge.importance,
             "owner": knowledge.owner,
+            "domain": knowledge.domain,
+            "team": knowledge.team,
             "freshness_sla_hours": knowledge.freshness_sla_hours,
             "pii_columns": knowledge.pii_columns,
             "notes": knowledge.notes,

@@ -153,6 +153,8 @@ const STATUS_TONES: Record<string, Tone> = {
   proposed: "accent", active: "ok", disabled: "neutral", archived: "neutral",
   // exception lifecycle
   open: "danger", acknowledged: "warn", expected: "info", resolved: "ok", muted: "neutral",
+  // scorecard SLO lifecycle
+  met: "ok", at_risk: "warn", breached: "danger",
   // misc statuses used across pages
   running: "info", complete: "ok", failed: "danger", unknown: "neutral",
   review: "accent", approved: "ok", monitoring: "info", dismissed: "neutral",
@@ -250,17 +252,37 @@ export function StatCard({
   value,
   hint,
   tone,
+  to,
+  title,
+  ariaLabel,
 }: {
   label: string;
   value: ReactNode;
-  hint?: string;
+  hint?: ReactNode;
   tone?: "ok" | "danger";
+  to?: string;
+  title?: string;
+  ariaLabel?: string;
 }) {
-  return (
-    <div className="card stat-card">
+  const body = (
+    <>
       <div className="label">{label}</div>
       <div className={`value ${tone ?? ""}`}>{value}</div>
       {hint && <div className="hint">{hint}</div>}
+    </>
+  );
+
+  if (to) {
+    return (
+      <Link to={to} className="card stat-card stat-card-link" title={title} aria-label={ariaLabel}>
+        {body}
+      </Link>
+    );
+  }
+
+  return (
+    <div className="card stat-card">
+      {body}
     </div>
   );
 }

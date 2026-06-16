@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { api } from "../api/client";
 import type { ConnectionHealth, Dataset, SearchHit, SearchOut } from "../api/types";
 import { useAuth } from "../auth";
-import { FAVORITES_SIDEBAR_CAP, getFavorites, pruneStalePrefs, subscribePrefs } from "../lib/prefs";
+import { FAVORITES_SIDEBAR_CAP, getFavorites, getRecents, pruneStalePrefs, subscribePrefs } from "../lib/prefs";
 import ErrorBoundary from "./ErrorBoundary";
 import { Icon } from "./ui";
 
@@ -32,6 +32,7 @@ const NAV_GROUPS: {
       { to: "/checks", label: "Checks", icon: "shield" },
       { to: "/runs", label: "Runs", icon: "play" },
       { to: "/exceptions", label: "Exceptions", icon: "alert" },
+      { to: "/incidents", label: "Incidents", icon: "alert" },
       { to: "/reliability", label: "Reliability", icon: "bolt" },
     ],
   },
@@ -91,49 +92,47 @@ const SEARCH_GROUPS: { type: SearchHit["type"]; label: string }[] = [
   { type: "saved_query", label: "Saved queries" },
 ];
 
-/** "Recently viewed" datasets from sibling #59's lib/prefs (issue #59). That
- *  module does not exist in every build, so we feature-detect it with a
- *  variable-specifier dynamic import (keeps tsc + vite build green when absent)
- *  and skip the section silently if it or its accessor is missing. */
+function datasetLabel(d: Dataset): string {
+  return `${d.schema_name ? `${d.schema_name}.` : ""}${d.table_name}`;
+}
+
+/** "Recently viewed" datasets from prefs, resolved through the shared datasets
+ *  query so localStorage only stores ids while the palette shows live names. */
 function useRecentDatasets(enabled: boolean): SearchHit[] {
-  const [recents, setRecents] = useState<SearchHit[]>([]);
+  const [recentEntries, setRecentEntries] = useState(() => getRecents());
+
+  useEffect(() => subscribePrefs(() => setRecentEntries(getRecents())), []);
+
+  const { data: datasets } = useQuery({
+    queryKey: ["datasets"],
+    queryFn: () => api.get<Dataset[]>("/datasets"),
+    enabled: enabled && recentEntries.length > 0,
+  });
+
   useEffect(() => {
-    if (!enabled) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        // Non-literal specifier so the bundler/TS don't hard-require the module.
-        const spec = "../lib/prefs";
-        const mod = (await import(/* @vite-ignore */ spec)) as {
-          getRecentDatasets?: () => { id: number; title?: string; subtitle?: string }[];
-          getRecents?: () => { id: number; title?: string; subtitle?: string }[];
-        };
-        const read = mod.getRecentDatasets ?? mod.getRecents;
-        const rows = read?.() ?? [];
-        if (cancelled) return;
-        setRecents(
-          rows.slice(0, 6).map((r) => ({
-            type: "dataset" as const,
-            id: r.id,
-            title: r.title ?? `Dataset ${r.id}`,
-            subtitle: r.subtitle ?? "Recently viewed",
-            url: `/datasets/${r.id}`,
-          })),
-        );
-      } catch {
-        /* #59 not present in this build — no recents section, by design */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [enabled]);
-  return recents;
+    if (datasets) pruneStalePrefs(datasets.map((d) => d.id));
+  }, [datasets]);
+
+  return useMemo(() => {
+    if (!enabled || !datasets) return [];
+    const byId = new Map(datasets.map((d) => [d.id, d]));
+    return recentEntries
+      .slice(0, 6)
+      .map((r) => byId.get(r.id))
+      .filter((d): d is Dataset => d !== undefined)
+      .map((d) => ({
+        type: "dataset" as const,
+        id: d.id,
+        title: datasetLabel(d),
+        subtitle: d.connection_name,
+        url: `/datasets/${d.id}`,
+      }));
+  }, [enabled, datasets, recentEntries]);
 }
 
 /** Global command palette: debounced GET /search?q=…, hits grouped by entity
  *  type, arrow-key navigation, Enter to jump. "/" and Ctrl/Cmd+K both focus it;
- *  empty focus shows "Recently viewed" datasets when sibling #59's prefs exist. */
+ *  empty focus shows "Recently viewed" datasets from prefs when available. */
 function GlobalSearch() {
   const navigate = useNavigate();
   const [term, setTerm] = useState("");
@@ -156,8 +155,8 @@ function GlobalSearch() {
     placeholderData: (prev) => prev, // keep last results while typing — no dropdown flicker
   });
 
-  // Empty-query "Recently viewed" (soft dep on #59); only fetched when the box
-  // is open with no query typed.
+  // Empty-query "Recently viewed" is read from prefs and resolved only while
+  // the box is open with no query typed.
   const recents = useRecentDatasets(open && debounced.length === 0);
 
   const hits = debounced.length > 0 ? (data?.hits ?? []) : recents;
@@ -384,7 +383,7 @@ function FavoritesNav() {
       <div className="nav-section">Favorites</div>
       <nav>
         {items.map((d) => {
-          const label = `${d.schema_name ? `${d.schema_name}.` : ""}${d.table_name}`;
+          const label = datasetLabel(d);
           return (
             <NavLink
               key={d.id}

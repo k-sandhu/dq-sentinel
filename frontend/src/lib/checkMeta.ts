@@ -15,6 +15,7 @@ export const CHECK_TYPE_LABELS: Record<string, string> = {
   ml_outlier: "ML outlier",
   distribution_drift: "Distribution drift",
   schema_change: "Schema change",
+  schema_contract: "Schema contract",
 };
 
 export function checkTypeLabel(key: string): string {

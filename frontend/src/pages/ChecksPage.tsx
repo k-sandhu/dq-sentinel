@@ -1,15 +1,40 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useSearchParams } from "react-router";
 import { api } from "../api/client";
 import type { Check } from "../api/types";
 import ChecksTable from "../components/ChecksTable";
 import { EmptyState, ErrorBox, Spinner } from "../components/ui";
 
 const FILTERS = ["all", "active", "proposed", "disabled"] as const;
+type CheckFilter = (typeof FILTERS)[number];
+
+function asCheckFilter(value: string | null): CheckFilter {
+  return FILTERS.includes(value as CheckFilter) ? (value as CheckFilter) : "all";
+}
 
 export default function ChecksPage() {
-  const [filter, setFilter] = useState<(typeof FILTERS)[number]>("all");
-  const [search, setSearch] = useState("");
+  const [params, setParams] = useSearchParams();
+  const filter = asCheckFilter(params.get("status"));
+  const lastStatuses = params.getAll("last_status").filter(Boolean);
+  const search = params.get("q") ?? "";
+
+  const patchParams = (mutate: (p: URLSearchParams) => void, replace = false) => {
+    const next = new URLSearchParams(params);
+    mutate(next);
+    setParams(next, { replace });
+  };
+  const setFilter = (nextFilter: CheckFilter) =>
+    patchParams((p) => {
+      if (nextFilter === "all") p.delete("status");
+      else p.set("status", nextFilter);
+    });
+  const setSearch = (value: string) =>
+    patchParams((p) => {
+      if (value) p.set("q", value);
+      else p.delete("q");
+    }, true);
+  const clearLastStatuses = () => patchParams((p) => p.delete("last_status"));
+
   const { data, isLoading, error } = useQuery({
     queryKey: ["checks", { filter }],
     queryFn: () => api.get<Check[]>(`/checks${filter === "all" ? "" : `?status=${filter}`}`),
@@ -18,11 +43,12 @@ export default function ChecksPage() {
   const needle = search.toLowerCase();
   const shown = (data ?? []).filter(
     (c) =>
-      !needle ||
-      c.name.toLowerCase().includes(needle) ||
-      (c.column_name ?? "").toLowerCase().includes(needle) ||
-      c.dataset_name.toLowerCase().includes(needle) ||
-      c.check_type.includes(needle),
+      (lastStatuses.length === 0 || lastStatuses.includes(c.last_status ?? "unknown")) &&
+      (!needle ||
+        c.name.toLowerCase().includes(needle) ||
+        (c.column_name ?? "").toLowerCase().includes(needle) ||
+        c.dataset_name.toLowerCase().includes(needle) ||
+        c.check_type.includes(needle)),
   );
 
   return (
@@ -52,6 +78,21 @@ export default function ChecksPage() {
           ))}
         </div>
       </div>
+      {lastStatuses.length > 0 && (
+        <div className="active-filters">
+          <span className="filter-tag">
+            latest result {lastStatuses.join(" / ")}
+            <button
+              type="button"
+              className="tag-x"
+              aria-label="Clear latest result filter"
+              onClick={clearLastStatuses}
+            >
+              &times;
+            </button>
+          </span>
+        </div>
+      )}
       <ErrorBox error={error} />
       {isLoading ? (
         <Spinner />

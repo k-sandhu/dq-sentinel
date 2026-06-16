@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from app.core.lineage import extract_table_refs, sqlglot_dialect
+from app.core.lineage import build_schema_mapping, extract_column_lineage, extract_table_refs, sqlglot_dialect
 
 # ---- unit: dialect mapping ----
 
@@ -63,6 +63,122 @@ def test_extract_refs_unparseable_returns_none():
 def test_extract_refs_retries_generic_dialect():
     # bogus dialect -> first parse attempt raises, generic retry still succeeds
     assert extract_table_refs("SELECT * FROM orders", "not-a-dialect") == {(None, "orders")}
+
+
+def _column_schema():
+    return build_schema_mapping(
+        [
+            {
+                "schema_name": None,
+                "table_name": "orders",
+                "columns": [
+                    {"name": "id", "dtype": "INTEGER"},
+                    {"name": "customer_id", "dtype": "INTEGER"},
+                    {"name": "amount", "dtype": "REAL"},
+                    {"name": "created_at", "dtype": "TEXT"},
+                ],
+            },
+            {
+                "schema_name": None,
+                "table_name": "customers",
+                "columns": [
+                    {"name": "id", "dtype": "INTEGER"},
+                    {"name": "name", "dtype": "TEXT"},
+                    {"name": "email", "dtype": "TEXT"},
+                ],
+            },
+        ]
+    )
+
+
+def _edge_set(edges):
+    return {
+        (
+            e["source_table"],
+            e["source_column"],
+            e["target_column"],
+            e["kind"],
+        )
+        for e in edges
+    }
+
+
+def test_extract_column_lineage_join_alias_expression_aggregate():
+    edges, errors = extract_column_lineage(
+        """
+        CREATE VIEW order_totals AS
+        SELECT o.id,
+               c.name AS customer,
+               SUM(o.amount) AS revenue,
+               o.amount * 1.13 AS gross
+        FROM orders o JOIN customers c ON c.id = o.customer_id
+        GROUP BY o.id, c.name, o.amount
+        """,
+        "sqlite",
+        _column_schema(),
+        None,
+        "order_totals",
+    )
+    assert errors == 0
+    assert _edge_set(edges) >= {
+        ("orders", "id", "id", "direct"),
+        ("customers", "name", "customer", "direct"),
+        ("orders", "amount", "revenue", "aggregate"),
+        ("orders", "amount", "gross", "derived"),
+    }
+
+
+def test_extract_column_lineage_cte_union_and_select_star():
+    cte_edges, cte_errors = extract_column_lineage(
+        """
+        CREATE VIEW recent AS
+        WITH last7 AS (SELECT * FROM orders WHERE created_at >= '2026-06-01')
+        SELECT last7.id, last7.customer_id, c.email
+        FROM last7 JOIN customers c ON c.id = last7.customer_id
+        """,
+        "sqlite",
+        _column_schema(),
+        None,
+        "recent",
+    )
+    assert cte_errors == 0
+    assert _edge_set(cte_edges) >= {
+        ("orders", "id", "id", "direct"),
+        ("orders", "customer_id", "customer_id", "direct"),
+        ("customers", "email", "email", "direct"),
+    }
+
+    star_edges, star_errors = extract_column_lineage(
+        "CREATE VIEW orders_copy AS SELECT * FROM orders",
+        "sqlite",
+        _column_schema(),
+        None,
+        "orders_copy",
+    )
+    assert star_errors == 0
+    assert _edge_set(star_edges) >= {
+        ("orders", "id", "id", "direct"),
+        ("orders", "customer_id", "customer_id", "direct"),
+        ("orders", "amount", "amount", "direct"),
+        ("orders", "created_at", "created_at", "direct"),
+    }
+
+    union_edges, union_errors = extract_column_lineage(
+        """
+        CREATE VIEW unioned AS
+        SELECT id, amount FROM orders
+        UNION ALL
+        SELECT id, 0 AS amount FROM customers
+        """,
+        "sqlite",
+        _column_schema(),
+        None,
+        "unioned",
+    )
+    assert union_errors == 0
+    assert ("orders", "id", "id", "derived") in _edge_set(union_edges)
+    assert ("customers", "id", "id", "derived") in _edge_set(union_edges)
+    assert ("orders", "amount", "amount", "derived") in _edge_set(union_edges)
 
 
 # ---- API: DDL + lineage graphs ----
@@ -175,6 +291,30 @@ def test_connection_lineage_full_graph(client, admin_headers, lineage_env):
     assert graph["truncated"] is False
 
 
+def test_connection_lineage_column_graph(client, admin_headers, lineage_env):
+    resp = client.get(
+        f"/api/v1/connections/{lineage_env['conn_id']}/lineage?granularity=column",
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    graph = resp.json()
+
+    nodes = {n["id"]: n for n in graph["nodes"]}
+    assert {c["column"] for c in nodes["orders"]["columns"]} >= {"id", "amount", "customer_id"}
+    assert {c["column"] for c in nodes["order_totals"]["columns"]} >= {
+        "customer_id",
+        "name",
+        "total",
+    }
+
+    edge_keys = {(e["source"], e["target"], e["kind"]) for e in graph["column_edges"]}
+    assert ("orders.amount", "order_totals.total", "aggregate") in edge_keys
+    assert ("customers.name", "order_totals.name", "direct") in edge_keys
+    assert ("orders.id", "recent.id", "direct") in edge_keys  # through the CTE last7
+    assert graph["parse_errors"] == 0
+    assert graph["qualify_errors"] == 0
+
+
 def test_dataset_lineage_depth_subgraphs(client, admin_headers, lineage_env):
     ds = lineage_env["datasets"]
 
@@ -214,6 +354,61 @@ def test_dataset_lineage_depth_subgraphs(client, admin_headers, lineage_env):
         f"/api/v1/datasets/{ds['order_totals']}/lineage?depth=99", headers=admin_headers
     ).json()
     assert {n["id"] for n in g99["nodes"]} == {n["id"] for n in g2["nodes"]}
+
+
+def test_dataset_column_lineage_trace_pii_downstream(client, admin_headers):
+    path = Path(tempfile.mkdtemp(prefix="dqsentinel-column-trace-")) / "trace.sqlite"
+    con = sqlite3.connect(path)
+    con.executescript(
+        """
+        CREATE TABLE customers (id INTEGER PRIMARY KEY, email TEXT, name TEXT);
+        CREATE VIEW customer_contacts AS
+            SELECT id, email AS contact_email, UPPER(name) AS display_name
+            FROM customers;
+        INSERT INTO customers VALUES (1, 'ada@example.com', 'Ada');
+        """
+    )
+    con.commit()
+    con.close()
+
+    resp = client.post(
+        "/api/v1/connections",
+        json={"name": "column-trace-src", "dsn": f"sqlite:///{path.as_posix()}"},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 201, resp.text
+    conn_id = resp.json()["id"]
+    resp = client.post(
+        "/api/v1/datasets/register",
+        json={
+            "connection_id": conn_id,
+            "tables": [
+                {"table_name": "customers"},
+                {"table_name": "customer_contacts", "kind": "view"},
+            ],
+        },
+        headers=admin_headers,
+    )
+    assert resp.status_code == 201, resp.text
+    datasets = {d["table_name"]: d["id"] for d in resp.json()}
+
+    knowledge = client.put(
+        f"/api/v1/datasets/{datasets['customers']}/knowledge",
+        json={"pii_columns": ["email"]},
+        headers=admin_headers,
+    )
+    assert knowledge.status_code == 200, knowledge.text
+
+    resp = client.get(
+        f"/api/v1/datasets/{datasets['customers']}/lineage/columns?column=email&depth=2",
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    graph = resp.json()
+    assert {n["id"] for n in graph["nodes"]} == {"customers", "customer_contacts"}
+    assert {(e["source"], e["target"], e["kind"]) for e in graph["column_edges"]} == {
+        ("customers.email", "customer_contacts.contact_email", "direct")
+    }
 
 
 def test_lineage_endpoints_require_auth(client, lineage_env):

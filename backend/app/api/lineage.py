@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.connectors.sa import connector_for
-from app.core.lineage import build_lineage, node_id_for, subgraph, table_key
+from app.core.lineage import build_lineage, column_subgraph, node_id_for, subgraph, table_key
 from app.db import get_db
 from app.security import get_current_user
 
@@ -48,28 +48,49 @@ def get_dataset_ddl(
 def dataset_lineage(
     dataset_id: int,
     depth: int = 2,
+    granularity: str = "table",
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
     ds = _get_dataset(db, dataset_id)
     depth = max(1, min(5, depth))  # clamp rather than reject
+    granularity = "column" if granularity == "column" else "table"
     try:
-        graph = build_lineage(db, ds.connection, connector_for(ds.connection))
+        graph = build_lineage(db, ds.connection, connector_for(ds.connection), granularity=granularity)
     except Exception as exc:  # noqa: BLE001 - surface introspection/source errors
         raise HTTPException(502, f"Could not build lineage: {exc}") from exc
     return subgraph(graph, node_id_for(ds.schema_name, ds.table_name), depth)
 
 
+@router.get("/datasets/{dataset_id}/lineage/columns", response_model=schemas.LineageGraph)
+def dataset_column_lineage(
+    dataset_id: int,
+    column: str,
+    depth: int = 2,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    ds = _get_dataset(db, dataset_id)
+    depth = max(1, min(8, depth))
+    try:
+        graph = build_lineage(db, ds.connection, connector_for(ds.connection), granularity="column")
+    except Exception as exc:  # noqa: BLE001 - surface introspection/source errors
+        raise HTTPException(502, f"Could not build lineage: {exc}") from exc
+    return column_subgraph(graph, node_id_for(ds.schema_name, ds.table_name), column, depth)
+
+
 @router.get("/connections/{connection_id}/lineage", response_model=schemas.LineageGraph)
 def connection_lineage(
     connection_id: int,
+    granularity: str = "table",
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
     conn = db.get(models.Connection, connection_id)
     if conn is None:
         raise HTTPException(404, "Connection not found")
+    granularity = "column" if granularity == "column" else "table"
     try:
-        return build_lineage(db, conn, connector_for(conn))
+        return build_lineage(db, conn, connector_for(conn), granularity=granularity)
     except Exception as exc:  # noqa: BLE001 - surface introspection/source errors
         raise HTTPException(502, f"Could not build lineage: {exc}") from exc

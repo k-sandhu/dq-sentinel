@@ -1,6 +1,6 @@
 """Pydantic request/response schemas. Mirror changes into frontend/src/api/types.ts."""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
@@ -10,6 +10,9 @@ Severity = Literal["info", "warn", "error"]
 CheckStatus = Literal["proposed", "active", "disabled", "archived"]
 RunStatus = Literal["pass", "warn", "fail", "error"]
 ExceptionStatus = Literal["open", "acknowledged", "expected", "resolved", "muted"]
+IncidentStatus = Literal["open", "acknowledged", "resolved"]
+ContractStatus = Literal["draft", "active", "deprecated"]
+ContractConformanceStatus = Literal["pass", "breached", "unknown"]
 
 
 class ORMModel(BaseModel):
@@ -129,6 +132,11 @@ class DatasetOut(ORMModel):
     health: str | None = None  # pass | warn | fail | unknown
     importance: str | None = None  # from table knowledge
     owner: str | None = None
+    domain: str | None = None
+    team: str | None = None
+    slo_target_score: float | None = None
+    slo_window_days: int | None = None
+    slo_enabled: bool = True
 
 
 class PreviewOut(BaseModel):
@@ -207,6 +215,34 @@ class SchemaHistoryOut(BaseModel):
     snapshots: list[SchemaSnapshotOut]  # newest first
 
 
+# ---- scorecard history (#119) ----
+ScorecardGrain = Literal["global", "domain", "team", "owner", "importance", "dataset"]
+
+
+class ScorecardHistoryPoint(ORMModel):
+    grain: ScorecardGrain
+    key: str
+    label: str
+    snapshot_date: date
+    score: float | None = None
+    slo_target: float | None = None
+    slo_status: str
+    dataset_count: int
+    active_check_count: int
+    open_exception_count: int
+    breached_dataset_count: int
+    detail: dict[str, Any] = {}
+    created_at: datetime
+
+
+class ScorecardHistoryOut(BaseModel):
+    grain: ScorecardGrain
+    key: str | None = None
+    days: int
+    sparse: bool = True  # missing days are omitted; clients should render gaps
+    points: list[ScorecardHistoryPoint] = []  # oldest first, then key for multi-series requests
+
+
 # ---- SLA tracking (#102) ----
 SLAScope = Literal["dataset", "check"]
 SLATargetType = Literal["freshness", "volume", "check_success"]
@@ -270,13 +306,107 @@ class ReliabilityOut(BaseModel):
     slas: list[SLAOut]
 
 
+# ---- scorecards (#118) ----
+ScorecardSloStatus = Literal["met", "at_risk", "breached", "unknown", "disabled"]
+ScorecardSloTargetSource = Literal["explicit", "importance_default", "disabled"]
+ScorecardDimension = Literal["domain", "team", "owner", "importance"]
+
+
+class ScorecardDatasetOut(BaseModel):
+    dataset_id: int
+    table_name: str
+    display_name: str
+    schema_name: str | None = None
+    domain: str = ""
+    team: str = ""
+    owner: str = ""
+    importance: Literal["low", "medium", "high", "critical"] = "medium"
+    score: float | None = None
+    base_score: float | None = None
+    exception_penalty: float = 0.0
+    slo_target: float | None = None
+    slo_target_source: ScorecardSloTargetSource = "importance_default"
+    slo_status: ScorecardSloStatus = "unknown"
+    score_gap: float | None = None
+    active_checks: int = 0
+    passing_checks: int = 0
+    warning_checks: int = 0
+    failing_checks: int = 0
+    error_checks: int = 0
+    unknown_checks: int = 0
+    open_exceptions: int = 0
+    score_drivers: dict[str, Any] = Field(default_factory=dict)
+
+
+class ScorecardDatasetPageOut(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: list[ScorecardDatasetOut]
+
+
+class ScorecardRollupOut(BaseModel):
+    dimension: str
+    key: str
+    label: str
+    score: float | None = None
+    slo_target: float | None = None
+    slo_status: ScorecardSloStatus = "unknown"
+    score_gap: float | None = None
+    total_datasets: int = 0
+    scored_datasets: int = 0
+    unknown_datasets: int = 0
+    active_checks: int = 0
+    passing_checks: int = 0
+    warning_checks: int = 0
+    failing_checks: int = 0
+    error_checks: int = 0
+    unknown_checks: int = 0
+    open_exceptions: int = 0
+    importance_weight: float = 0.0
+    slo_met: int = 0
+    slo_at_risk: int = 0
+    slo_breached: int = 0
+    slo_unknown: int = 0
+    slo_disabled: int = 0
+
+
+class ScorecardSummaryOut(BaseModel):
+    score: float | None = None
+    slo_target: float | None = None
+    slo_status: ScorecardSloStatus = "unknown"
+    score_gap: float | None = None
+    total_datasets: int = 0
+    scored_datasets: int = 0
+    unknown_datasets: int = 0
+    active_checks: int = 0
+    passing_checks: int = 0
+    warning_checks: int = 0
+    failing_checks: int = 0
+    error_checks: int = 0
+    unknown_checks: int = 0
+    open_exceptions: int = 0
+    slo_met: int = 0
+    slo_at_risk: int = 0
+    slo_breached: int = 0
+    slo_unknown: int = 0
+    slo_disabled: int = 0
+    worst_rollups: list[ScorecardRollupOut] = Field(default_factory=list)
+    top_failing_datasets: list[ScorecardDatasetOut] = Field(default_factory=list)
+
+
 # ---- knowledge ----
 class KnowledgeIn(BaseModel):
     business_context: str = ""
     known_issues: str = ""
     importance: Literal["low", "medium", "high", "critical"] = "medium"
     owner: str = ""
+    domain: str = ""
+    team: str = ""
     freshness_sla_hours: int | None = None
+    slo_target_score: float | None = Field(default=None, ge=0, le=100)
+    slo_window_days: int | None = Field(default=None, gt=0)
+    slo_enabled: bool = True
     pii_columns: list[str] = []
     notes: str = ""
 
@@ -394,6 +524,89 @@ class CheckTypeInfo(BaseModel):
     params: list[dict[str, Any]]
 
 
+# ---- data contracts (#105) ----
+class DataContractCreate(BaseModel):
+    name: str = Field(default="", max_length=255)
+    version: str = Field(default="0.1.0", min_length=1, max_length=50)
+    status: ContractStatus = "draft"
+    spec: dict[str, Any] | None = None
+
+
+class DataContractUpdate(BaseModel):
+    name: str | None = Field(default=None, max_length=255)
+    version: str | None = Field(default=None, min_length=1, max_length=50)
+    status: ContractStatus | None = None
+    spec: dict[str, Any] | None = None
+
+
+class DataContractOut(ORMModel):
+    id: int
+    dataset_id: int
+    name: str
+    version: str
+    status: ContractStatus
+    spec: dict[str, Any]
+    created_by_id: int | None
+    created_at: datetime
+    activated_at: datetime | None
+    version_count: int = 0
+
+
+class DataContractVersionOut(ORMModel):
+    id: int
+    contract_id: int
+    version: str
+    spec: dict[str, Any]
+    created_by_id: int | None
+    created_at: datetime
+
+
+class DataContractImportIn(BaseModel):
+    yaml: str = Field(min_length=1)
+    activate: bool = False
+
+
+class DataContractExportOut(BaseModel):
+    format: Literal["odcs"] = "odcs"
+    yaml: str
+
+
+class DataContractApplyOut(BaseModel):
+    contract: DataContractOut
+    created_checks: list[CheckOut] = Field(default_factory=list)
+    updated_checks: list[CheckOut] = Field(default_factory=list)
+    schema_pinned: bool = False
+
+
+class ContractClauseConformance(BaseModel):
+    clause_id: str
+    kind: Literal["schema", "freshness", "volume", "quality"]
+    label: str
+    status: ContractConformanceStatus
+    check_id: int | None = None
+    check_status: RunStatus | None = None
+    detail: str = ""
+    expected: dict[str, Any] = Field(default_factory=dict)
+    observed: dict[str, Any] = Field(default_factory=dict)
+
+
+class DataContractConformanceOut(BaseModel):
+    contract_id: int
+    dataset_id: int
+    status: ContractConformanceStatus
+    clauses: list[ContractClauseConformance] = Field(default_factory=list)
+    generated_at: datetime
+
+
+class DataContractDiffOut(BaseModel):
+    contract_id: int
+    from_version_id: int
+    to_version_id: int
+    added: list[str] = Field(default_factory=list)
+    removed: list[str] = Field(default_factory=list)
+    changed: list[str] = Field(default_factory=list)
+
+
 # ---- runs ----
 class RunOut(ORMModel):
     id: int
@@ -411,6 +624,48 @@ class RunOut(ORMModel):
     error_message: str
     triggered_by: str
     exception_count: int = 0
+
+
+# ---- incidents (issues #112 / #110) ----
+class IncidentEventOut(ORMModel):
+    id: int
+    incident_id: int
+    kind: str
+    detail: dict[str, Any]
+    user: str | None = None
+    created_at: datetime
+
+
+class IncidentOut(ORMModel):
+    id: int
+    dataset_id: int
+    dataset_name: str = ""
+    check_id: int
+    check_name: str = ""
+    current_run_id: int | None
+    dedupe_key: str
+    title: str
+    severity: Severity
+    status: IncidentStatus
+    failure_status: RunStatus
+    first_seen_at: datetime
+    last_seen_at: datetime
+    resolved_at: datetime | None
+    occurrence_count: int
+    last_notified_at: datetime | None
+    next_escalation_at: datetime | None
+    escalation_level: int
+    external_refs: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+
+
+class IncidentDetailOut(IncidentOut):
+    events: list[IncidentEventOut] = []
+
+
+class IncidentActionIn(BaseModel):
+    note: str = Field(default="", max_length=2_000)
 
 
 # ---- exceptions (workbench: #55 identity, #56 triage workflow, #57 API v2) ----
@@ -656,7 +911,7 @@ class McpServerOut(ORMModel):
 
 
 # ---- notification rules (issue #27) ----
-NotifyChannel = Literal["slack", "email"]
+NotifyChannel = Literal["slack", "email", "webhook", "teams", "pagerduty", "jira", "servicenow"]
 
 
 class NotificationRuleIn(BaseModel):
@@ -665,6 +920,9 @@ class NotificationRuleIn(BaseModel):
     channel: NotifyChannel
     target: str = ""  # webhook URL or comma-separated emails ("" = global Slack default)
     on_error_runs: bool = True
+    dedupe_window_minutes: int = Field(default=60, ge=1, le=10_080)
+    escalation_delay_minutes: int | None = Field(default=None, ge=1, le=10_080)
+    max_escalation_level: int = Field(default=0, ge=0, le=10)
     enabled: bool = True
 
 
@@ -674,6 +932,9 @@ class NotificationRuleUpdate(BaseModel):
     channel: NotifyChannel | None = None
     target: str | None = None
     on_error_runs: bool | None = None
+    dedupe_window_minutes: int | None = Field(default=None, ge=1, le=10_080)
+    escalation_delay_minutes: int | None = Field(default=None, ge=1, le=10_080)
+    max_escalation_level: int | None = Field(default=None, ge=0, le=10)
     enabled: bool | None = None
 
 
@@ -685,6 +946,9 @@ class NotificationRuleOut(ORMModel):
     channel: NotifyChannel
     target: str
     on_error_runs: bool
+    dedupe_window_minutes: int
+    escalation_delay_minutes: int | None
+    max_escalation_level: int
     enabled: bool
     created_at: datetime
 
@@ -788,6 +1052,15 @@ class DatasetDdlOut(BaseModel):
     kind: Literal["table", "view"] = "table"
 
 
+class ColumnLineageNode(BaseModel):
+    id: str
+    table_id: str
+    column: str
+    dtype: str = ""
+    nullable: bool = True
+    dataset_id: int | None = None
+
+
 class LineageNode(BaseModel):
     id: str  # "schema.table" when schema_name is set, else "table" (lowercased)
     schema_name: str | None = None
@@ -797,6 +1070,9 @@ class LineageNode(BaseModel):
     health: Literal["pass", "warn", "fail", "unknown"] = "unknown"
     failing_checks: int = 0
     open_exceptions: int = 0
+    owner: str = ""
+    importance: str = ""
+    columns: list[ColumnLineageNode] = Field(default_factory=list)
 
 
 class LineageEdge(BaseModel):
@@ -804,10 +1080,19 @@ class LineageEdge(BaseModel):
     target: str  # the view selecting from source
 
 
+class ColumnLineageEdge(BaseModel):
+    source: str
+    target: str
+    kind: Literal["direct", "derived", "aggregate", "unresolved"] = "direct"
+    expression: str | None = None
+
+
 class LineageGraph(BaseModel):
-    nodes: list[LineageNode] = []
-    edges: list[LineageEdge] = []
+    nodes: list[LineageNode] = Field(default_factory=list)
+    edges: list[LineageEdge] = Field(default_factory=list)
+    column_edges: list[ColumnLineageEdge] = Field(default_factory=list)
     parse_errors: int = 0  # view definitions sqlglot could not parse
+    qualify_errors: int = 0  # view column lineage could not be resolved
     truncated: bool = False  # graph exceeded the node cap and was cut off
 
 

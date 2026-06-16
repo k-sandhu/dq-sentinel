@@ -4,11 +4,12 @@ Status/enum-ish fields are plain strings validated at the schema layer to keep
 migrations trivial. JSON columns use sa.JSON (TEXT on SQLite, JSON on Postgres).
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import (
     JSON,
     Boolean,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -76,6 +77,9 @@ class Dataset(Base):
     )
     knowledge: Mapped["TableKnowledge | None"] = relationship(
         back_populates="dataset", cascade="all, delete-orphan", uselist=False
+    )
+    data_contracts: Mapped[list["DataContract"]] = relationship(
+        back_populates="dataset", cascade="all, delete-orphan"
     )
 
 
@@ -145,13 +149,95 @@ class TableKnowledge(Base):
     known_issues: Mapped[str] = mapped_column(Text, default="")
     importance: Mapped[str] = mapped_column(String(20), default="medium")  # low|medium|high|critical
     owner: Mapped[str] = mapped_column(String(255), default="")
+    domain: Mapped[str] = mapped_column(String(255), default="")
+    team: Mapped[str] = mapped_column(String(255), default="")
     freshness_sla_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    slo_target_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    slo_window_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    slo_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     pii_columns: Mapped[list] = mapped_column(JSON, default=list)  # column names redacted in LLM prompts
     notes: Mapped[str] = mapped_column(Text, default="")
     updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
     dataset: Mapped[Dataset] = relationship(back_populates="knowledge")
+
+
+class ScorecardSnapshot(Base):
+    """Daily aggregate quality scorecard point (#119).
+
+    This table intentionally stores app-metadata aggregates only: no source SQL,
+    source rows, DSNs, secrets, or row-level exception payloads.
+    """
+
+    __tablename__ = "scorecard_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "grain",
+            "key",
+            "snapshot_date",
+            name="uq_scorecard_snapshot_grain_key_date",
+        ),
+        Index("ix_scorecard_history_lookup", "grain", "key", "snapshot_date"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    grain: Mapped[str] = mapped_column(String(20))  # global|domain|team|owner|importance|dataset
+    key: Mapped[str] = mapped_column(String(255))
+    label: Mapped[str] = mapped_column(String(255), default="")
+    snapshot_date: Mapped[date] = mapped_column(Date)
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    slo_target: Mapped[float | None] = mapped_column(Float, nullable=True)
+    slo_status: Mapped[str] = mapped_column(String(20), default="unknown")
+    dataset_count: Mapped[int] = mapped_column(Integer, default=0)
+    active_check_count: Mapped[int] = mapped_column(Integer, default=0)
+    open_exception_count: Mapped[int] = mapped_column(Integer, default=0)
+    breached_dataset_count: Mapped[int] = mapped_column(Integer, default=0)
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class DataContract(Base):
+    """Versioned, enforceable agreement for one dataset (#105).
+
+    The normalized ``spec`` intentionally stays JSON so it can track ODCS fields
+    without a migration per clause shape. Immutable versions live in
+    DataContractVersion rows for audit/diff.
+    """
+
+    __tablename__ = "data_contracts"
+    __table_args__ = (Index("ix_data_contract_dataset_status", "dataset_id", "status"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id"), index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    version: Mapped[str] = mapped_column(String(50), default="0.1.0")
+    status: Mapped[str] = mapped_column(String(20), default="draft")  # draft | active | deprecated
+    spec: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    dataset: Mapped[Dataset] = relationship(back_populates="data_contracts")
+    versions: Mapped[list["DataContractVersion"]] = relationship(
+        back_populates="contract", cascade="all, delete-orphan", order_by="DataContractVersion.id"
+    )
+
+
+class DataContractVersion(Base):
+    """Immutable contract spec snapshot for review, diffing, and rollback."""
+
+    __tablename__ = "data_contract_versions"
+    __table_args__ = (Index("ix_data_contract_versions_contract", "contract_id", "id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    contract_id: Mapped[int] = mapped_column(ForeignKey("data_contracts.id"), index=True)
+    version: Mapped[str] = mapped_column(String(50))
+    spec: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    contract: Mapped[DataContract] = relationship(back_populates="versions")
 
 
 class Check(Base):
@@ -205,6 +291,68 @@ class CheckRun(Base):
         cascade="all, delete-orphan",
         foreign_keys="ExceptionRecord.run_id",
     )
+
+
+class Incident(Base):
+    """Durable lifecycle for a failing check.
+
+    One incident is kept per stable dedupe key so repeated failing runs update
+    state instead of paging repeatedly. The append-only `events` relationship is
+    the human/audit timeline; source row samples remain on ExceptionRecord and
+    are intentionally not copied here.
+    """
+
+    __tablename__ = "incidents"
+    __table_args__ = (
+        Index("ix_incidents_status", "status"),
+        Index("ix_incidents_dataset_status", "dataset_id", "status"),
+        Index("ix_incidents_check_status", "check_id", "status"),
+        Index("ix_incidents_escalation", "status", "next_escalation_at"),
+        UniqueConstraint("dedupe_key", name="uq_incident_dedupe_key"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id"), index=True)
+    check_id: Mapped[int] = mapped_column(ForeignKey("checks.id"), index=True)
+    current_run_id: Mapped[int | None] = mapped_column(ForeignKey("check_runs.id"), nullable=True)
+    dedupe_key: Mapped[str] = mapped_column(String(255))
+    title: Mapped[str] = mapped_column(String(500))
+    severity: Mapped[str] = mapped_column(String(10), default="error")  # info | warn | error
+    status: Mapped[str] = mapped_column(String(20), default="open")  # open | acknowledged | resolved
+    failure_status: Mapped[str] = mapped_column(String(10), default="fail")  # fail | error
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    occurrence_count: Mapped[int] = mapped_column(Integer, default=1)
+    last_notified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    next_escalation_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    escalation_level: Mapped[int] = mapped_column(Integer, default=0)
+    external_refs: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+    events: Mapped[list["IncidentEvent"]] = relationship(
+        cascade="all, delete-orphan", order_by="IncidentEvent.id"
+    )
+
+
+class IncidentEvent(Base):
+    """Append-only incident timeline.
+
+    `kind`: opened | occurred | acknowledged | resolved | recovered |
+    escalated | notified | system. `detail` must never contain source row data
+    or secrets.
+    """
+
+    __tablename__ = "incident_events"
+    __table_args__ = (Index("ix_incident_events_incident", "incident_id", "id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    incident_id: Mapped[int] = mapped_column(ForeignKey("incidents.id"))
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    kind: Mapped[str] = mapped_column(String(30))
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class ExceptionRecord(Base):
@@ -411,9 +559,12 @@ class NotificationRule(Base):
         ForeignKey("datasets.id"), nullable=True, index=True
     )  # None = all datasets
     min_severity: Mapped[str] = mapped_column(String(10), default="error")  # info | warn | error
-    channel: Mapped[str] = mapped_column(String(10))  # slack | email
-    target: Mapped[str] = mapped_column(Text, default="")  # webhook URL or comma-separated emails
+    channel: Mapped[str] = mapped_column(String(20))  # slack | email | webhook | teams | pagerduty | jira | servicenow
+    target: Mapped[str] = mapped_column(Text, default="")  # channel route hint; credentials come from env/settings
     on_error_runs: Mapped[bool] = mapped_column(Boolean, default=True)  # also fire on status == "error"
+    dedupe_window_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    escalation_delay_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_escalation_level: Mapped[int] = mapped_column(Integer, default=0)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 

@@ -23,6 +23,7 @@ router = APIRouter(prefix="/exceptions", tags=["exceptions"])
 MAX_BULK_IDS = 1000
 # Data-egress control (#57): exports are capped, not just for performance.
 EXPORT_CAP = 10_000
+SORT_OPTIONS = {"newest", "oldest", "occurrences", "severity"}
 SEVERITY_ORDER = case(
     (models.Check.severity == "error", 0),
     (models.Check.severity == "warn", 1),
@@ -206,6 +207,24 @@ def _csv_safe(value) -> str:
     return s
 
 
+def _audit_safe_filters(filters: dict) -> dict:
+    safe: dict = {}
+    for key, value in filters.items():
+        if value in (None, [], ""):
+            continue
+        if isinstance(value, datetime):
+            safe[key] = value.isoformat()
+        elif key == "q":
+            safe[key] = {"present": True, "length": len(value)}
+        else:
+            safe[key] = value
+    return safe
+
+
+def _audit_safe_sort(sort: str) -> str:
+    return sort if sort in SORT_OPTIONS else "newest"
+
+
 @router.get("/export.csv")
 def export_csv(
     filters: dict = Depends(_common_filters),
@@ -213,9 +232,24 @@ def export_csv(
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),
 ):
-    # TODO(#30): emit an `exception.export` audit-log call here when audit lands.
-    query = _apply_sort(_filtered(db, current_user=user, **filters), sort).limit(EXPORT_CAP)
+    base_query = _filtered(db, current_user=user, **filters)
+    matching_count = base_query.count()
+    query = _apply_sort(base_query, sort).limit(EXPORT_CAP)
     rows = query.all()
+    audit(
+        db,
+        user,
+        "exception.export",
+        "exception",
+        None,
+        filters=_audit_safe_filters(filters),
+        sort=_audit_safe_sort(sort),
+        matching_count=matching_count,
+        exported_count=len(rows),
+        export_cap=EXPORT_CAP,
+        truncated=matching_count > len(rows),
+    )
+    db.commit()
     # Resolve display fields without N+1 per row.
     ds_names = {d.id: d.table_name for d in db.query(models.Dataset).all()}
     user_names = {u.id: (u.name or u.email) for u in db.query(models.User).all()}

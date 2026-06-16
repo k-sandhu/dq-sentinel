@@ -34,6 +34,13 @@ def cleanup_dataset_dependents(db: Session, dataset_id: int) -> None:
     db.query(models.SchemaSnapshot).filter(
         models.SchemaSnapshot.dataset_id == dataset_id
     ).delete(synchronize_session=False)
+    # Scorecard history is aggregate-only. Dataset-grain rows are keyed directly
+    # to this dataset and should disappear with it; global/domain/owner/etc.
+    # aggregate history is retained because it is no longer dataset-addressable.
+    db.query(models.ScorecardSnapshot).filter(
+        models.ScorecardSnapshot.grain == "dataset",
+        models.ScorecardSnapshot.key == str(dataset_id),
+    ).delete(synchronize_session=False)
     # SLAs scoped to this dataset or to any of its checks (#102) — drop evaluations first (FK).
     check_ids = select(models.Check.id).where(models.Check.dataset_id == dataset_id)
     sla_filter = or_(
@@ -45,6 +52,16 @@ def cleanup_dataset_dependents(db: Session, dataset_id: int) -> None:
         synchronize_session=False
     )
     db.query(models.SLADefinition).filter(sla_filter).delete(synchronize_session=False)
+    incident_filter = or_(
+        models.Incident.dataset_id == dataset_id,
+        models.Incident.check_id.in_(check_ids),
+        models.Incident.current_run_id.in_(run_ids),
+    )
+    incident_ids = select(models.Incident.id).where(incident_filter)
+    db.query(models.IncidentEvent).filter(
+        models.IncidentEvent.incident_id.in_(incident_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.Incident).filter(incident_filter).delete(synchronize_session=False)
     db.query(models.NotificationRule).filter(
         models.NotificationRule.dataset_id == dataset_id
     ).delete(synchronize_session=False)

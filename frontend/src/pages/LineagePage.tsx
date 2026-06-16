@@ -1,7 +1,7 @@
 // Estate-wide lineage (issue #51): full view-derived graph for one connection,
 // with a "needs attention" rail and a flat edge table underneath.
 import { useQuery } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { api } from "../api/client";
 import type { Connection, LineageGraph as LineageGraphData, LineageNode } from "../api/types";
@@ -16,6 +16,7 @@ function nodeLabel(n: LineageNode): string {
 export default function LineagePage() {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
+  const [granularity, setGranularity] = useState<"table" | "column">("table");
 
   const connectionsQuery = useQuery({
     queryKey: ["connections"],
@@ -36,8 +37,8 @@ export default function LineagePage() {
   }, [fromParam, connections, setParams]);
 
   const lineage = useQuery({
-    queryKey: ["connection-lineage", connectionId],
-    queryFn: () => api.get<LineageGraphData>(`/connections/${connectionId}/lineage`),
+    queryKey: ["connection-lineage", connectionId, granularity],
+    queryFn: () => api.get<LineageGraphData>(`/connections/${connectionId}/lineage?granularity=${granularity}`),
     enabled: connectionId !== null,
     staleTime: 30_000,
   });
@@ -103,6 +104,8 @@ export default function LineagePage() {
               {graph && (
                 <LineageGraph
                   graph={graph}
+                  granularity={granularity}
+                  onGranularityChange={setGranularity}
                   emptyHint="No tables or views were found on this connection — or none of its views reference other tables."
                 />
               )}

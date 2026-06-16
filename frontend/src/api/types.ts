@@ -5,6 +5,8 @@ export type Severity = "info" | "warn" | "error";
 export type CheckStatus = "proposed" | "active" | "disabled" | "archived";
 export type RunStatus = "pass" | "warn" | "fail" | "error";
 export type ExceptionStatus = "open" | "acknowledged" | "expected" | "resolved" | "muted";
+export type ContractStatus = "draft" | "active" | "deprecated";
+export type ContractConformanceStatus = "pass" | "breached" | "unknown";
 
 export interface User {
   id: number;
@@ -73,6 +75,11 @@ export interface Dataset {
   health: "pass" | "warn" | "fail" | "unknown" | null;
   importance: string | null;
   owner: string | null;
+  domain: string | null;
+  team: string | null;
+  slo_target_score: number | null;
+  slo_window_days: number | null;
+  slo_enabled: boolean;
 }
 
 export interface Preview {
@@ -154,13 +161,45 @@ export interface SchemaHistory {
   snapshots: SchemaSnapshot[]; // newest first
 }
 
+// ---- scorecard history (#119) ----
+export type ScorecardGrain = "global" | "domain" | "team" | "owner" | "importance" | "dataset";
+
+export interface ScorecardHistoryPoint {
+  grain: ScorecardGrain;
+  key: string;
+  label: string;
+  snapshot_date: string;
+  score: number | null;
+  slo_target: number | null;
+  slo_status: ScorecardSloStatus;
+  dataset_count: number;
+  active_check_count: number;
+  open_exception_count: number;
+  breached_dataset_count: number;
+  detail: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ScorecardHistory {
+  grain: ScorecardGrain;
+  key: string | null;
+  days: number;
+  sparse: boolean; // missing days are omitted; clients should render gaps
+  points: ScorecardHistoryPoint[]; // oldest first, then key for multi-series requests
+}
+
 export interface Knowledge {
   dataset_id?: number;
   business_context: string;
   known_issues: string;
   importance: "low" | "medium" | "high" | "critical";
   owner: string;
+  domain: string;
+  team: string;
   freshness_sla_hours: number | null;
+  slo_target_score: number | null;
+  slo_window_days: number | null;
+  slo_enabled: boolean;
   pii_columns: string[];
   notes: string;
   updated_at?: string | null;
@@ -186,12 +225,17 @@ export interface Check {
   created_at: string;
 }
 
-// ---- monitor packs (issue #115) ----
+// ---- managed monitor packs (issues #111/#113/#115) ----
 export type MonitorKind = "freshness" | "volume" | "schema" | "drift";
+export type MonitorPackStatus = "ready" | "partial" | "pending_profile" | "disabled" | "error" | string;
 
-export interface MonitorPackUpdate {
-  enabled?: boolean | null;
-  config?: Record<string, unknown> | null;
+export interface MonitorPackConfig {
+  version?: number;
+  monitors: Record<MonitorKind, boolean>;
+  cadence: Record<string, number>;
+  sensitivity: Record<string, number>;
+  limits?: Record<string, number>;
+  overrides?: Record<string, unknown>;
 }
 
 export interface MonitorPackSkipped {
@@ -215,14 +259,21 @@ export interface MonitorPack {
   id: number;
   dataset_id: number;
   enabled: boolean;
-  config: Record<string, unknown>;
-  status: string;
+  config: MonitorPackConfig;
+  status: MonitorPackStatus;
   last_error: string;
   created_at: string;
   updated_at: string;
   last_reconciled_at: string | null;
   reconciliation: MonitorPackReconciliation | null;
   managed_checks: Check[];
+}
+
+export type MonitorPackState = MonitorPack;
+
+export interface MonitorPackUpdate {
+  enabled?: boolean | null;
+  config?: MonitorPackConfig | Record<string, unknown> | null;
 }
 
 export interface CheckTypeInfo {
@@ -239,6 +290,70 @@ export interface GenerateResult {
   mode: "llm" | "heuristic";
   explored: boolean;
   checks: Check[];
+}
+
+// ---- data contracts (#105) ----
+export interface DataContract {
+  id: number;
+  dataset_id: number;
+  name: string;
+  version: string;
+  status: ContractStatus;
+  spec: Record<string, unknown>;
+  created_by_id: number | null;
+  created_at: string;
+  activated_at: string | null;
+  version_count: number;
+}
+
+export interface DataContractVersion {
+  id: number;
+  contract_id: number;
+  version: string;
+  spec: Record<string, unknown>;
+  created_by_id: number | null;
+  created_at: string;
+}
+
+export interface DataContractExport {
+  format: "odcs";
+  yaml: string;
+}
+
+export interface DataContractApplyResult {
+  contract: DataContract;
+  created_checks: Check[];
+  updated_checks: Check[];
+  schema_pinned: boolean;
+}
+
+export interface ContractClauseConformance {
+  clause_id: string;
+  kind: "schema" | "freshness" | "volume" | "quality";
+  label: string;
+  status: ContractConformanceStatus;
+  check_id: number | null;
+  check_status: RunStatus | null;
+  detail: string;
+  expected: Record<string, unknown>;
+  observed: Record<string, unknown>;
+}
+
+export interface DataContractConformance {
+  contract_id: number;
+  dataset_id: number;
+  status: ContractConformanceStatus;
+  clauses: ContractClauseConformance[];
+  generated_at: string;
+}
+
+export interface DataContractDiff {
+  contract_id: number;
+  from_version_id: number;
+  to_version_id: number;
+  added: string[];
+  removed: string[];
+  changed: string[];
 }
 
 export interface Run {
@@ -411,6 +526,94 @@ export interface Dashboard {
   worst_datasets: Dataset[];
 }
 
+// ---- executive scorecards (issues #118-#120) ----
+export type ScorecardSloStatus = "met" | "at_risk" | "breached" | "unknown" | "disabled";
+export type ScorecardSloTargetSource = "explicit" | "importance_default" | "disabled";
+export type ScorecardDimension = "domain" | "team" | "owner" | "importance";
+
+export interface ScorecardDataset {
+  dataset_id: number;
+  table_name: string;
+  display_name: string;
+  schema_name: string | null;
+  domain: string;
+  team: string;
+  owner: string;
+  importance: "low" | "medium" | "high" | "critical";
+  score: number | null;
+  base_score: number | null;
+  exception_penalty: number;
+  slo_target: number | null;
+  slo_target_source: ScorecardSloTargetSource;
+  slo_status: ScorecardSloStatus;
+  score_gap: number | null;
+  active_checks: number;
+  passing_checks: number;
+  warning_checks: number;
+  failing_checks: number;
+  error_checks: number;
+  unknown_checks: number;
+  open_exceptions: number;
+  score_drivers: Record<string, unknown>;
+}
+
+export interface ScorecardDatasetPage {
+  total: number;
+  limit: number;
+  offset: number;
+  items: ScorecardDataset[];
+}
+
+export interface ScorecardRollup {
+  dimension: string;
+  key: string;
+  label: string;
+  score: number | null;
+  slo_target: number | null;
+  slo_status: ScorecardSloStatus;
+  score_gap: number | null;
+  total_datasets: number;
+  scored_datasets: number;
+  unknown_datasets: number;
+  active_checks: number;
+  passing_checks: number;
+  warning_checks: number;
+  failing_checks: number;
+  error_checks: number;
+  unknown_checks: number;
+  open_exceptions: number;
+  importance_weight: number;
+  slo_met: number;
+  slo_at_risk: number;
+  slo_breached: number;
+  slo_unknown: number;
+  slo_disabled: number;
+}
+
+export interface ScorecardSummary {
+  score: number | null;
+  slo_target: number | null;
+  slo_status: ScorecardSloStatus;
+  score_gap: number | null;
+  total_datasets: number;
+  scored_datasets: number;
+  unknown_datasets: number;
+  active_checks: number;
+  passing_checks: number;
+  warning_checks: number;
+  failing_checks: number;
+  error_checks: number;
+  unknown_checks: number;
+  open_exceptions: number;
+  slo_met: number;
+  slo_at_risk: number;
+  slo_breached: number;
+  slo_unknown: number;
+  slo_disabled: number;
+  worst_rollups: ScorecardRollup[];
+  top_failing_datasets: ScorecardDataset[];
+}
+
 export interface Health {
   status: string;
   version: string;
@@ -532,8 +735,15 @@ export interface McpServer {
   created_at: string;
 }
 
-// ---- notification rules (issue #27) ----
-export type NotifyChannel = "slack" | "email";
+// ---- notification rules / incident integrations (issues #27/#114) ----
+export type NotifyChannel =
+  | "slack"
+  | "email"
+  | "webhook"
+  | "teams"
+  | "pagerduty"
+  | "jira"
+  | "servicenow";
 
 export interface NotificationRule {
   id: number;
@@ -541,10 +751,55 @@ export interface NotificationRule {
   dataset_name: string; // "" when dataset_id is null
   min_severity: Severity;
   channel: NotifyChannel;
-  target: string; // webhook URL or comma-separated emails ("" = global Slack default)
+  target: string; // webhook URL or comma-separated emails ("" = global Slack default); masked by the API for webhook/teams
   on_error_runs: boolean;
+  dedupe_window_minutes?: number | null;
+  escalation_delay_minutes?: number | null;
+  max_escalation_level?: number | null;
   enabled: boolean;
   created_at: string;
+}
+
+// ---- incidents (issue #114) ----
+export type IncidentStatus = "open" | "acknowledged" | "resolved";
+export type IncidentSeverity = Severity;
+export type IncidentExternalRefs = Record<string, unknown>;
+
+export interface IncidentRecord {
+  id: number;
+  dataset_id: number;
+  dataset_name: string;
+  check_id: number;
+  check_name: string;
+  current_run_id: number | null;
+  dedupe_key: string;
+  title: string;
+  severity: IncidentSeverity;
+  status: IncidentStatus;
+  failure_status: RunStatus;
+  first_seen_at: string;
+  last_seen_at: string;
+  resolved_at: string | null;
+  occurrence_count: number;
+  last_notified_at: string | null;
+  next_escalation_at: string | null;
+  escalation_level: number;
+  external_refs: IncidentExternalRefs;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface IncidentEvent {
+  id: number;
+  incident_id: number;
+  kind: string;
+  detail: Record<string, unknown>;
+  user: string | null;
+  created_at: string;
+}
+
+export interface IncidentDetail extends IncidentRecord {
+  events: IncidentEvent[];
 }
 
 // ---- ad-hoc dashboards ----
@@ -585,6 +840,15 @@ export interface AdhocDashboard extends AdhocDashboardMeta {
 // --- DDL & lineage (issue #51) ---
 export type LineageHealth = "pass" | "warn" | "fail" | "unknown";
 
+export interface ColumnLineageNode {
+  id: string;
+  table_id: string;
+  column: string;
+  dtype: string;
+  nullable: boolean;
+  dataset_id: number | null;
+}
+
 export interface LineageNode {
   id: string; // lowercased "schema.table" when schema_name is set, else "table"
   schema_name: string | null;
@@ -594,6 +858,9 @@ export interface LineageNode {
   health: LineageHealth;
   failing_checks: number;
   open_exceptions: number;
+  owner: string;
+  importance: string;
+  columns: ColumnLineageNode[];
 }
 
 export interface LineageEdge {
@@ -601,10 +868,19 @@ export interface LineageEdge {
   target: string; // the view selecting from source
 }
 
+export interface ColumnLineageEdge {
+  source: string;
+  target: string;
+  kind: "direct" | "derived" | "aggregate" | "unresolved";
+  expression: string | null;
+}
+
 export interface LineageGraph {
   nodes: LineageNode[];
   edges: LineageEdge[];
+  column_edges: ColumnLineageEdge[];
   parse_errors: number; // view definitions that could not be parsed
+  qualify_errors: number; // view column lineage could not be resolved
   truncated: boolean; // graph capped at 300 nodes
 }
 

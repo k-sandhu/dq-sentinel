@@ -13,6 +13,14 @@ from app.connectors.safety import SqlNotAllowed, enforce_limit, guard_sql
         "SELECT * FROM t;",  # single trailing semicolon is tolerated
         "SELECT * FROM t WHERE note = 'please create table'",  # keyword inside a literal
         "SELECT * FROM t WHERE note = 'a; b'",  # semicolon inside a literal
+        'SELECT "delete" FROM t',
+        "SELECT `update` FROM t",
+        "SELECT [insert] FROM t",
+        'SELECT "a;drop" FROM t',
+        "SELECT * FROM t -- delete; from comment",
+        "SELECT /* update; comment */ * FROM t",
+        "SELECT $$delete; update$$ AS note",
+        "SELECT $tag$drop; alter$tag$ AS note",
     ],
 )
 def test_allows_readonly(sql):
@@ -34,6 +42,11 @@ def test_allows_readonly(sql):
         "/* sneaky */ DELETE FROM t",
         "WITH x AS (SELECT 1) UPDATE t SET a = 1",
         "EXPLAIN SELECT 1",  # not a plain SELECT/WITH
+        'SELECT "delete" FROM t; DROP TABLE t',
+        "SELECT `update` FROM t; UPDATE t SET a = 1",
+        "SELECT [insert] FROM t; SELECT * FROM u",
+        "SELECT 1;;",
+        "SELECT * FROM t /* unterminated ; DROP TABLE t",
         "",
     ],
 )

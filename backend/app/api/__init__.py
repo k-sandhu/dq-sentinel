@@ -7,10 +7,12 @@ from app.api import (
     chat,
     checks,
     connections,
+    contracts,
     custom_dashboards,
     dashboard,
     datasets,
     exceptions_api,
+    incidents,
     knowledge,
     mcp,
     monitors,
@@ -19,6 +21,7 @@ from app.api import (
     rca,
     runs,
     saved_queries,
+    scorecards,
     search,
     sla,
 )
@@ -30,13 +33,16 @@ api_router.include_router(connections.router)
 api_router.include_router(datasets.router)
 api_router.include_router(monitors.router)
 api_router.include_router(knowledge.router)
+api_router.include_router(contracts.router)
 api_router.include_router(checks.router)
 api_router.include_router(runs.router)
 api_router.include_router(exceptions_api.router)
+api_router.include_router(incidents.router)
 api_router.include_router(rca.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(query.router)
 api_router.include_router(saved_queries.router)
+api_router.include_router(scorecards.router)
 api_router.include_router(adhoc_dashboards.router)
 api_router.include_router(custom_dashboards.router)
 api_router.include_router(mcp.router)
