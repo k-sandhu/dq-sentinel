@@ -87,7 +87,10 @@ def poll_once(executor: ThreadPoolExecutor) -> int:
     factory = session_factory()
     now = utcnow()
     purge_audit_log(now)  # self-throttles to at most once per day
-    maybe_evaluate_slas(now)  # self-throttles to sla_eval_seconds
+    try:
+        maybe_evaluate_slas(now)  # self-throttles to sla_eval_seconds
+    except Exception:  # noqa: BLE001 - SLA evaluation must never block check scheduling
+        log.exception("SLA evaluation pass failed; continuing")
     claimed = 0
     with factory() as db:
         # Initialize schedules that were activated without a next_run_at
