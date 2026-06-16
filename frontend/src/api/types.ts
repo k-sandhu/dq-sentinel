@@ -159,6 +159,33 @@ export interface SchemaHistory {
   snapshots: SchemaSnapshot[]; // newest first
 }
 
+// ---- scorecard history (#119) ----
+export type ScorecardGrain = "global" | "domain" | "team" | "owner" | "importance" | "dataset";
+
+export interface ScorecardHistoryPoint {
+  grain: ScorecardGrain;
+  key: string;
+  label: string;
+  snapshot_date: string;
+  score: number | null;
+  slo_target: number | null;
+  slo_status: string;
+  dataset_count: number;
+  active_check_count: number;
+  open_exception_count: number;
+  breached_dataset_count: number;
+  detail: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ScorecardHistory {
+  grain: ScorecardGrain;
+  key: string | null;
+  days: number;
+  sparse: boolean; // missing days are omitted; clients should render gaps
+  points: ScorecardHistoryPoint[]; // oldest first, then key for multi-series requests
+}
+
 export interface Knowledge {
   dataset_id?: number;
   business_context: string;
@@ -432,6 +459,94 @@ export interface Reliability {
   total: number;
   breached: number;
   slas: Sla[];
+}
+
+// ---- scorecards (#118) ----
+export type ScorecardSloStatus = "met" | "at_risk" | "breached" | "unknown" | "disabled";
+export type ScorecardSloTargetSource = "explicit" | "importance_default" | "disabled";
+export type ScorecardDimension = "domain" | "team" | "owner" | "importance";
+
+export interface ScorecardDataset {
+  dataset_id: number;
+  table_name: string;
+  display_name: string;
+  schema_name: string | null;
+  domain: string;
+  team: string;
+  owner: string;
+  importance: "low" | "medium" | "high" | "critical";
+  score: number | null;
+  base_score: number | null;
+  exception_penalty: number;
+  slo_target: number | null;
+  slo_target_source: ScorecardSloTargetSource;
+  slo_status: ScorecardSloStatus;
+  score_gap: number | null;
+  active_checks: number;
+  passing_checks: number;
+  warning_checks: number;
+  failing_checks: number;
+  error_checks: number;
+  unknown_checks: number;
+  open_exceptions: number;
+  score_drivers: Record<string, unknown>;
+}
+
+export interface ScorecardDatasetPage {
+  total: number;
+  limit: number;
+  offset: number;
+  items: ScorecardDataset[];
+}
+
+export interface ScorecardRollup {
+  dimension: string;
+  key: string;
+  label: string;
+  score: number | null;
+  slo_target: number | null;
+  slo_status: ScorecardSloStatus;
+  score_gap: number | null;
+  total_datasets: number;
+  scored_datasets: number;
+  unknown_datasets: number;
+  active_checks: number;
+  passing_checks: number;
+  warning_checks: number;
+  failing_checks: number;
+  error_checks: number;
+  unknown_checks: number;
+  open_exceptions: number;
+  importance_weight: number;
+  slo_met: number;
+  slo_at_risk: number;
+  slo_breached: number;
+  slo_unknown: number;
+  slo_disabled: number;
+}
+
+export interface ScorecardSummary {
+  score: number | null;
+  slo_target: number | null;
+  slo_status: ScorecardSloStatus;
+  score_gap: number | null;
+  total_datasets: number;
+  scored_datasets: number;
+  unknown_datasets: number;
+  active_checks: number;
+  passing_checks: number;
+  warning_checks: number;
+  failing_checks: number;
+  error_checks: number;
+  unknown_checks: number;
+  open_exceptions: number;
+  slo_met: number;
+  slo_at_risk: number;
+  slo_breached: number;
+  slo_unknown: number;
+  slo_disabled: number;
+  worst_rollups: ScorecardRollup[];
+  top_failing_datasets: ScorecardDataset[];
 }
 
 // ---- workbench ----
