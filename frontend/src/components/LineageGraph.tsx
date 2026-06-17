@@ -346,7 +346,14 @@ function LineageCanvas({
 
   // Select a node and bring it into view — shared by the search jump and the
   // "needs attention" list so a click always lands you on the node + its panel.
+  // The attention list is drawn from the full graph, so if an active filter is
+  // hiding the target we clear it first; otherwise selecting it would render
+  // nothing (the node isn't in the filtered set) and the click would feel dead.
   const pickNode = (id: string) => {
+    if (!nodes.some((n) => n.id === id)) {
+      setHealthFilter("all");
+      setSchemaFilter("all");
+    }
     setSelectedId(id);
     const node = nodes.find((n) => n.id === id);
     if (node) reactFlow.setCenter(node.position.x + 110, node.position.y + 38, { zoom: 1.05, duration: 250 });
