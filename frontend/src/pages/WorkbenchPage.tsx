@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import type { KeyboardEvent } from "react";
 import { useSearchParams } from "react-router";
 import { api } from "../api/client";
 import type {
@@ -16,9 +15,17 @@ import type {
 } from "../api/types";
 import { canEdit, isAdmin, useAuth } from "../auth";
 import PanelChart from "../components/PanelChart";
+import ResultGrid from "../components/workbench/ResultGrid";
+import SqlEditor from "../components/workbench/SqlEditor";
 import { Breadcrumbs, EmptyState, ErrorBox, Icon, Modal, Spinner } from "../components/ui";
-import { fmtNum, fmtValue } from "../lib/format";
+import { downloadText, rowsToCsv, rowsToJson, rowsToTsv } from "../lib/csv";
+import { fmtNum, timeAgo } from "../lib/format";
+import { addHistory, clearHistory, loadHistory } from "../lib/queryHistory";
+import type { QueryHistoryEntry } from "../lib/queryHistory";
+import { formatSql } from "../lib/sqlFormat";
 import { qualifiedRef, quoteIdent } from "../lib/sqlIdent";
+import { deriveTabTitle, loadTabsState, newTabId, persistTabsState } from "../lib/workbenchTabs";
+import type { WorkbenchTab } from "../lib/workbenchTabs";
 
 function SchemaSidebar({
   connectionId,
@@ -340,6 +347,91 @@ function SavedQueriesRail({
   );
 }
 
+// ---- multi-tab worksheet state ----
+interface TabState {
+  id: string;
+  sql: string;
+  dirty: boolean;
+  result: QueryRunResult | null;
+  view: "table" | "chart";
+  chart: { type: VizType; x: string; y: string };
+  showFilters: boolean;
+}
+
+function makeTab(sql = ""): TabState {
+  return { id: newTabId(), sql, dirty: false, result: null, view: "table", chart: { type: "bar", x: "", y: "" }, showFilters: false };
+}
+
+const LIMITS = [50, 200, 500, 1000, 2000];
+
+function copyText(text: string): void {
+  navigator.clipboard?.writeText(text).catch(() => {
+    /* clipboard blocked — silently ignore */
+  });
+}
+
+function HistoryModal({
+  history,
+  editable,
+  onClose,
+  onLoad,
+  onClear,
+}: {
+  history: QueryHistoryEntry[];
+  editable: boolean;
+  onClose: () => void;
+  onLoad: (entry: QueryHistoryEntry, thenRun: boolean) => void;
+  onClear: () => void;
+}) {
+  return (
+    <Modal
+      title="Query history"
+      onClose={onClose}
+      wide
+      footer={
+        <>
+          <button className="ghost" onClick={onClose}>Close</button>
+          {history.length > 0 && (
+            <button
+              className="ghost small danger"
+              onClick={() => {
+                if (window.confirm("Clear this browser's query history?")) onClear();
+              }}
+            >
+              Clear history
+            </button>
+          )}
+        </>
+      }
+    >
+      {history.length === 0 ? (
+        <div className="empty" style={{ padding: 18 }}>No queries run yet in this browser.</div>
+      ) : (
+        <div style={{ maxHeight: "60vh", overflowY: "auto" }}>
+          {history.map((h) => (
+            <div key={h.id} className="insight" style={{ borderLeftColor: h.ok ? "var(--ok)" : "var(--danger)", padding: "8px 12px" }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+                <span style={{ fontSize: 11.5, color: "var(--text-light)" }}>
+                  {timeAgo(h.ranAt)}{h.connectionName ? ` · ${h.connectionName}` : ""}
+                </span>
+                <span style={{ marginLeft: "auto", fontSize: 11.5, color: h.ok ? "var(--text-light)" : "var(--danger)" }}>
+                  {h.ok ? `${fmtNum(h.rowCount)} rows · ${h.elapsedMs} ms` : "error"}
+                </span>
+              </div>
+              <pre className="result" style={{ maxHeight: 110, fontSize: 11, marginTop: 4 }}>{h.sql}</pre>
+              {!h.ok && h.error && <div style={{ fontSize: 11, color: "var(--danger)" }}>{h.error}</div>}
+              <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                <button className="small" onClick={() => onLoad(h, false)}>Edit</button>
+                {editable && <button className="primary small" onClick={() => onLoad(h, true)}>Run</button>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 export default function WorkbenchPage() {
   const { user } = useAuth();
   const editable = canEdit(user);
@@ -354,15 +446,34 @@ export default function WorkbenchPage() {
   const [connectionId, setConnectionId] = useState<number | null>(
     params.get("connection_id") ? Number(params.get("connection_id")) : null,
   );
-  const [sql, setSql] = useState("");
-  const [dirty, setDirty] = useState(false);
   const [limit, setLimit] = useState(200);
-  const [result, setResult] = useState<QueryRunResult | null>(null);
-  const [chart, setChart] = useState(false);
-  const [chartType, setChartType] = useState<VizType>("bar");
-  const [chartX, setChartX] = useState<string>("");
-  const [chartY, setChartY] = useState<string>("");
   const [showSave, setShowSave] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [history, setHistory] = useState<QueryHistoryEntry[]>(() => loadHistory());
+
+  // Tabs (restored from localStorage; results stay in memory).
+  const [{ initialTabs, initialActiveId }] = useState(() => {
+    const saved = loadTabsState();
+    const tabs = (saved?.tabs ?? [{ id: newTabId(), title: "Query 1", sql: "" }]).map((t) =>
+      ({ ...makeTab(t.sql), id: t.id }),
+    );
+    const activeId = saved && tabs.some((t) => t.id === saved.activeId) ? saved.activeId : tabs[0].id;
+    return { initialTabs: tabs, initialActiveId: activeId };
+  });
+  const [tabs, setTabs] = useState<TabState[]>(initialTabs);
+  const [activeId, setActiveId] = useState<string>(initialActiveId);
+  const active = tabs.find((t) => t.id === activeId) ?? tabs[0];
+
+  // Persist id/title/sql for the last session (titles re-derived from SQL).
+  useEffect(() => {
+    const persisted: WorkbenchTab[] = tabs.map((t, i) => ({ id: t.id, title: deriveTabTitle(t.sql, i), sql: t.sql }));
+    persistTabsState({ tabs: persisted, activeId });
+  }, [tabs, activeId]);
+
+  const patchTab = (id: string, patch: Partial<TabState> | ((t: TabState) => Partial<TabState>)) =>
+    setTabs((prev) => prev.map((t) => (t.id === id ? { ...t, ...(typeof patch === "function" ? patch(t) : patch) } : t)));
+  const patchActive = (patch: Partial<TabState> | ((t: TabState) => Partial<TabState>)) => patchTab(activeId, patch);
+  const editActiveSql = (next: string) => patchActive({ sql: next, dirty: true });
 
   const { data: connections } = useQuery({
     queryKey: ["connections"],
@@ -373,26 +484,31 @@ export default function WorkbenchPage() {
     queryFn: () => api.get<Dataset>(`/datasets/${datasetId}`),
     enabled: !!datasetId,
   });
+  const schemaQuery = useQuery({
+    queryKey: ["schema", connectionId],
+    queryFn: () => api.get<SchemaTable[]>(`/connections/${connectionId}/schema`),
+    enabled: !!connectionId,
+    staleTime: 120_000,
+  });
+  const tables = useMemo(() => schemaQuery.data ?? [], [schemaQuery.data]);
 
   useEffect(() => {
     if (!connectionId && dataset) setConnectionId(dataset.connection_id);
     else if (!connectionId && !datasetId && connections?.length) setConnectionId(connections[0].id);
   }, [dataset, connections, connectionId, datasetId]);
 
-  // Deep-link: preload a saved query's SQL (and its connection) when ?saved_query_id= is present.
+  // Deep-link: preload a saved query's SQL (and its connection) into the active tab.
   const deepLinked = useQuery({
     queryKey: ["saved-query", savedQueryId],
     queryFn: () => api.get<SavedQuery>(`/queries/${savedQueryId}`),
     enabled: !!savedQueryId,
   });
   useEffect(() => {
-    if (deepLinked.data && !dirty && !sql) {
-      setSql(deepLinked.data.sql);
-      setConnectionId(deepLinked.data.connection_id);
-    }
-    // only react to the fetched query landing; intentionally not depending on sql/dirty
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deepLinked.data]);
+    if (!deepLinked.data) return;
+    setTabs((prev) => prev.map((t) => (t.id === activeId && !t.dirty && !t.sql.trim() ? { ...t, sql: deepLinked.data!.sql } : t)));
+    setConnectionId(deepLinked.data.connection_id);
+    // React only to the fetched query landing.
+  }, [deepLinked.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const suggest = useQuery({
     queryKey: ["suggest", { connectionId, datasetId, runId, exceptionId, checkId }],
@@ -408,74 +524,109 @@ export default function WorkbenchPage() {
     staleTime: 60_000,
   });
 
-  const run = useMutation({
-    mutationFn: (q: string) =>
-      api.post<QueryRunResult>("/query/run", { connection_id: connectionId, sql: q, limit }),
-    onSuccess: (r) => {
-      setResult(r);
-      setChartX(r.columns[0] ?? "");
-      setChartY(r.columns[r.columns.length - 1] ?? "");
-    },
-  });
-
-  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && editable && sql.trim()) {
-      e.preventDefault();
-      run.mutate(sql);
-    }
+  const recordHistory = (sqlText: string, r: QueryRunResult | null, err: unknown) => {
+    const conn = connections?.find((c) => c.id === connectionId);
+    addHistory({
+      connectionId: connectionId ?? 0,
+      connectionName: conn?.name ?? "",
+      sql: sqlText,
+      rowCount: r ? r.row_count : null,
+      elapsedMs: r ? r.elapsed_ms : null,
+      ok: !!r,
+      error: r ? null : err instanceof Error ? err.message : err ? String(err) : "failed",
+    });
+    setHistory(loadHistory());
   };
 
-  // The engine kind of the selected connection drives identifier quoting
-  // (Connection.kind is one of the dialects.py registry kinds, e.g. "postgresql").
+  const run = useMutation({
+    mutationFn: (vars: { tabId: string; sql: string; limit?: number }) =>
+      api.post<QueryRunResult>("/query/run", { connection_id: connectionId, sql: vars.sql, limit: vars.limit ?? limit }),
+    onSuccess: (r, vars) => {
+      patchTab(vars.tabId, {
+        result: r,
+        view: "table",
+        chart: { type: "bar", x: r.columns[0] ?? "", y: r.columns[r.columns.length - 1] ?? "" },
+      });
+      recordHistory(vars.sql, r, null);
+    },
+    onError: (err, vars) => recordHistory(vars.sql, null, err),
+  });
+
+  const runActive = () => {
+    if (editable && connectionId && active.sql.trim()) run.mutate({ tabId: activeId, sql: active.sql });
+  };
+
+  const nextLimit = LIMITS.find((n) => n > limit) ?? 2000;
+  const raiseLimit = () => {
+    if (!connectionId || !active.sql.trim()) return;
+    setLimit(nextLimit);
+    run.mutate({ tabId: activeId, sql: active.sql, limit: nextLimit });
+  };
+
   const dialect = useMemo(
     () => connections?.find((c) => c.id === connectionId)?.kind ?? null,
     [connections, connectionId],
   );
 
-  const editSql = (value: string) => {
-    setSql(value);
-    setDirty(true);
-  };
-
-  // Insert a schema-browser identifier into the editor. Table references seed an
-  // empty editor with a schema-qualified `SELECT * … LIMIT 50`; columns (and
-  // tables added to existing SQL) are appended verbatim — the caller has already
-  // quoted/qualified the text for the active dialect.
+  // Insert a schema-browser identifier into the active editor. Table references
+  // seed an empty editor with a schema-qualified `SELECT * … LIMIT 50`; columns
+  // (and tables added to existing SQL) are appended verbatim — the caller already
+  // quoted/qualified the text for the active dialect (#83).
   const insert = (text: string, opts?: { table?: boolean }) =>
-    editSql(
-      sql.trim()
-        ? `${sql.trimEnd()} ${text}`
-        : opts?.table
-          ? `SELECT * FROM ${text} LIMIT 50`
-          : text,
-    );
+    patchActive((t) => ({
+      sql: t.sql.trim() ? `${t.sql.trimEnd()} ${text}` : opts?.table ? `SELECT * FROM ${text} LIMIT 50` : text,
+      dirty: true,
+    }));
 
-  // Load a saved query into the editor, confirming first if there are unsaved edits.
-  const loadSaved = (q: SavedQuery, thenRun = false) => {
-    if (dirty && !window.confirm("Replace the current query? Unsaved edits will be lost.")) return;
-    setSql(q.sql);
-    setDirty(false);
-    if (q.connection_id !== connectionId) setConnectionId(q.connection_id);
-    if (thenRun && editable && q.connection_id === connectionId) run.mutate(q.sql);
+  const confirmReplace = () =>
+    !active.dirty || !active.sql.trim() || window.confirm("Replace the current query? Unsaved edits will be lost.");
+
+  // Load SQL into the active tab from a saved query / history entry, switching the
+  // source if needed. Switching connections clears every tab's stale result.
+  const loadSql = (sql: string, sourceConnectionId: number, thenRun: boolean) => {
+    if (!confirmReplace()) return;
+    const sameConn = sourceConnectionId === connectionId;
+    if (!sameConn && sourceConnectionId) {
+      setConnectionId(sourceConnectionId);
+      setTabs((prev) => prev.map((t) => ({ ...t, result: null, view: "table" })));
+    }
+    patchActive({ sql, dirty: false, result: null });
+    if (thenRun && editable && sameConn) run.mutate({ tabId: activeId, sql });
   };
 
-  // Switching the source must not leave SQL/results pointed at the old database.
+  // Switching the source must not leave results pointed at the old database.
   const changeConnection = (id: number) => {
     if (id === connectionId) return;
     setConnectionId(id);
-    setSql("");
-    setDirty(false);
-    setResult(null);
-    setChart(false);
+    setTabs((prev) => prev.map((t) => ({ ...t, result: null, view: "table" })));
     run.reset();
   };
 
+  const addTab = () => {
+    const t = makeTab();
+    setTabs((prev) => [...prev, t]);
+    setActiveId(t.id);
+  };
+  const closeTab = (id: string) => {
+    const idx = tabs.findIndex((t) => t.id === id);
+    if (idx === -1) return;
+    const remaining = tabs.filter((t) => t.id !== id);
+    if (remaining.length === 0) {
+      const fresh = makeTab();
+      setTabs([fresh]);
+      setActiveId(fresh.id);
+      return;
+    }
+    setTabs(remaining);
+    if (activeId === id) setActiveId(remaining[Math.min(idx, remaining.length - 1)].id);
+  };
+
   const numericColumns = useMemo(() => {
-    if (!result) return [];
-    return result.columns.filter((_c, i) =>
-      result.rows.some((r) => typeof r[i] === "number"),
-    );
-  }, [result]);
+    const r = active.result;
+    if (!r) return [];
+    return r.columns.filter((_c, i) => r.rows.some((row) => typeof row[i] === "number"));
+  }, [active.result]);
+  const setChartPatch = (patch: Partial<TabState["chart"]>) => patchActive((t) => ({ chart: { ...t.chart, ...patch } }));
 
   return (
     <div className="page" style={{ maxWidth: 1500 }}>
@@ -524,43 +675,84 @@ export default function WorkbenchPage() {
             <SavedQueriesRail
               connectionId={connectionId}
               editable={editable}
-              onLoad={(q) => loadSaved(q)}
-              onRun={(q) => loadSaved(q, true)}
+              onLoad={(q) => loadSql(q.sql, q.connection_id, false)}
+              onRun={(q) => loadSql(q.sql, q.connection_id, true)}
             />
           )}
         </div>
 
         <div>
+          <div className="wb-tabs">
+            {tabs.map((t, i) => (
+              <div
+                key={t.id}
+                className={`wb-tab${t.id === activeId ? " active" : ""}`}
+                onClick={() => setActiveId(t.id)}
+                title={t.sql || "Empty query"}
+              >
+                <span className="wb-tab-name">{deriveTabTitle(t.sql, i)}{t.dirty ? " •" : ""}</span>
+                {tabs.length > 1 && (
+                  <span
+                    className="wb-tab-close"
+                    role="button"
+                    aria-label="Close tab"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      closeTab(t.id);
+                    }}
+                  >
+                    <Icon name="x" size={11} />
+                  </span>
+                )}
+              </div>
+            ))}
+            <button className="wb-tab-add" title="New query tab" onClick={addTab}>
+              <Icon name="plus" size={12} />
+            </button>
+          </div>
+
           <div className="card card-pad" style={{ marginBottom: 14 }}>
-            <textarea
-              value={sql}
-              onChange={(e) => editSql(e.target.value)}
-              onKeyDown={onKeyDown}
-              rows={7}
+            <SqlEditor
+              key={active.id}
+              value={active.sql}
+              onChange={editActiveSql}
+              onRun={runActive}
+              tables={tables}
+              dialect={dialect}
+              readOnly={!editable}
               placeholder={"SELECT status, COUNT(*) AS n\nFROM orders\nGROUP BY 1\nORDER BY n DESC"}
-              style={{ fontFamily: "var(--mono)", fontSize: 13, marginTop: 0 }}
-              spellCheck={false}
             />
             <div className="toolbar" style={{ marginBottom: 0, marginTop: 10 }}>
               <button
                 className="primary"
-                disabled={!editable || !sql.trim() || !connectionId || run.isPending}
-                onClick={() => run.mutate(sql)}
-                title="Ctrl+Enter"
+                disabled={!editable || !active.sql.trim() || !connectionId || run.isPending}
+                onClick={runActive}
+                title="Ctrl/Cmd+Enter"
               >
                 {run.isPending ? <span className="spinner" style={{ width: 13, height: 13 }} /> : <Icon name="play" size={13} />}
                 Run
               </button>
               <button
                 className="small"
-                disabled={!editable || !sql.trim() || !connectionId}
+                disabled={!active.sql.trim()}
+                onClick={() => editActiveSql(formatSql(active.sql, dialect))}
+                title="Format SQL"
+              >
+                Format
+              </button>
+              <button
+                className="small"
+                disabled={!editable || !active.sql.trim() || !connectionId}
                 onClick={() => setShowSave(true)}
                 title="Save this query to the shared team library"
               >
                 <Icon name="plus" size={12} /> Save
               </button>
+              <button className="small" onClick={() => setShowHistory(true)} title="Recent queries (this browser)">
+                <Icon name="refresh" size={12} /> History{history.length ? ` (${history.length})` : ""}
+              </button>
               <select value={limit} onChange={(e) => setLimit(Number(e.target.value))} style={{ marginTop: 0, width: 120 }}>
-                {[50, 200, 500, 1000, 2000].map((n) => (
+                {LIMITS.map((n) => (
                   <option key={n} value={n}>limit {n}</option>
                 ))}
               </select>
@@ -571,63 +763,83 @@ export default function WorkbenchPage() {
             <ErrorBox error={run.error} />
           </div>
 
-          {result && (
+          {active.result ? (
             <div className="card">
               <div className="card-pad" style={{ display: "flex", gap: 12, alignItems: "center", paddingBottom: 10, flexWrap: "wrap" }}>
-                <strong>{fmtNum(result.row_count)} rows</strong>
-                <span style={{ color: "var(--text-light)", fontSize: 12 }}>{result.elapsed_ms} ms</span>
-                {result.truncated && <span className="badge" title="Increase the limit to fetch more">truncated at limit</span>}
-                <div className="right" style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
-                  {numericColumns.length > 0 && result.columns.length >= 2 && (
-                    <button className="small" onClick={() => setChart(!chart)}>
-                      {chart ? "Table" : "Chart"}
+                <strong>{fmtNum(active.result.row_count)} rows</strong>
+                <span style={{ color: "var(--text-light)", fontSize: 12 }}>{active.result.elapsed_ms} ms</span>
+                {active.result.truncated && (limit < 2000 ? (
+                  <button className="badge" style={{ cursor: "pointer" }} onClick={raiseLimit} disabled={run.isPending} title="Fetch more rows">
+                    truncated · raise to {nextLimit} &amp; re-run
+                  </button>
+                ) : (
+                  <span className="badge" title="Maximum result size">truncated at 2000 (max)</span>
+                ))}
+                <div className="right" style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  {active.view === "table" && (
+                    <>
+                      <button className="ghost small" onClick={() => patchActive((t) => ({ showFilters: !t.showFilters }))} title="Toggle per-column filters">
+                        <Icon name="search" size={12} /> Filter
+                      </button>
+                      <button
+                        className="ghost small"
+                        onClick={() => active.result && copyText(rowsToTsv(active.result.columns, active.result.rows))}
+                        title="Copy all rows (TSV)"
+                      >
+                        <Icon name="copy" size={12} /> Copy
+                      </button>
+                      <button
+                        className="ghost small"
+                        onClick={() => active.result && downloadText("query-result.csv", rowsToCsv(active.result.columns, active.result.rows), "text/csv")}
+                        title="Export CSV"
+                      >
+                        CSV
+                      </button>
+                      <button
+                        className="ghost small"
+                        onClick={() => active.result && downloadText("query-result.json", rowsToJson(active.result.columns, active.result.rows), "application/json")}
+                        title="Export JSON"
+                      >
+                        JSON
+                      </button>
+                    </>
+                  )}
+                  {numericColumns.length > 0 && active.result.columns.length >= 2 && (
+                    <button className="small" onClick={() => patchActive((t) => ({ view: t.view === "chart" ? "table" : "chart" }))}>
+                      {active.view === "chart" ? "Table" : "Chart"}
                     </button>
                   )}
                 </div>
               </div>
-              {chart ? (
+              {active.view === "chart" ? (
                 <div className="card-pad" style={{ paddingTop: 0 }}>
                   <div className="toolbar">
-                    <select value={chartType} onChange={(e) => setChartType(e.target.value as VizType)} style={{ marginTop: 0, width: 100 }}>
+                    <select value={active.chart.type} onChange={(e) => setChartPatch({ type: e.target.value as VizType })} style={{ marginTop: 0, width: 100 }}>
                       {["bar", "line", "area", "pie"].map((t) => <option key={t}>{t}</option>)}
                     </select>
-                    <select value={chartX} onChange={(e) => setChartX(e.target.value)} style={{ marginTop: 0, width: 150 }}>
-                      {result.columns.map((c) => <option key={c}>{c}</option>)}
+                    <select value={active.chart.x} onChange={(e) => setChartPatch({ x: e.target.value })} style={{ marginTop: 0, width: 150 }}>
+                      {active.result.columns.map((c) => <option key={c}>{c}</option>)}
                     </select>
-                    <select value={chartY} onChange={(e) => setChartY(e.target.value)} style={{ marginTop: 0, width: 150 }}>
+                    <select value={active.chart.y} onChange={(e) => setChartPatch({ y: e.target.value })} style={{ marginTop: 0, width: 150 }}>
                       {numericColumns.map((c) => <option key={c}>{c}</option>)}
                     </select>
                   </div>
                   <PanelChart
-                    columns={result.columns}
-                    rows={result.rows}
-                    viz={{ type: chartType, x: chartX, y: chartY }}
+                    columns={active.result.columns}
+                    rows={active.result.rows}
+                    viz={{ type: active.chart.type, x: active.chart.x, y: active.chart.y }}
                     height={300}
                   />
                 </div>
               ) : (
-                <div className="table-wrap" style={{ maxHeight: 460, overflowY: "auto" }}>
-                  <table className="data">
-                    <thead>
-                      <tr>{result.columns.map((c) => <th key={c}>{c}</th>)}</tr>
-                    </thead>
-                    <tbody>
-                      {result.rows.map((r, i) => (
-                        <tr key={i}>
-                          {r.map((v, j) => (
-                            <td key={j} className="mono" style={{ whiteSpace: "nowrap", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis" }}>
-                              {fmtValue(v)}
-                            </td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="card-pad" style={{ paddingTop: 0 }}>
+                  <ResultGrid result={active.result} showFilters={active.showFilters} />
                 </div>
               )}
             </div>
-          )}
-          {!result && !run.isPending && (
+          ) : run.isPending ? (
+            <div className="card card-pad"><Spinner label="Running…" /></div>
+          ) : (
             <div className="card">
               <EmptyState title="Results appear here" hint="Write SQL, click a suggestion, or insert a table from the schema browser." />
             </div>
@@ -654,14 +866,14 @@ export default function WorkbenchPage() {
                   <button
                     className="primary small"
                     onClick={() => {
-                      editSql(s.sql);
-                      run.mutate(s.sql);
+                      editActiveSql(s.sql);
+                      if (connectionId) run.mutate({ tabId: activeId, sql: s.sql });
                     }}
                   >
                     Run
                   </button>
                 )}
-                <button className="small" onClick={() => editSql(s.sql)}>Edit</button>
+                <button className="small" onClick={() => editActiveSql(s.sql)}>Edit</button>
               </div>
             </div>
           ))}
@@ -674,14 +886,27 @@ export default function WorkbenchPage() {
       {showSave && connectionId && (
         <SaveQueryModal
           connectionId={connectionId}
-          sql={sql}
+          sql={active.sql}
           defaultDatasetId={dataset?.connection_id === connectionId ? datasetId : undefined}
           onClose={() => setShowSave(false)}
           onSaved={() => {
             setShowSave(false);
-            setDirty(false);
+            patchActive({ dirty: false });
             qc.invalidateQueries({ queryKey: ["saved-queries"] });
           }}
+        />
+      )}
+
+      {showHistory && (
+        <HistoryModal
+          history={history}
+          editable={editable}
+          onClose={() => setShowHistory(false)}
+          onLoad={(entry, thenRun) => {
+            loadSql(entry.sql, entry.connectionId, thenRun);
+            setShowHistory(false);
+          }}
+          onClear={() => setHistory(clearHistory())}
         />
       )}
     </div>
