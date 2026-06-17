@@ -1,5 +1,6 @@
 // Dataset "Lineage" tab (issue #51): BFS neighborhood around this dataset's
-// node, with a 1/2/3 depth selector and a jump to the estate-wide map.
+// node. The depth selector lives in the graph's own toolbar (no duplicate here);
+// this slim header just links out to the estate-wide map.
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
@@ -7,8 +8,6 @@ import { api } from "../../api/client";
 import type { Dataset, LineageGraph as LineageGraphData } from "../../api/types";
 import LineageGraph from "../../components/LineageGraph";
 import { ErrorBox, Icon, Spinner } from "../../components/ui";
-
-const DEPTHS = [1, 2, 3];
 
 export default function LineageTab({ dataset }: { dataset: Dataset }) {
   const [depth, setDepth] = useState(2);
@@ -28,19 +27,10 @@ export default function LineageTab({ dataset }: { dataset: Dataset }) {
   return (
     <div className="card card-pad">
       <div className="toolbar">
-        <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--text-dark)" }}>Depth</span>
-        <div className="chip-row">
-          {DEPTHS.map((d) => (
-            <button
-              key={d}
-              className={`filter-chip${depth === d ? " on" : ""}`}
-              onClick={() => setDepth(d)}
-              title={`Show tables within ${d} hop${d === 1 ? "" : "s"}`}
-            >
-              {d}
-            </button>
-          ))}
-        </div>
+        <span style={{ fontSize: 12.5, color: "var(--text-light)" }}>
+          Neighborhood around{" "}
+          <strong style={{ color: "var(--text-dark)" }}>{dataset.table_name}</strong>
+        </span>
         <div className="right">
           <Link className="btn small" to={`/lineage?connection=${dataset.connection_id}`}>
             <Icon name="graph" size={12} /> Open estate lineage
