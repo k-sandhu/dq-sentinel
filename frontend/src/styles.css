@@ -1213,3 +1213,59 @@ th.star-col, td.star-col { width: 34px; padding-left: 12px; padding-right: 0; te
 .recents-strip { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 12px; }
 .recents-strip .recents-label { font-size: 11px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: var(--text-light); }
 .recents-strip .filter-chip { font-weight: 600; }
+
+/* ---------- workbench (#104) ---------- */
+/* CodeMirror SQL editor: wrap it to match card chrome. Token colors + light/dark
+   highlighting come from @uiw/react-codemirror's theme, driven by the app theme. */
+.sql-editor .cm-editor { border: 1px solid var(--border); border-radius: var(--radius); font-size: 13px; overflow: hidden; }
+.sql-editor .cm-editor.cm-focused { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-light); }
+.sql-editor .cm-scroller { font-family: var(--mono); line-height: 1.5; }
+
+/* Multi-tab strip above the editor. */
+.wb-tabs { display: flex; align-items: flex-end; gap: 4px; flex-wrap: wrap; margin-bottom: 10px; }
+.wb-tab {
+  display: inline-flex; align-items: center; gap: 8px; max-width: 230px; padding: 5px 10px;
+  border: 1px solid var(--border); border-bottom: none; background: var(--card2);
+  border-radius: 7px 7px 0 0; cursor: pointer; font-size: 12.5px; color: var(--text-light);
+}
+.wb-tab .wb-tab-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wb-tab:hover { background: var(--hover); }
+.wb-tab.active { background: var(--card); color: var(--text-dark); font-weight: 700; border-color: var(--border); }
+.wb-tab .wb-tab-close { display: inline-flex; align-items: center; color: var(--text-light); border-radius: 4px; padding: 1px; }
+.wb-tab .wb-tab-close:hover { color: var(--danger); background: var(--bg); }
+.wb-tab-add { border: 1px dashed var(--border); background: transparent; color: var(--text-light); border-radius: 7px; padding: 5px 9px; cursor: pointer; line-height: 1; }
+.wb-tab-add:hover { color: var(--brand); border-color: var(--brand); }
+
+/* Result data grid (TanStack Table). Fixed layout so resize/ellipsis are crisp. */
+.result-grid { border: 1px solid var(--border-light); border-radius: 6px; }
+.result-grid table { table-layout: fixed; border-collapse: separate; border-spacing: 0; font-size: 12.5px; }
+.result-grid thead th {
+  position: sticky; top: 0; z-index: 2; background: var(--card2); text-align: left; padding: 0;
+  border-bottom: 1px solid var(--border); border-right: 1px solid var(--border-light);
+  color: var(--text-light); font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px;
+}
+.result-grid thead tr.grid-filter-row th { top: 34px; z-index: 1; padding: 4px 6px; background: var(--card); }
+.result-grid .grid-th-btn {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%;
+  height: 34px; padding: 0 10px; background: none; border: none; cursor: pointer; color: inherit;
+  font: inherit; text-transform: inherit; letter-spacing: inherit;
+}
+.result-grid .grid-th-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.result-grid .grid-sort { color: var(--brand); font-size: 9px; flex: none; width: 9px; }
+.result-grid th { position: relative; }
+.result-grid .grid-resizer { position: absolute; top: 0; right: 0; height: 100%; width: 7px; cursor: col-resize; user-select: none; touch-action: none; }
+.result-grid .grid-resizer:hover, .result-grid .grid-resizer.resizing { background: var(--brand); opacity: 0.45; }
+.result-grid .grid-filter { width: 100%; margin: 0; padding: 3px 6px; font-size: 11.5px; min-height: 0; }
+.result-grid tbody td.grid-cell {
+  padding: 7px 10px; border-bottom: 1px solid var(--border-light); border-right: 1px solid var(--border-light);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; vertical-align: top;
+}
+.result-grid tbody tr:hover td { background: var(--hover); }
+.result-grid .grid-rownum {
+  width: 48px; min-width: 48px; text-align: right; padding: 7px 10px; font-size: 11px;
+  color: var(--text-light); background: var(--card2);
+  border-bottom: 1px solid var(--border-light); border-right: 1px solid var(--border);
+}
+.result-grid .grid-null { color: var(--text-light); font-style: italic; }
+.result-grid .grid-empty { padding: 24px; text-align: center; color: var(--text-light); }
+.grid-footnote { font-size: 11.5px; color: var(--text-light); padding: 6px 2px 0; }
