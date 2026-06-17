@@ -344,6 +344,23 @@ function LineageCanvas({
     if (node) reactFlow.setCenter(node.position.x + 110, node.position.y + 40, { zoom: 1.1, duration: 250 });
   };
 
+  // Select a node and bring it into view — shared by the search jump and the
+  // "needs attention" list so a click always lands you on the node + its panel.
+  const pickNode = (id: string) => {
+    setSelectedId(id);
+    const node = nodes.find((n) => n.id === id);
+    if (node) reactFlow.setCenter(node.position.x + 110, node.position.y + 38, { zoom: 1.05, duration: 250 });
+  };
+
+  // Failing/warning tables, worst first — the side rail's default content when
+  // nothing is selected (replaces the old separate "Needs attention" page card).
+  const attention = graph.nodes
+    .filter((n) => n.health === "fail" || n.health === "warn")
+    .sort((a, b) => {
+      if (a.health !== b.health) return a.health === "fail" ? -1 : 1;
+      return b.failing_checks - a.failing_checks || b.open_exceptions - a.open_exceptions;
+    });
+
   return (
     <div className={`lf-root${fullscreen ? " fullscreen" : ""}`}>
       <div className="lf-toolbar">
@@ -399,7 +416,7 @@ function LineageCanvas({
       </div>
 
       <div className="lf-body">
-        <div className="lf-canvas" data-panel={selectedNode ? "open" : "closed"}>
+        <div className="lf-canvas">
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -423,13 +440,15 @@ function LineageCanvas({
             }} />
           </ReactFlow>
         </div>
-        {selectedNode && (
+        {selectedNode ? (
           <DetailPanel
             node={selectedNode}
             upstreamCount={upstream.size}
             downstreamCount={downstream.size}
             onClose={() => setSelectedId(null)}
           />
+        ) : (
+          <OverviewPanel graph={graph} attention={attention} onPick={pickNode} />
         )}
       </div>
 
@@ -498,17 +517,71 @@ function DetailPanel({
         )}
         <div className="lf-panel-section">
           <div className="lf-panel-label">Actions</div>
-          <div className="lf-actions">
-            {href && <Link className="btn small primary" to={href}>Open {lineageDestLabel(table)}</Link>}
-            {table.dataset_id !== null && (
-              <>
-                <Link className="btn small" to={`/datasets/${table.dataset_id}/lineage`}>Lineage</Link>
-                <Link className="btn small" to={`/datasets/${table.dataset_id}/exceptions`}>Exceptions</Link>
-                <Link className="btn small" to={`/datasets/${table.dataset_id}/rca`}>RCA</Link>
-                <Link className="btn small" to={`/workbench?dataset_id=${table.dataset_id}`}>Workbench</Link>
-              </>
-            )}
-          </div>
+          {href ? (
+            <Link className="btn primary lf-open" to={href}>
+              Open {lineageDestLabel(table)}
+            </Link>
+          ) : (
+            <div className="muted">External / unregistered table — register it as a dataset to open it.</div>
+          )}
+          {table.dataset_id !== null && (
+            <div className="lf-actions">
+              <Link className="btn small" to={`/datasets/${table.dataset_id}/lineage`}>Lineage</Link>
+              <Link className="btn small" to={`/datasets/${table.dataset_id}/exceptions`}>Exceptions</Link>
+              <Link className="btn small" to={`/datasets/${table.dataset_id}/rca`}>RCA</Link>
+              <Link className="btn small" to={`/workbench?dataset_id=${table.dataset_id}`}>Workbench</Link>
+            </div>
+          )}
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+// Default rail content when no node is selected: a quick read on the graph plus a
+// worst-first "needs attention" jump list. Clicking an item selects + centers the
+// node (so its detail panel opens), folding the old standalone page rail in here.
+function OverviewPanel({
+  graph,
+  attention,
+  onPick,
+}: {
+  graph: LineageGraphData;
+  attention: LineageNode[];
+  onPick: (id: string) => void;
+}) {
+  return (
+    <aside className="lf-panel">
+      <div className="lf-panel-head">
+        <div>
+          <h3>Overview</h3>
+          <div className="muted">Click a node to inspect · double-click to open</div>
+        </div>
+      </div>
+      <div className="lf-panel-body">
+        <div className="lf-kpis">
+          <div><strong>{graph.nodes.length.toLocaleString()}</strong><span>tables</span></div>
+          <div><strong>{attention.length.toLocaleString()}</strong><span>need attention</span></div>
+        </div>
+        <div className="lf-panel-section">
+          <div className="lf-panel-label">Needs attention</div>
+          {attention.length === 0 ? (
+            <div className="muted">All clear — nothing failing or warning in this graph.</div>
+          ) : (
+            <div className="dense-list">
+              {attention.slice(0, 60).map((n) => (
+                <div key={n.id} className="dense-item clickable" onClick={() => onPick(n.id)}>
+                  <div className="lf-att-title">
+                    <span className="lf-att-name">{tableLabel(n)}</span>
+                    <StatusPill value={n.health} />
+                  </div>
+                  <div className="meta">
+                    {n.failing_checks} failing · {n.open_exceptions} open
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </aside>

@@ -49,59 +49,73 @@ function SchemaSidebar({
     enabled: !!ddlTable,
   });
 
+  const toggle = (key: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
   if (isLoading) return <Spinner label="Introspecting…" />;
+  if (!data || data.length === 0)
+    return <div className="empty" style={{ padding: 14, fontSize: 12.5 }}>No tables on this connection.</div>;
+
   return (
-    <div style={{ fontSize: 12.5, maxHeight: "70vh", overflowY: "auto" }}>
-      {(data ?? []).map((t) => {
-        const key = t.table_name;
-        const expanded = open.has(key);
-        return (
-          <div key={key} style={{ marginBottom: 2 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              <button
-                className="ghost small"
-                style={{ flex: 1, justifyContent: "flex-start", fontFamily: "var(--mono)", fontSize: 12 }}
-                onClick={() => {
-                  const next = new Set(open);
-                  if (expanded) next.delete(key);
-                  else next.add(key);
-                  setOpen(next);
-                }}
-                title={`${t.kind} — click to ${expanded ? "collapse" : "expand"}`}
-              >
-                {expanded ? "▾" : "▸"} {t.table_name}
-                {t.kind === "view" && <span className="badge kind" style={{ marginLeft: 4 }}>view</span>}
-              </button>
-              <button
-                className="ghost small"
-                title="Insert schema-qualified table"
-                onClick={() => onInsert(qualifiedRef(t.schema_name, t.table_name, dialect), { table: true })}
-              >
-                <Icon name="plus" size={11} />
-              </button>
-              <button className="ghost small" title="View definition (DDL)" onClick={() => setDdlTable(t.table_name)}>
-                <Icon name="book" size={11} />
-              </button>
-            </div>
-            {expanded && (
-              <div style={{ paddingLeft: 22 }}>
-                {t.columns.map((c) => (
-                  <div
-                    key={c.name}
-                    className="clickable"
-                    style={{ display: "flex", justifyContent: "space-between", padding: "1.5px 4px", cursor: "pointer", borderRadius: 4 }}
-                    onClick={() => onInsert(quoteIdent(c.name, dialect))}
-                    title="Click to insert"
-                  >
-                    <span style={{ fontFamily: "var(--mono)", fontSize: 11.5 }}>{c.name}</span>
-                    <span style={{ color: "var(--text-light)", fontSize: 10.5 }}>{c.dtype.toLowerCase().slice(0, 12)}</span>
-                  </div>
-                ))}
+    <>
+      <div className="schema-hint">Click a table to add it · ▸ to see columns</div>
+      <div className="schema-tree">
+        {data.map((t) => {
+          const key = t.table_name;
+          const expanded = open.has(key);
+          return (
+            <div key={key} className="schema-table">
+              <div className="schema-row">
+                <button
+                  className="schema-caret"
+                  onClick={() => toggle(key)}
+                  aria-label={expanded ? "Collapse columns" : "Expand columns"}
+                  aria-expanded={expanded}
+                >
+                  {expanded ? "▾" : "▸"}
+                </button>
+                <button
+                  className="schema-name"
+                  onClick={() => onInsert(qualifiedRef(t.schema_name, t.table_name, dialect), { table: true })}
+                  title="Add this table to the query"
+                >
+                  <Icon name="table" size={12} />
+                  <span className="nm">{t.table_name}</span>
+                  {t.kind === "view" && <span className="badge kind">view</span>}
+                </button>
+                <button
+                  className="schema-ddl"
+                  title="View definition (DDL)"
+                  aria-label={`View definition of ${t.table_name}`}
+                  onClick={() => setDdlTable(t.table_name)}
+                >
+                  <Icon name="book" size={12} />
+                </button>
               </div>
-            )}
-          </div>
-        );
-      })}
+              {expanded && (
+                <div className="schema-cols">
+                  {t.columns.map((c) => (
+                    <button
+                      key={c.name}
+                      className="schema-col"
+                      onClick={() => onInsert(quoteIdent(c.name, dialect))}
+                      title="Insert column"
+                    >
+                      <span className="cn">{c.name}</span>
+                      <span className="ct">{c.dtype.toLowerCase().slice(0, 12)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
       {ddlTable && (
         <Modal title={`Definition of ${ddlTable}`} onClose={() => setDdlTable(null)} wide>
           {ddl.isLoading ? (
@@ -116,7 +130,7 @@ function SchemaSidebar({
           )}
         </Modal>
       )}
-    </div>
+    </>
   );
 }
 
@@ -451,6 +465,8 @@ export default function WorkbenchPage() {
   const [limit, setLimit] = useState(200);
   const [showSave, setShowSave] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [showSuggest, setShowSuggest] = useState(false);
+  const suggestAutoOpened = useRef(false);
   const [history, setHistory] = useState<QueryHistoryEntry[]>(() => loadHistory());
 
   // Tabs (restored from localStorage; results stay in memory).
@@ -536,6 +552,16 @@ export default function WorkbenchPage() {
     enabled: !!connectionId || !!datasetId || !!runId || !!exceptionId || !!checkId,
     staleTime: 60_000,
   });
+  const suggestCount = suggest.data?.suggestions.length ?? 0;
+
+  // Open the suggestions rail on its own the first time real suggestions arrive,
+  // so it never sits empty taking space — the user can re-toggle it from the header.
+  useEffect(() => {
+    if (!suggestAutoOpened.current && suggestCount > 0) {
+      suggestAutoOpened.current = true;
+      setShowSuggest(true);
+    }
+  }, [suggestCount]);
 
   const recordHistory = (sqlText: string, connId: number, r: QueryRunResult | null, err: unknown) => {
     const conn = connections?.find((c) => c.id === connId);
@@ -676,6 +702,14 @@ export default function WorkbenchPage() {
           </div>
         </div>
         <div className="header-actions">
+          <button
+            className={`small wb-toggle${showSuggest ? " on" : ""}`}
+            onClick={() => setShowSuggest((v) => !v)}
+            title="Toggle suggested queries"
+            aria-pressed={showSuggest}
+          >
+            <Icon name="bolt" size={12} /> Suggestions{suggestCount ? ` (${suggestCount})` : ""}
+          </button>
           <select
             value={connectionId ?? ""}
             onChange={(e) => changeConnection(Number(e.target.value))}
@@ -688,7 +722,7 @@ export default function WorkbenchPage() {
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "230px 1fr 320px", gap: 16, alignItems: "start" }}>
+      <div className={`wb-grid${showSuggest ? " with-suggest" : ""}`}>
         <div>
           <div className="card card-pad">
             <h3>Schema</h3>
@@ -873,15 +907,21 @@ export default function WorkbenchPage() {
           )}
         </div>
 
+        {showSuggest && (
         <div className="card card-pad">
-          <h3>
-            Suggested queries{" "}
-            {suggest.data && (
-              <span className={`badge ${suggest.data.mode === "llm" ? "ai" : ""}`}>
-                {suggest.data.mode === "llm" ? "AI" : "heuristic"}
-              </span>
-            )}
-          </h3>
+          <div className="wb-suggest-head">
+            <h3>
+              Suggested queries{" "}
+              {suggest.data && (
+                <span className={`badge ${suggest.data.mode === "llm" ? "ai" : ""}`}>
+                  {suggest.data.mode === "llm" ? "AI" : "heuristic"}
+                </span>
+              )}
+            </h3>
+            <button className="ghost small" onClick={() => setShowSuggest(false)} title="Hide suggestions" aria-label="Hide suggestions">
+              <Icon name="x" size={12} />
+            </button>
+          </div>
           {suggest.isLoading && <Spinner label="Thinking…" />}
           {(suggest.data?.suggestions ?? []).map((s, i) => (
             <div key={i} className="insight" style={{ borderColor: "var(--purple)" }}>
@@ -908,6 +948,7 @@ export default function WorkbenchPage() {
             <div className="empty" style={{ padding: 14 }}>No suggestions for this context.</div>
           )}
         </div>
+        )}
       </div>
 
       {showSave && connectionId && (

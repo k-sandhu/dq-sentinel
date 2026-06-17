@@ -102,7 +102,7 @@ export default function ResultGrid({
 
   return (
     <>
-      <div className="result-grid table-wrap" style={{ maxHeight: 460, overflow: "auto" }}>
+      <div className="result-grid table-wrap" style={{ maxHeight: "min(62vh, 720px)", overflow: "auto" }}>
         <table style={{ width: table.getCenterTotalSize() + 48 }}>
           <thead>
             <tr>
