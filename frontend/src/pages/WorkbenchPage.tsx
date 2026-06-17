@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { api } from "../api/client";
 import type {
@@ -353,13 +353,15 @@ interface TabState {
   sql: string;
   dirty: boolean;
   result: QueryRunResult | null;
+  error: string | null;
+  resultLimit: number; // the LIMIT the current result ran at — drives the truncation affordance
   view: "table" | "chart";
   chart: { type: VizType; x: string; y: string };
   showFilters: boolean;
 }
 
 function makeTab(sql = ""): TabState {
-  return { id: newTabId(), sql, dirty: false, result: null, view: "table", chart: { type: "bar", x: "", y: "" }, showFilters: false };
+  return { id: newTabId(), sql, dirty: false, result: null, error: null, resultLimit: 200, view: "table", chart: { type: "bar", x: "", y: "" }, showFilters: false };
 }
 
 const LIMITS = [50, 200, 500, 1000, 2000];
@@ -497,16 +499,27 @@ export default function WorkbenchPage() {
     else if (!connectionId && !datasetId && connections?.length) setConnectionId(connections[0].id);
   }, [dataset, connections, connectionId, datasetId]);
 
-  // Deep-link: preload a saved query's SQL (and its connection) into the active tab.
+  // Deep-link: surface a saved query's SQL (and its connection) on arrival. Applied
+  // once — reuse the active tab when it's empty, else open a dedicated tab so we
+  // never clobber work restored from a previous session (tabs persist to localStorage).
   const deepLinked = useQuery({
     queryKey: ["saved-query", savedQueryId],
     queryFn: () => api.get<SavedQuery>(`/queries/${savedQueryId}`),
     enabled: !!savedQueryId,
   });
+  const deepLinkApplied = useRef(false);
   useEffect(() => {
-    if (!deepLinked.data) return;
-    setTabs((prev) => prev.map((t) => (t.id === activeId && !t.dirty && !t.sql.trim() ? { ...t, sql: deepLinked.data!.sql } : t)));
-    setConnectionId(deepLinked.data.connection_id);
+    if (!deepLinked.data || deepLinkApplied.current) return;
+    deepLinkApplied.current = true;
+    const { sql, connection_id } = deepLinked.data;
+    setConnectionId(connection_id);
+    if (!active.dirty && !active.sql.trim()) {
+      patchActive({ sql, result: null, error: null });
+    } else {
+      const t = makeTab(sql);
+      setTabs((prev) => [...prev, t]);
+      setActiveId(t.id);
+    }
     // React only to the fetched query landing.
   }, [deepLinked.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -524,10 +537,10 @@ export default function WorkbenchPage() {
     staleTime: 60_000,
   });
 
-  const recordHistory = (sqlText: string, r: QueryRunResult | null, err: unknown) => {
-    const conn = connections?.find((c) => c.id === connectionId);
+  const recordHistory = (sqlText: string, connId: number, r: QueryRunResult | null, err: unknown) => {
+    const conn = connections?.find((c) => c.id === connId);
     addHistory({
-      connectionId: connectionId ?? 0,
+      connectionId: connId,
       connectionName: conn?.name ?? "",
       sql: sqlText,
       rowCount: r ? r.row_count : null,
@@ -539,28 +552,41 @@ export default function WorkbenchPage() {
   };
 
   const run = useMutation({
-    mutationFn: (vars: { tabId: string; sql: string; limit?: number }) =>
-      api.post<QueryRunResult>("/query/run", { connection_id: connectionId, sql: vars.sql, limit: vars.limit ?? limit }),
+    mutationFn: (vars: { tabId: string; sql: string; connectionId: number; limit: number }) =>
+      api.post<QueryRunResult>("/query/run", { connection_id: vars.connectionId, sql: vars.sql, limit: vars.limit }),
     onSuccess: (r, vars) => {
+      recordHistory(vars.sql, vars.connectionId, r, null);
+      // run.reset() can't cancel an in-flight request, so a slow run could land
+      // after the source was switched — drop a result whose connection is stale.
+      if (vars.connectionId !== connectionId) return;
       patchTab(vars.tabId, {
         result: r,
+        error: null,
+        resultLimit: vars.limit,
         view: "table",
         chart: { type: "bar", x: r.columns[0] ?? "", y: r.columns[r.columns.length - 1] ?? "" },
       });
-      recordHistory(vars.sql, r, null);
     },
-    onError: (err, vars) => recordHistory(vars.sql, null, err),
+    onError: (err, vars) => {
+      recordHistory(vars.sql, vars.connectionId, null, err);
+      if (vars.connectionId !== connectionId) return;
+      patchTab(vars.tabId, { result: null, error: err instanceof Error ? err.message : String(err) });
+    },
   });
 
-  const runActive = () => {
-    if (editable && connectionId && active.sql.trim()) run.mutate({ tabId: activeId, sql: active.sql });
+  // Single funnel for every run path: gate on role/connection, clear the tab's
+  // prior error, and capture the connection used so a stale result can be dropped.
+  const runSql = (tabId: string, sql: string, lim: number = limit) => {
+    if (!editable || !connectionId || !sql.trim()) return;
+    patchTab(tabId, { error: null });
+    run.mutate({ tabId, sql, connectionId, limit: lim });
   };
+  const runActive = () => runSql(activeId, active.sql);
 
-  const nextLimit = LIMITS.find((n) => n > limit) ?? 2000;
+  const nextLimit = LIMITS.find((n) => n > (active.result ? active.resultLimit : limit)) ?? 2000;
   const raiseLimit = () => {
-    if (!connectionId || !active.sql.trim()) return;
     setLimit(nextLimit);
-    run.mutate({ tabId: activeId, sql: active.sql, limit: nextLimit });
+    runSql(activeId, active.sql, nextLimit);
   };
 
   const dialect = useMemo(
@@ -588,10 +614,10 @@ export default function WorkbenchPage() {
     const sameConn = sourceConnectionId === connectionId;
     if (!sameConn && sourceConnectionId) {
       setConnectionId(sourceConnectionId);
-      setTabs((prev) => prev.map((t) => ({ ...t, result: null, view: "table" })));
+      setTabs((prev) => prev.map((t) => ({ ...t, result: null, error: null, view: "table" })));
     }
-    patchActive({ sql, dirty: false, result: null });
-    if (thenRun && editable && sameConn) run.mutate({ tabId: activeId, sql });
+    patchActive({ sql, dirty: false, result: null, error: null });
+    if (thenRun && sameConn) runSql(activeId, sql);
   };
 
   // Switching the source must not leave results pointed at the old database.
@@ -610,15 +636,16 @@ export default function WorkbenchPage() {
   const closeTab = (id: string) => {
     const idx = tabs.findIndex((t) => t.id === id);
     if (idx === -1) return;
-    const remaining = tabs.filter((t) => t.id !== id);
-    if (remaining.length === 0) {
-      const fresh = makeTab();
-      setTabs([fresh]);
-      setActiveId(fresh.id);
-      return;
+    const fresh = tabs.length <= 1 ? makeTab() : null;
+    // Functional update so the removal never operates on a stale array.
+    setTabs((prev) => {
+      const remaining = prev.filter((t) => t.id !== id);
+      return remaining.length ? remaining : [fresh ?? makeTab()];
+    });
+    if (activeId === id) {
+      const remaining = tabs.filter((t) => t.id !== id);
+      setActiveId(remaining.length ? remaining[Math.min(idx, remaining.length - 1)].id : fresh!.id);
     }
-    setTabs(remaining);
-    if (activeId === id) setActiveId(remaining[Math.min(idx, remaining.length - 1)].id);
   };
 
   const numericColumns = useMemo(() => {
@@ -760,7 +787,7 @@ export default function WorkbenchPage() {
                 Read-only · single SELECT/WITH · <span className="kbd">Ctrl</span>+<span className="kbd">Enter</span> to run
               </span>
             </div>
-            <ErrorBox error={run.error} />
+            <ErrorBox error={active.error} />
           </div>
 
           {active.result ? (
@@ -768,7 +795,7 @@ export default function WorkbenchPage() {
               <div className="card-pad" style={{ display: "flex", gap: 12, alignItems: "center", paddingBottom: 10, flexWrap: "wrap" }}>
                 <strong>{fmtNum(active.result.row_count)} rows</strong>
                 <span style={{ color: "var(--text-light)", fontSize: 12 }}>{active.result.elapsed_ms} ms</span>
-                {active.result.truncated && (limit < 2000 ? (
+                {active.result.truncated && (active.resultLimit < 2000 ? (
                   <button className="badge" style={{ cursor: "pointer" }} onClick={raiseLimit} disabled={run.isPending} title="Fetch more rows">
                     truncated · raise to {nextLimit} &amp; re-run
                   </button>
@@ -818,10 +845,10 @@ export default function WorkbenchPage() {
                       {["bar", "line", "area", "pie"].map((t) => <option key={t}>{t}</option>)}
                     </select>
                     <select value={active.chart.x} onChange={(e) => setChartPatch({ x: e.target.value })} style={{ marginTop: 0, width: 150 }}>
-                      {active.result.columns.map((c) => <option key={c}>{c}</option>)}
+                      {active.result.columns.map((c, i) => <option key={`${c}-${i}`}>{c}</option>)}
                     </select>
                     <select value={active.chart.y} onChange={(e) => setChartPatch({ y: e.target.value })} style={{ marginTop: 0, width: 150 }}>
-                      {numericColumns.map((c) => <option key={c}>{c}</option>)}
+                      {numericColumns.map((c, i) => <option key={`${c}-${i}`}>{c}</option>)}
                     </select>
                   </div>
                   <PanelChart
@@ -867,7 +894,7 @@ export default function WorkbenchPage() {
                     className="primary small"
                     onClick={() => {
                       editActiveSql(s.sql);
-                      if (connectionId) run.mutate({ tabId: activeId, sql: s.sql });
+                      runSql(activeId, s.sql);
                     }}
                   >
                     Run

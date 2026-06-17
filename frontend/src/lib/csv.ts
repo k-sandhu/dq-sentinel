@@ -34,9 +34,21 @@ export function rowsToCsv(columns: string[], rows: readonly unknown[][]): string
   return `${header}\r\n${rows.map(line).join("\r\n")}\r\n`;
 }
 
+/** Disambiguate duplicate column names (a JOIN readily yields two `id`s) so object
+ *  keys don't collapse and silently drop columns the grid shows. */
+function uniqueKeys(columns: string[]): string[] {
+  const seen = new Map<string, number>();
+  return columns.map((c) => {
+    const n = (seen.get(c) ?? 0) + 1;
+    seen.set(c, n);
+    return n === 1 ? c : `${c}_${n}`;
+  });
+}
+
 export function rowsToJson(columns: string[], rows: readonly unknown[][]): string {
+  const keys = uniqueKeys(columns);
   const objects = rows.map((r) =>
-    Object.fromEntries(columns.map((c, i) => [c, r[i] ?? null])),
+    Object.fromEntries(keys.map((k, i) => [k, r[i] ?? null])),
   );
   return JSON.stringify(objects, null, 2);
 }
