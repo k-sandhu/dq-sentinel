@@ -1299,3 +1299,15 @@ class SearchHit(BaseModel):
 
 class SearchOut(BaseModel):
     hits: list[SearchHit] = []
+
+
+# --- in-app documentation browser ---
+class DocSummary(BaseModel):
+    slug: str  # filename without .md, used as the URL segment
+    title: str  # first markdown H1, or the slug if none
+    size_bytes: int
+    updated_at: datetime
+
+
+class DocContent(DocSummary):
+    markdown: str

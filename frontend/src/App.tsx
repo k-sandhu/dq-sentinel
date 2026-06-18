@@ -13,7 +13,9 @@ import CustomDashboardPage from "./pages/CustomDashboardPage";
 import DashboardsListPage from "./pages/DashboardsListPage";
 import DatasetDetailPage from "./pages/DatasetDetailPage";
 import DatasetsPage from "./pages/DatasetsPage";
+import DocsPage from "./pages/DocsPage";
 import ExceptionsPage from "./pages/ExceptionsPage";
+import FeaturesPage from "./pages/FeaturesPage";
 import HomePage from "./pages/HomePage";
 import IncidentsPage from "./pages/IncidentsPage";
 import LineagePage from "./pages/LineagePage";
@@ -74,6 +76,12 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Navigate to="/" replace />} />
+      {/* Standalone reference pages — separate from the main app shell (no
+          sidebar), reachable via the floating launcher. Static paths outrank
+          the Layout group's "*" catch-all. */}
+      <Route path="/docs" element={<DocsPage />} />
+      <Route path="/docs/:slug" element={<DocsPage />} />
+      <Route path="/features" element={<FeaturesPage />} />
       <Route element={<Layout />}>
         <Route
           path="/"
