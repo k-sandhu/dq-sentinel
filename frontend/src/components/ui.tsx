@@ -55,6 +55,20 @@ export function Icon({ name, size = 16 }: { name: string; size?: number }) {
     ),
     check: <path d="m4 12.5 5 5L20 6.5" />,
     book: <path d="M4 5a2 2 0 0 1 2-2h14v18H6a2 2 0 0 0-2 2V5zM20 17H6a2 2 0 0 0-2 2" />,
+    help: (
+      <>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M9.6 9a2.5 2.5 0 0 1 4.9.6c0 1.7-2.5 2.2-2.5 3.4M12 17h.01" />
+      </>
+    ),
+    sparkles: (
+      <>
+        <path d="M12 3l1.7 4.6L18 9l-4.3 1.4L12 15l-1.7-4.6L6 9l4.3-1.4L12 3z" />
+        <path d="M18.5 14.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8z" />
+      </>
+    ),
+    "arrow-left": <path d="M19 12H5M12 19l-7-7 7-7" />,
+    "arrow-right": <path d="M5 12h14M12 5l7 7-7 7" />,
     x: <path d="M5 5l14 14M19 5 5 19" />,
     plus: <path d="M12 5v14M5 12h14" />,
     refresh: <path d="M20 11A8 8 0 1 0 18.9 15M20 4v7h-7" />,
