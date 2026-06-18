@@ -1,5 +1,21 @@
-import { Fragment, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { Link } from "react-router";
+
+/** Keyboard handler so a non-button clickable (div/li/tr) activates on Enter or
+ *  Space, matching native button behavior. Pair with role="button" +
+ *  tabIndex={0} so the element is also reachable and shows the focus ring. */
+export function activateOnKey(handler: () => void) {
+  return (e: KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      handler();
+    }
+  };
+}
+
+// Elements that can hold keyboard focus — used to trap focus inside a Modal.
+const FOCUSABLE =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 export function Icon({ name, size = 16 }: { name: string; size?: number }) {
   const paths: Record<string, ReactNode> = {
@@ -39,6 +55,20 @@ export function Icon({ name, size = 16 }: { name: string; size?: number }) {
     ),
     check: <path d="m4 12.5 5 5L20 6.5" />,
     book: <path d="M4 5a2 2 0 0 1 2-2h14v18H6a2 2 0 0 0-2 2V5zM20 17H6a2 2 0 0 0-2 2" />,
+    help: (
+      <>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M9.6 9a2.5 2.5 0 0 1 4.9.6c0 1.7-2.5 2.2-2.5 3.4M12 17h.01" />
+      </>
+    ),
+    sparkles: (
+      <>
+        <path d="M12 3l1.7 4.6L18 9l-4.3 1.4L12 15l-1.7-4.6L6 9l4.3-1.4L12 3z" />
+        <path d="M18.5 14.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8z" />
+      </>
+    ),
+    "arrow-left": <path d="M19 12H5M12 19l-7-7 7-7" />,
+    "arrow-right": <path d="M5 12h14M12 5l7 7-7 7" />,
     x: <path d="M5 5l14 14M19 5 5 19" />,
     plus: <path d="M12 5v14M5 12h14" />,
     refresh: <path d="M20 11A8 8 0 1 0 18.9 15M20 4v7h-7" />,
@@ -188,8 +218,8 @@ export function SeverityDot({ severity }: { severity: string }) {
 
 export function Spinner({ label }: { label?: string }) {
   return (
-    <div className="center">
-      <span className="spinner" />
+    <div className="center" role="status" aria-live="polite">
+      <span className="spinner" aria-hidden />
       {label ?? "Loading…"}
     </div>
   );
@@ -227,15 +257,69 @@ export function Modal({
   /** When true, closing via the backdrop or ✕ asks before discarding edits. */
   dirty?: boolean;
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+
   const requestClose = () => {
     if (dirty && !window.confirm("Discard your unsaved changes?")) return;
     onClose();
   };
+
+  // Move focus into the dialog on open and restore it to the trigger on close,
+  // so keyboard/screen-reader users aren't stranded at the top of the document.
+  useEffect(() => {
+    const prevFocus = document.activeElement as HTMLElement | null;
+    const id = window.setTimeout(() => {
+      const dialog = dialogRef.current;
+      if (!dialog || dialog.contains(document.activeElement)) return; // autoFocus already placed it
+      const focusables = dialog.querySelectorAll<HTMLElement>(FOCUSABLE);
+      (focusables[0] ?? dialog).focus();
+    }, 0);
+    return () => {
+      window.clearTimeout(id);
+      prevFocus?.focus?.();
+    };
+  }, []);
+
+  // Escape closes; Tab is trapped so focus can't leave the dialog (aria-modal).
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      requestClose();
+      return;
+    }
+    if (e.key !== "Tab") return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const focusables = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE));
+    if (focusables.length === 0) {
+      e.preventDefault();
+      return;
+    }
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && requestClose()}>
-      <div className={`modal${wide ? " wide" : ""}`}>
+      <div
+        ref={dialogRef}
+        className={`modal${wide ? " wide" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
+      >
         <div className="modal-head">
-          <h3>{title}</h3>
+          <h3 id={titleId}>{title}</h3>
           <button className="ghost small" onClick={requestClose} aria-label="Close">
             <Icon name="x" />
           </button>

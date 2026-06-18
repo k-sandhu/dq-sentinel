@@ -127,6 +127,11 @@ class Settings(BaseSettings):
     log_format: str = "text"  # text | json
     log_level: str = "INFO"
 
+    # In-app documentation browser (the /docs page). Markdown is read read-only
+    # from this directory. Empty -> <repo>/docs in dev, which resolves to /docs
+    # inside the backend image (mount ./docs:/docs:ro in docker-compose).
+    docs_dir: str = ""
+
     # CORS
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
 
@@ -137,6 +142,11 @@ class Settings(BaseSettings):
     @property
     def llm_enabled(self) -> bool:
         return self.resolved_llm() is not None
+
+    @property
+    def docs_path(self) -> Path:
+        """Directory the in-app docs browser reads markdown from."""
+        return Path(self.docs_dir) if self.docs_dir else (REPO_DIR / "docs")
 
 
 @lru_cache

@@ -122,7 +122,7 @@ export default function PanelChart({
   if (viz.type === "line") {
     return (
       <ResponsiveContainer width="100%" height={height}>
-        <LineChart data={data} margin={{ top: 6, right: 6, left: 0, bottom: 0 }}>
+        <LineChart accessibilityLayer data={data} margin={{ top: 6, right: 6, left: 0, bottom: 0 }}>
           {common}
           <Line type="monotone" dataKey={y} stroke="var(--brand)" strokeWidth={2} dot={false} />
         </LineChart>
@@ -132,7 +132,7 @@ export default function PanelChart({
   if (viz.type === "area") {
     return (
       <ResponsiveContainer width="100%" height={height}>
-        <AreaChart data={data} margin={{ top: 6, right: 6, left: 0, bottom: 0 }}>
+        <AreaChart accessibilityLayer data={data} margin={{ top: 6, right: 6, left: 0, bottom: 0 }}>
           {common}
           <Area type="monotone" dataKey={y} stroke="var(--brand)" fill="var(--brand-light)" strokeWidth={2} />
         </AreaChart>
@@ -141,7 +141,7 @@ export default function PanelChart({
   }
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <BarChart data={dataAsc} margin={{ top: 6, right: 6, left: 0, bottom: 0 }}>
+      <BarChart accessibilityLayer data={dataAsc} margin={{ top: 6, right: 6, left: 0, bottom: 0 }}>
         {common}
         <Bar dataKey={y} fill="var(--brand)" radius={[2, 2, 0, 0]} />
       </BarChart>

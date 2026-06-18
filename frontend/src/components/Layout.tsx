@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import type { ConnectionHealth, Dataset, SearchHit, SearchOut } from "../api/types";
 import { useAuth } from "../auth";
 import { FAVORITES_SIDEBAR_CAP, getFavorites, getRecents, pruneStalePrefs, subscribePrefs } from "../lib/prefs";
+import DocsLauncher from "./DocsLauncher";
 import ErrorBoundary from "./ErrorBoundary";
 import { Icon } from "./ui";
 
@@ -407,6 +408,7 @@ export default function Layout() {
   const location = useLocation();
   return (
     <div className="app">
+      <a href="#main-content" className="skip-link">Skip to main content</a>
       <aside className="sidebar">
         <Link to="/" className="logo" aria-label="DQ Sentinel — home">
           <span className="logo-mark">
@@ -453,7 +455,7 @@ export default function Layout() {
           </button>
         </div>
       </aside>
-      <main className="main">
+      <main className="main" id="main-content" tabIndex={-1}>
         <div className="topbar">
           <FleetHealthPill />
           <GlobalSearch />
@@ -467,6 +469,8 @@ export default function Layout() {
           <Outlet />
         </ErrorBoundary>
       </main>
+      {/* Floating overlay links to the standalone Docs & Features pages. */}
+      <DocsLauncher />
     </div>
   );
 }

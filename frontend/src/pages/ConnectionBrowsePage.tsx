@@ -67,6 +67,7 @@ export default function ConnectionBrowsePage() {
       <div className="toolbar">
         <input
           type="text"
+          aria-label="Filter tables"
           placeholder="Filter tables…"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}

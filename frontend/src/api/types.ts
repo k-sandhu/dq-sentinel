@@ -1137,3 +1137,15 @@ export interface SearchHit {
 export interface SearchOut {
   hits: SearchHit[];
 }
+
+// ---- in-app documentation browser ----
+export interface DocSummary {
+  slug: string;
+  title: string;
+  size_bytes: number;
+  updated_at: string;
+}
+
+export interface DocContent extends DocSummary {
+  markdown: string;
+}
