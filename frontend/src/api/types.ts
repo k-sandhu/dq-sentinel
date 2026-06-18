@@ -975,7 +975,14 @@ export interface AuditPage {
 // This Widget union mirrors backend/app/schemas.py (the authoritative contract).
 export type Visibility = "private" | "team";
 export type WidgetSpan = 1 | 2;
-export type WidgetType = "metric" | "exceptions" | "checks" | "sql" | "note";
+export type WidgetType =
+  | "metric"
+  | "exceptions"
+  | "checks"
+  | "sql"
+  | "note"
+  | "status_matrix"
+  | "trend";
 
 // `params` keys mirror the GET /exceptions query contract (#57); values are strings.
 export type WidgetParams = Record<string, string>;
@@ -1021,11 +1028,64 @@ export interface NoteWidget extends WidgetBase {
   config: { markdown: string };
 }
 
-export type Widget = MetricWidget | ExceptionsWidget | ChecksWidget | SqlWidget | NoteWidget;
+// Checks (possibly across datasets/connections) × recent UTC days, ✓/✗ per day.
+// Resolved live through GET /insights/check-matrix (#69); cap 25 checks.
+export interface StatusMatrixWidget extends WidgetBase {
+  type: "status_matrix";
+  config: { check_ids: number[]; days: 7 | 14 | 30 };
+}
+
+// New-exceptions-per-day for an exceptions filter, via GET /insights/exception-series.
+export interface TrendWidget extends WidgetBase {
+  type: "trend";
+  config: { params: WidgetParams; days: number };
+}
+
+export type Widget =
+  | MetricWidget
+  | ExceptionsWidget
+  | ChecksWidget
+  | SqlWidget
+  | NoteWidget
+  | StatusMatrixWidget
+  | TrendWidget;
 
 export interface DashboardLayout {
   version: 1;
   widgets: Widget[];
+}
+
+// ---- insights API (#69): curated app-metadata aggregates ----
+// One UTC day for one check. `status` is the WORST run status that day
+// (precedence error > fail > warn > pass); null = no run that day.
+export interface CheckMatrixCell {
+  status: RunStatus | null;
+  runs: number;
+}
+
+export interface CheckMatrixRow {
+  check_id: number;
+  check_name: string;
+  dataset_id: number; // for the "open this check's dataset" row link
+  dataset_name: string;
+  connection_name: string;
+  severity: string;
+  cells: CheckMatrixCell[]; // parallel to CheckMatrixOut.columns
+}
+
+export interface CheckMatrixOut {
+  columns: string[]; // ISO dates, oldest -> newest, UTC days
+  rows: CheckMatrixRow[];
+}
+
+export interface SeriesPoint {
+  t: string; // ISO date (UTC day)
+  value: number;
+}
+
+export interface ExceptionSeriesOut {
+  points: SeriesPoint[]; // one per UTC day, oldest -> newest
+  total: number;
 }
 
 export interface CustomDashboardMeta {

@@ -14,6 +14,8 @@ import ExceptionsWidget from "../components/dashboards/ExceptionsWidget";
 import MetricWidget from "../components/dashboards/MetricWidget";
 import NoteWidget from "../components/dashboards/NoteWidget";
 import SqlWidget from "../components/dashboards/SqlWidget";
+import StatusMatrixWidget from "../components/dashboards/StatusMatrixWidget";
+import TrendWidget from "../components/dashboards/TrendWidget";
 import WidgetConfigModal, { defaultWidget } from "../components/dashboards/WidgetConfigModal";
 import WidgetFrame from "../components/dashboards/WidgetFrame";
 import WidgetGrid from "../components/dashboards/WidgetGrid";
@@ -26,6 +28,8 @@ const WIDGET_TYPES: { type: WidgetType; label: string; desc: string }[] = [
   { type: "metric", label: "Metric", desc: "A single count from the exceptions queue, with tone thresholds." },
   { type: "exceptions", label: "Exceptions list", desc: "The most recent matching exceptions, linking into triage." },
   { type: "checks", label: "Checks", desc: "Active checks for chosen datasets; optionally only failing." },
+  { type: "status_matrix", label: "Status matrix", desc: "Chosen checks × recent days — worst ✓/✗ per UTC day, across datasets." },
+  { type: "trend", label: "Trend", desc: "New exceptions per day for a saved exceptions filter." },
   { type: "sql", label: "SQL snapshot", desc: "A read-only query rendered as a chart, refreshed on demand." },
   { type: "note", label: "Note", desc: "Markdown — runbook links, context, reminders." },
 ];
@@ -206,6 +210,10 @@ export default function CustomDashboardPage() {
         return <SqlWidget widget={w} dashboardId={dashboardId} canRefresh={canRefresh && !editing} />;
       case "note":
         return <NoteWidget widget={w} />;
+      case "status_matrix":
+        return <StatusMatrixWidget widget={w} />;
+      case "trend":
+        return <TrendWidget widget={w} />;
     }
   }
 

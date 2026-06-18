@@ -956,6 +956,34 @@ html[data-theme="dark"] .cd-widget-controls .cd-remove:hover { background: rgba(
 .cd-dense-all { display: inline-block; margin-top: 8px; font-size: 12px; color: var(--brand-dark); text-decoration: none; }
 .cd-dense-all:hover { text-decoration: underline; }
 
+/* Status-matrix + trend widgets + check picker (#70) */
+.cd-matrix-wrap { font-size: 12px; }
+.cd-matrix-note { color: var(--text-light); font-size: 11.5px; margin-bottom: 6px; }
+.cd-matrix-warn { color: var(--warn-strong); font-size: 11.5px; font-weight: 600; margin-bottom: 6px; }
+.cd-matrix { overflow-x: auto; }
+.cd-matrix table { border-collapse: separate; border-spacing: 4px; }
+.cd-matrix th { font-weight: 700; color: var(--text-light); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.3px; padding: 2px 4px; text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cd-matrix th.cd-matrix-rowhead { text-align: left; text-transform: none; letter-spacing: 0; min-width: 150px; max-width: 220px; }
+.cd-matrix-check { color: var(--text-dark); font-weight: 700; font-size: 12px; text-decoration: none; display: inline-block; max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cd-matrix-check:hover { color: var(--brand-dark); text-decoration: underline; }
+.cd-matrix-rowmeta { color: var(--text-light); font-weight: 400; font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 210px; }
+.cd-matrix-td { padding: 0; }
+.cd-matrix-cell { display: block; min-width: 28px; padding: 6px 4px; text-align: center; text-decoration: none; }
+a.cd-matrix-cell:hover { filter: brightness(0.95); }
+.cd-matrix .heat-cell.is-error { box-shadow: inset 0 0 0 2px var(--danger); }
+.cd-trend-foot { margin-top: 6px; }
+
+/* Status-matrix check picker (config modal) */
+.cd-check-picker { max-height: 220px; overflow-y: auto; border: 1px solid var(--border-light); border-radius: 6px; padding: 4px 0; margin-top: 6px; }
+.cd-check-group-head { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-light); padding: 6px 10px 2px; position: sticky; top: 0; background: var(--card); }
+.cd-check-picker .cd-check-row { padding: 3px 10px; }
+.cd-check-picker .cd-check-row.disabled { opacity: 0.45; }
+.cd-check-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Live preview pane in the config modal */
+.cd-preview { margin-top: 14px; border-top: 1px dashed var(--border); padding-top: 12px; }
+.cd-preview-label { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-light); margin-bottom: 8px; }
+
 /* SQL widget */
 .cd-sql-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
 .cd-asof { font-size: 11px; color: var(--text-light); }
