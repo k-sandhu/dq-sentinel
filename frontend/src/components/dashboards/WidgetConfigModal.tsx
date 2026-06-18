@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../../api/client";
 import type {
+  Check,
   Connection,
   Dataset,
   VizType,
@@ -10,7 +11,11 @@ import type {
   WidgetType,
 } from "../../api/types";
 import Markdown from "../Markdown";
-import { Modal } from "../ui";
+import { Modal, SeverityDot } from "../ui";
+import StatusMatrixWidget from "./StatusMatrixWidget";
+import TrendWidget from "./TrendWidget";
+
+const MAX_MATRIX_CHECKS = 25;
 
 const STATUS_OPTIONS = ["open", "acknowledged", "expected", "resolved", "muted"];
 const SEVERITY_OPTIONS = ["info", "warn", "error"];
@@ -201,6 +206,89 @@ function FilterForm({
   );
 }
 
+/** Searchable, dataset-grouped multi-select over active checks for the status
+ *  matrix. Picking checks across different datasets/connections is the point, so
+ *  the picker is never scoped to one dataset. Capped at 25 with a live counter. */
+function CheckPicker({
+  checks,
+  selected,
+  onChange,
+}: {
+  checks: Check[];
+  selected: number[];
+  onChange: (ids: number[]) => void;
+}) {
+  const [q, setQ] = useState("");
+  const sel = new Set(selected);
+  const atCap = selected.length >= MAX_MATRIX_CHECKS;
+  const needle = q.trim().toLowerCase();
+  const filtered = needle
+    ? checks.filter(
+        (c) => c.name.toLowerCase().includes(needle) || c.dataset_name.toLowerCase().includes(needle),
+      )
+    : checks;
+
+  const groups = new Map<string, Check[]>();
+  for (const c of filtered) {
+    const g = groups.get(c.dataset_name) ?? [];
+    g.push(c);
+    groups.set(c.dataset_name, g);
+  }
+
+  const toggle = (id: number) => {
+    if (sel.has(id)) onChange(selected.filter((x) => x !== id));
+    else if (!atCap) onChange([...selected, id]);
+  };
+
+  return (
+    <div className="cd-field">
+      <span>
+        Checks ({selected.length}/{MAX_MATRIX_CHECKS}) — across any datasets / connections
+      </span>
+      <input
+        type="text"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder="Search checks…"
+      />
+      <div className="cd-check-picker">
+        {[...groups.entries()].map(([ds, cs]) => (
+          <div key={ds} className="cd-check-group">
+            <div className="cd-check-group-head">{ds}</div>
+            {cs.map((c) => {
+              const on = sel.has(c.id);
+              return (
+                <label key={c.id} className={`cd-check-row${!on && atCap ? " disabled" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    disabled={!on && atCap}
+                    onChange={() => toggle(c.id)}
+                  />
+                  <SeverityDot severity={c.severity} />
+                  <span className="cd-check-name" title={c.name}>
+                    {c.name}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        ))}
+        {checks.length === 0 && (
+          <div className="empty" style={{ padding: 8 }}>
+            No active checks yet.
+          </div>
+        )}
+        {checks.length > 0 && filtered.length === 0 && (
+          <div className="empty" style={{ padding: 8 }}>
+            No checks match “{q}”.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** Build a sensible default config for a freshly added widget of `type`. */
 function defaultWidget(type: WidgetType, id: string): Widget {
   const base = { id, title: "", span: 1 as const };
@@ -215,6 +303,10 @@ function defaultWidget(type: WidgetType, id: string): Widget {
       return { ...base, title: "SQL", span: 2, type, config: { connection_id: 0, sql: "SELECT 1 AS n", viz: { type: "number", x: null, y: null } } };
     case "note":
       return { ...base, title: "Note", type, config: { markdown: "" } };
+    case "status_matrix":
+      return { ...base, title: "Status matrix", span: 2, type, config: { check_ids: [], days: 14 } };
+    case "trend":
+      return { ...base, title: "New exceptions trend", type, config: { params: { status: "open" }, days: 30 } };
   }
 }
 
@@ -247,6 +339,11 @@ export default function WidgetConfigModal({
     queryFn: () => api.get<Connection[]>("/connections"),
     enabled: draft.type === "sql",
   });
+  const { data: checks } = useQuery({
+    queryKey: ["checks", "active"],
+    queryFn: () => api.get<Check[]>("/checks?status=active"),
+    enabled: draft.type === "status_matrix",
+  });
 
   const dsList = datasets ?? [];
 
@@ -258,7 +355,7 @@ export default function WidgetConfigModal({
     <Modal
       title={`Configure ${draft.type} widget`}
       onClose={onClose}
-      wide={draft.type === "sql" || draft.type === "note"}
+      wide={draft.type === "sql" || draft.type === "note" || draft.type === "status_matrix"}
       footer={
         <>
           {saveError && <span className="cd-modal-error">{saveError}</span>}
@@ -388,6 +485,59 @@ export default function WidgetConfigModal({
         </>
       )}
 
+      {draft.type === "status_matrix" && (
+        <>
+          <CheckPicker
+            checks={checks ?? []}
+            selected={draft.config.check_ids}
+            onChange={(check_ids) =>
+              patchConfig<typeof draft>((d) => ({ ...d, config: { ...d.config, check_ids } }))
+            }
+          />
+          <label className="cd-field">
+            <span>Window (UTC days)</span>
+            <select
+              value={draft.config.days}
+              onChange={(e) =>
+                patchConfig<typeof draft>((d) => ({
+                  ...d,
+                  config: { ...d.config, days: Number(e.target.value) as 7 | 14 | 30 },
+                }))
+              }
+            >
+              <option value={7}>7 days</option>
+              <option value={14}>14 days</option>
+              <option value={30}>30 days</option>
+            </select>
+          </label>
+        </>
+      )}
+
+      {draft.type === "trend" && (
+        <>
+          <FilterForm
+            params={draft.config.params}
+            datasets={dsList}
+            onChange={(params) => patchConfig<typeof draft>((d) => ({ ...d, config: { ...d.config, params } }))}
+          />
+          <label className="cd-field">
+            <span>Window (days, 1–90)</span>
+            <input
+              type="number"
+              min={1}
+              max={90}
+              value={draft.config.days}
+              onChange={(e) =>
+                patchConfig<typeof draft>((d) => ({
+                  ...d,
+                  config: { ...d.config, days: Math.max(1, Math.min(90, Number(e.target.value) || 1)) },
+                }))
+              }
+            />
+          </label>
+        </>
+      )}
+
       {draft.type === "sql" && (
         <>
           <label className="cd-field">
@@ -480,6 +630,22 @@ export default function WidgetConfigModal({
             />
           )}
         </>
+      )}
+
+      {/* Live preview — render the real widget with the current config so the
+          analyst sees the matrix/trend before saving (matters more here than for
+          a single metric). */}
+      {draft.type === "status_matrix" && (
+        <div className="cd-preview">
+          <div className="cd-preview-label">Preview</div>
+          <StatusMatrixWidget widget={draft} />
+        </div>
+      )}
+      {draft.type === "trend" && (
+        <div className="cd-preview">
+          <div className="cd-preview-label">Preview</div>
+          <TrendWidget widget={draft} />
+        </div>
       )}
     </Modal>
   );

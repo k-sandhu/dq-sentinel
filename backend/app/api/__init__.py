@@ -14,6 +14,7 @@ from app.api import (
     docs,
     exceptions_api,
     incidents,
+    insights,
     knowledge,
     mcp,
     monitors,
@@ -39,6 +40,7 @@ api_router.include_router(checks.router)
 api_router.include_router(runs.router)
 api_router.include_router(exceptions_api.router)
 api_router.include_router(incidents.router)
+api_router.include_router(insights.router)
 api_router.include_router(rca.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(query.router)

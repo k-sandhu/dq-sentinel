@@ -9,6 +9,10 @@ export default function ExceptionsPage() {
   const [params, setParams] = useSearchParams();
   const runId = params.get("run_id") ? Number(params.get("run_id")) : undefined;
   const datasetFilter = params.get("dataset_id") ? Number(params.get("dataset_id")) : undefined;
+  // check_id pins the workspace to one check (e.g. the "My work" failing-now
+  // deep-link). Other URL filters (status/assignee/recurrence) are read by the
+  // workspace itself; these three pinned ids are passed as props.
+  const checkId = params.get("check_id") ? Number(params.get("check_id")) : undefined;
 
   const { data: datasets } = useQuery({
     queryKey: ["datasets"],
@@ -76,7 +80,7 @@ export default function ExceptionsPage() {
           </span>
         </div>
       )}
-      <ExceptionsTriage datasetId={datasetFilter} runId={runId} />
+      <ExceptionsTriage datasetId={datasetFilter} runId={runId} checkId={checkId} />
     </div>
   );
 }

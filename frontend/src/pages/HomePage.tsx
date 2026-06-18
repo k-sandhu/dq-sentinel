@@ -84,12 +84,18 @@ function scoreStyle(score: number | null | undefined): CSSProperties {
 function trendDelta(history: ScorecardHistoryPoint[]) {
   const scored = history.filter((p) => p.score != null);
   if (scored.length >= 2) {
+    const first = scored[0];
+    const last = scored[scored.length - 1];
+    const spanDays = Math.max(
+      1,
+      Math.round((Date.parse(last.snapshot_date) - Date.parse(first.snapshot_date)) / 86_400_000),
+    );
     return {
-      label: "history delta",
-      value: (scored[scored.length - 1].score ?? 0) - (scored[0].score ?? 0),
+      label: `${spanDays}-day delta`,
+      value: (last.score ?? 0) - (first.score ?? 0),
     };
   }
-  return { label: "trend delta", value: null };
+  return { label: "Score delta", value: null };
 }
 
 function datasetDriverLink(datasetId: number | null | undefined): string | null {
@@ -129,19 +135,29 @@ function ScoreMetric({
   value,
   hint,
   tone,
+  to,
 }: {
   label: string;
   value: string;
   hint?: string;
   tone?: "ok" | "warn" | "danger";
+  to?: string;
 }) {
-  return (
-    <div className={`scorecard-metric ${tone ?? ""}`}>
+  const body = (
+    <>
       <div className="scorecard-metric-label">{label}</div>
       <div className="scorecard-metric-value">{value}</div>
       {hint && <div className="scorecard-metric-hint">{hint}</div>}
-    </div>
+    </>
   );
+  if (to) {
+    return (
+      <Link to={to} className={`scorecard-metric ${tone ?? ""}`}>
+        {body}
+      </Link>
+    );
+  }
+  return <div className={`scorecard-metric ${tone ?? ""}`}>{body}</div>;
 }
 
 function ScoreCell({ score }: { score: number | null | undefined }) {
@@ -208,11 +224,12 @@ function ScorecardTopBand({
           value={fmtDelta(delta.value)}
           tone={delta.value == null ? undefined : delta.value < 0 ? "danger" : "ok"}
         />
-        <ScoreMetric label="Active checks" value={fmtNum(activeChecks)} />
+        <ScoreMetric label="Active checks" value={fmtNum(activeChecks)} to="/checks?status=active" />
         <ScoreMetric
           label="Open exceptions"
           value={fmtNum(openExceptions)}
           tone={openExceptions ? "danger" : "ok"}
+          to="/exceptions"
         />
       </div>
     </div>
@@ -442,7 +459,6 @@ function RollupTable({
                 <th className="num">Datasets</th>
                 <th className="num">Breached</th>
                 <th className="num">Open exceptions</th>
-                <th />
               </tr>
             </thead>
             <tbody>
@@ -460,9 +476,6 @@ function RollupTable({
                   </td>
                   <td className="num" style={{ color: row.open_exceptions ? "var(--danger-dark)" : undefined, fontWeight: row.open_exceptions ? 700 : 400 }}>
                     {fmtNum(row.open_exceptions)}
-                  </td>
-                  <td className="num">
-                    <span className="scorecard-row-sub">-</span>
                   </td>
                 </tr>
               ))}
@@ -565,10 +578,15 @@ function OperationalCountsPanel({
         <EmptyState title="No operational data" hint="Dashboard counts are unavailable." />
       ) : (
         <div className="scorecard-ops-grid">
-          <ScoreMetric label="Datasets monitored" value={fmtNum(dashboard.datasets)} />
-          <ScoreMetric label="Failing checks" value={fmtNum(dashboard.failing_checks)} tone={dashboard.failing_checks ? "danger" : "ok"} />
-          <ScoreMetric label="Runs in 24h" value={fmtNum(dashboard.runs_24h)} />
-          <ScoreMetric label="7-day pass rate" value={fmtPct(dashboard.pass_rate_7d)} />
+          <ScoreMetric label="Datasets monitored" value={fmtNum(dashboard.datasets)} to="/datasets" />
+          <ScoreMetric
+            label="Failing checks"
+            value={fmtNum(dashboard.failing_checks)}
+            tone={dashboard.failing_checks ? "danger" : "ok"}
+            to="/checks?status=active&last_status=fail&last_status=error"
+          />
+          <ScoreMetric label="Runs in 24h" value={fmtNum(dashboard.runs_24h)} to="/runs?since=24h" />
+          <ScoreMetric label="7-day pass rate" value={fmtPct(dashboard.pass_rate_7d)} to="/runs?since=7d" />
         </div>
       )}
     </div>

@@ -17,6 +17,7 @@ const NAV_GROUPS: {
     label: "Overview",
     items: [
       { to: "/", label: "Home", icon: "home", end: true },
+      { to: "/my-work", label: "My work", icon: "check" },
       { to: "/dashboards", label: "Dashboards", icon: "grid" },
     ],
   },
