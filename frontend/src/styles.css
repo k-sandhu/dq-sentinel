@@ -1318,3 +1318,100 @@ th.star-col, td.star-col { width: 34px; padding-left: 12px; padding-right: 0; te
 .result-grid .grid-null { color: var(--text-light); font-style: italic; }
 .result-grid .grid-empty { padding: 24px; text-align: center; color: var(--text-light); }
 .grid-footnote { font-size: 11.5px; color: var(--text-light); padding: 6px 2px 0; }
+
+/* ---------- docs/features overlay launcher (floats over the main app) ----------
+   The container is sized to just the FAB so it never blocks page content; the
+   menu is absolutely positioned above it. The menu's padding-bottom bridges the
+   gap to the FAB so there's no hover dead-zone on the way up. */
+.doc-launcher { position: fixed; right: 22px; bottom: 22px; z-index: 45; }
+.doc-launcher-fab {
+  width: 50px; height: 50px; border-radius: 50%; padding: 0;
+  background: var(--brand); border: none; color: #fff; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  box-shadow: var(--shadow-pop); transition: background 0.12s ease, transform 0.12s ease;
+}
+.doc-launcher-fab:hover { background: var(--brand-dark); transform: translateY(-1px); }
+.doc-launcher-fab svg { stroke: #fff; }
+.doc-launcher-menu {
+  position: absolute; right: 0; bottom: 100%; width: 290px; padding-bottom: 12px;
+  display: flex; flex-direction: column; gap: 8px;
+  opacity: 0; transform: translateY(6px); pointer-events: none;
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+.doc-launcher:hover .doc-launcher-menu,
+.doc-launcher:focus-within .doc-launcher-menu,
+.doc-launcher.open .doc-launcher-menu { opacity: 1; transform: translateY(0); pointer-events: auto; }
+.doc-launcher-item {
+  display: flex; align-items: flex-start; gap: 11px; padding: 11px 13px;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow); color: var(--text); text-decoration: none;
+}
+.doc-launcher-item:hover { border-color: var(--brand); background: var(--hover); text-decoration: none; }
+.doc-launcher-item svg { stroke: var(--brand); flex: none; margin-top: 1px; }
+.doc-launcher-item strong { display: block; color: var(--text-dark); font-size: 13px; }
+.doc-launcher-item em { display: block; font-style: normal; color: var(--text-light); font-size: 11.5px; margin-top: 2px; }
+
+/* ---------- standalone reference pages (/docs, /features) ---------- */
+.info-shell { min-height: 100vh; background: var(--bg); display: flex; flex-direction: column; }
+.info-topbar {
+  position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 18px;
+  height: 56px; padding: 0 22px; background: var(--topbar-bg);
+  backdrop-filter: blur(6px); border-bottom: 1px solid var(--border);
+}
+.info-brand { display: inline-flex; align-items: center; gap: 9px; font-weight: 800; font-size: 16px; color: var(--text-dark); }
+.info-brand:hover { text-decoration: none; }
+.info-nav { display: flex; gap: 6px; }
+.info-tab {
+  display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px;
+  border-radius: 7px; font-weight: 600; font-size: 13px; color: var(--text);
+}
+.info-tab:hover { background: var(--hover); text-decoration: none; }
+.info-tab svg { stroke: var(--text-light); }
+.info-tab.active { background: var(--brand); color: #fff; }
+.info-tab.active svg { stroke: #fff; }
+.info-back { margin-left: auto; }
+.info-main { width: 100%; max-width: 1180px; margin: 0 auto; padding: 26px 32px 64px; }
+
+/* docs: rail + rendered markdown */
+.docs-layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 22px; align-items: start; }
+.docs-rail { padding: 8px; position: sticky; top: 78px; display: flex; flex-direction: column; gap: 2px; }
+.docs-rail-item { padding: 8px 10px; border-radius: 6px; font-size: 13px; color: var(--text); }
+.docs-rail-item:hover { background: var(--hover); text-decoration: none; }
+.docs-rail-item.active { background: var(--brand-light); color: var(--brand-dark); font-weight: 600; }
+.docs-content { padding: 24px 30px; min-width: 0; }
+.doc-meta { border-bottom: 1px solid var(--border-light); padding-bottom: 12px; margin-bottom: 4px; }
+.doc-meta h1 { font-size: 22px; }
+.doc-meta .sub { color: var(--text-light); font-size: 12.5px; margin-top: 4px; }
+
+/* features: section cards */
+.features-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 18px; align-items: start; }
+.feature-section-head { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 14px; }
+.feature-section-icon {
+  width: 36px; height: 36px; border-radius: 9px; flex: none;
+  background: var(--brand-light); display: inline-flex; align-items: center; justify-content: center;
+}
+.feature-section-icon svg { stroke: var(--brand-dark); }
+.feature-section-head h2 { font-size: 15px; }
+.feature-section-head .sub { color: var(--text-light); font-size: 12.5px; margin-top: 2px; }
+.feature-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.feature-item { border-top: 1px solid var(--border-light); padding-top: 12px; }
+.feature-item:first-child { border-top: none; padding-top: 0; }
+.feature-item-head { display: flex; align-items: center; gap: 8px; }
+.feature-item-title { font-weight: 600; color: var(--text-dark); font-size: 13.5px; }
+.feature-item-desc { color: var(--text); font-size: 12.5px; line-height: 1.55; margin: 4px 0 0; }
+.feature-item-links { display: flex; gap: 14px; margin-top: 7px; }
+.feature-link { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; color: var(--brand); }
+.feature-link svg { stroke: var(--brand); }
+
+@media (max-width: 760px) {
+  .docs-layout { grid-template-columns: 1fr; }
+  .docs-rail { position: static; flex-direction: row; flex-wrap: wrap; }
+  .docs-content { padding: 18px 18px; }
+  .info-main { padding: 18px 14px 48px; }
+  .info-topbar { gap: 10px; padding: 0 12px; }
+  .info-brand { font-size: 14px; }
+  .info-tab { padding: 6px 9px; }
+  .doc-launcher { right: 16px; bottom: 16px; }
+  .doc-launcher-menu { width: min(72vw, 290px); }
+}
+

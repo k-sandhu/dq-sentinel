@@ -38,6 +38,7 @@ services:
       DQ_LLM_MODEL: ${DQ_LLM_MODEL:-}
     volumes:
       - ./samples:/data/samples:ro # register with dsn sqlite:////data/samples/shopdb.sqlite
+      - ./docs:/docs:ro # in-app /docs documentation browser reads markdown from here
     ports:
       - "8000:8000"
     depends_on:
