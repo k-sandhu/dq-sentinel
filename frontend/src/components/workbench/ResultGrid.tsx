@@ -141,6 +141,7 @@ export default function ResultGrid({
                     <input
                       type="text"
                       className="grid-filter"
+                      aria-label={`Filter ${header.column.id}`}
                       placeholder="filter…"
                       value={(header.column.getFilterValue() as string) ?? ""}
                       onChange={(e) => header.column.setFilterValue(e.target.value)}

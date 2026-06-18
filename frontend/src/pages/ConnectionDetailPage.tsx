@@ -156,9 +156,11 @@ export default function ConnectionDetailPage() {
               {datasets.map((d) => (
                 <tr key={d.id} className="clickable" onClick={() => navigate(`/datasets/${d.id}`)}>
                   <td><StatusPill value={d.health} /></td>
-                  <td style={{ fontWeight: 700, color: "var(--text-dark)" }}>
-                    {d.schema_name ? `${d.schema_name}.` : ""}
-                    {d.table_name}
+                  <td style={{ fontWeight: 700 }}>
+                    <Link to={`/datasets/${d.id}`} className="row-title-link" onClick={(e) => e.stopPropagation()}>
+                      {d.schema_name ? `${d.schema_name}.` : ""}
+                      {d.table_name}
+                    </Link>
                   </td>
                   <td className="num">{fmtNum(d.row_count)}</td>
                   <td className="num">{fmtNum(d.active_checks)}</td>

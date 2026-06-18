@@ -151,6 +151,7 @@ export default function DetailPanel({
             </div>
             <input
               type="text"
+              aria-label="Triage note"
               placeholder="Optional note (applied with the next status change)"
               value={note}
               onChange={(e) => setNote(e.target.value)}
@@ -222,6 +223,7 @@ export default function DetailPanel({
             <div className="xw-comment-composer">
               <input
                 type="text"
+                aria-label="Add a comment"
                 placeholder="Add a comment…"
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}

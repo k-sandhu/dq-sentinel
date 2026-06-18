@@ -342,6 +342,7 @@ export default function IncidentsPage() {
         >
           <input
             type="text"
+            aria-label="Filter incidents"
             value={qDraft}
             onChange={(e) => setQDraft(e.target.value)}
             placeholder="Filter title, check, external ref"
@@ -391,7 +392,16 @@ export default function IncidentsPage() {
                 {rows.map((incident) => (
                   <tr key={incident.id} className="clickable" onClick={() => setSelected(incident)}>
                     <td>
-                      <div className="incident-title">{incident.title}</div>
+                      <button
+                        type="button"
+                        className="incident-title-btn incident-title"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelected(incident);
+                        }}
+                      >
+                        {incident.title}
+                      </button>
                       <div className="incident-sub">
                         {incident.dataset_name || "unknown dataset"} - {incident.check_name || "unknown check"}
                       </div>

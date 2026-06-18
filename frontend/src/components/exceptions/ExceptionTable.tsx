@@ -103,6 +103,8 @@ export default function ExceptionTable({
           <button
             className="small ghost icon-only"
             aria-label="Column visibility"
+            aria-haspopup="menu"
+            aria-expanded={gearOpen}
             title="Columns"
             onClick={() => setGearOpen((o) => !o)}
           >

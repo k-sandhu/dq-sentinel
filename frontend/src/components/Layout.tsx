@@ -406,6 +406,7 @@ export default function Layout() {
   const location = useLocation();
   return (
     <div className="app">
+      <a href="#main-content" className="skip-link">Skip to main content</a>
       <aside className="sidebar">
         <Link to="/" className="logo" aria-label="DQ Sentinel — home">
           <span className="logo-mark">
@@ -452,7 +453,7 @@ export default function Layout() {
           </button>
         </div>
       </aside>
-      <main className="main">
+      <main className="main" id="main-content" tabIndex={-1}>
         <div className="topbar">
           <FleetHealthPill />
           <GlobalSearch />

@@ -23,7 +23,7 @@ import type {
   LineageNode,
 } from "../api/types";
 import { lineageDestLabel, lineageNodeHref } from "../lib/lineageNav";
-import { EmptyState, Icon, StatusPill } from "./ui";
+import { activateOnKey, EmptyState, Icon, StatusPill } from "./ui";
 
 type Granularity = "table" | "column";
 type FocusMode = "none" | "upstream" | "downstream" | "both";
@@ -374,6 +374,7 @@ function LineageCanvas({
         <div className="lf-search">
           <Icon name="search" size={13} />
           <input
+            aria-label="Search lineage"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && jumpToSearch()}
@@ -577,7 +578,14 @@ function OverviewPanel({
           ) : (
             <div className="dense-list">
               {attention.slice(0, 60).map((n) => (
-                <div key={n.id} className="dense-item clickable" onClick={() => onPick(n.id)}>
+                <div
+                  key={n.id}
+                  className="dense-item clickable"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onPick(n.id)}
+                  onKeyDown={activateOnKey(() => onPick(n.id))}
+                >
                   <div className="lf-att-title">
                     <span className="lf-att-name">{tableLabel(n)}</span>
                     <StatusPill value={n.health} />
