@@ -101,6 +101,24 @@ a:hover { text-decoration: underline; }
 h1, h2, h3, h4 { color: var(--text-dark); margin: 0; font-weight: 700; }
 code, pre { font-family: var(--mono); font-size: 12.5px; }
 
+/* Visually-hidden but screen-reader-available (labels, skip-link text). */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+/* Skip-to-content link (a11y): first focusable element, hidden off-screen until
+   focused so keyboard users can jump past the sidebar nav straight to the page. */
+.skip-link {
+  position: fixed; top: -64px; left: 12px; z-index: 100;
+  background: var(--brand); color: #fff; font-weight: 700;
+  padding: 9px 16px; border-radius: 0 0 8px 8px; box-shadow: var(--shadow-pop);
+  transition: top 0.15s ease;
+}
+.skip-link:focus { top: 0; text-decoration: none; outline: 2px solid var(--brand-dark); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .skip-link { transition: none; } }
+.main:focus { outline: none; }
+
 /* ---------- app frame ---------- */
 .app { display: flex; height: 100vh; overflow: hidden; }
 .sidebar {
@@ -552,6 +570,10 @@ html[data-theme="dark"] .modal-backdrop { background: rgba(0, 0, 0, 0.55); }
 .incident-search { display: flex; gap: 8px; align-items: center; margin-left: auto; flex-wrap: wrap; }
 .incident-search input { min-width: 240px; }
 .incident-title { font-weight: 700; color: var(--text-dark); overflow-wrap: anywhere; }
+/* Title rendered as a button so keyboard users can open the incident panel; the
+   reset strips button chrome so it still reads as the row's bold title. */
+.incident-title-btn { display: inline; padding: 0; border: none; background: none; min-height: 0; text-align: left; cursor: pointer; }
+.incident-title-btn:hover { color: var(--brand-dark); }
 .incident-sub { color: var(--text-light); font-size: 11.5px; margin-top: 2px; }
 .incident-refs, .incident-links { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .incident-links a { font-size: 12px; font-weight: 600; white-space: nowrap; }

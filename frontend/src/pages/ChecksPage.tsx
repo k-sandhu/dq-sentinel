@@ -65,6 +65,7 @@ export default function ChecksPage() {
       <div className="toolbar">
         <input
           type="text"
+          aria-label="Search checks"
           placeholder="Search checks by name, column, type or dataset…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}

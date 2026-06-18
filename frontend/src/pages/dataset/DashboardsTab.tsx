@@ -6,7 +6,7 @@ import { canEdit, useAuth } from "../../auth";
 import { useConfirm } from "../../components/confirm";
 import ErrorBoundary from "../../components/ErrorBoundary";
 import PanelChart from "../../components/PanelChart";
-import { EmptyState, ErrorBox, Icon, Spinner } from "../../components/ui";
+import { activateOnKey, EmptyState, ErrorBox, Icon, Spinner } from "../../components/ui";
 import { fmtDateTime } from "../../lib/format";
 
 function PanelCard({ panel }: { panel: Panel }) {
@@ -16,7 +16,13 @@ function PanelCard({ panel }: { panel: Panel }) {
     <div className="card card-pad" style={isNumber ? { gridColumn: "span 1" } : { gridColumn: "span 2" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
         <h3 style={{ marginBottom: 2 }}>{panel.title}</h3>
-        <button className="ghost small" title="Show SQL" onClick={() => setShowSql(!showSql)}>
+        <button
+          className="ghost small"
+          aria-label={showSql ? "Hide SQL" : "Show SQL"}
+          aria-expanded={showSql}
+          title="Show SQL"
+          onClick={() => setShowSql(!showSql)}
+        >
           <Icon name="book" size={12} />
         </button>
       </div>
@@ -114,7 +120,11 @@ export default function DashboardsTab({ datasetId, hasProfile }: { datasetId: nu
               <div
                 key={m.id}
                 className="clickable"
+                role="button"
+                tabIndex={0}
+                aria-pressed={openId === m.id}
                 onClick={() => setOpenId(m.id)}
+                onKeyDown={activateOnKey(() => setOpenId(m.id))}
                 style={{
                   padding: "8px 10px",
                   borderRadius: 6,

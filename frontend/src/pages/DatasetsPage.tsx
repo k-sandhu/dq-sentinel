@@ -114,6 +114,7 @@ export default function DatasetsPage() {
       <div className="toolbar">
         <input
           type="text"
+          aria-label="Search datasets"
           placeholder="Search by table, connection, owner, domain or team…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -201,6 +202,7 @@ export default function DatasetsPage() {
                       type="button"
                       className="ghost icon-only star-btn"
                       aria-pressed={favSet.has(d.id)}
+                      aria-label={favSet.has(d.id) ? `Remove ${d.table_name} from favorites` : `Add ${d.table_name} to favorites`}
                       title={favSet.has(d.id) ? "Remove from favorites" : "Add to favorites"}
                       onClick={(e) => onToggleFav(e, d.id)}
                     >
@@ -208,9 +210,11 @@ export default function DatasetsPage() {
                     </button>
                   </td>
                   <td><StatusPill value={d.health} /></td>
-                  <td style={{ fontWeight: 700, color: "var(--text-dark)" }}>
-                    {d.schema_name ? `${d.schema_name}.` : ""}
-                    {d.table_name}
+                  <td style={{ fontWeight: 700 }}>
+                    <Link to={`/datasets/${d.id}`} className="row-title-link" onClick={(e) => e.stopPropagation()}>
+                      {d.schema_name ? `${d.schema_name}.` : ""}
+                      {d.table_name}
+                    </Link>
                   </td>
                   <td style={{ color: "var(--text-light)" }}>{d.connection_name}</td>
                   <td style={{ color: "var(--text-light)", fontSize: 12 }}>{d.owner ?? "—"}</td>

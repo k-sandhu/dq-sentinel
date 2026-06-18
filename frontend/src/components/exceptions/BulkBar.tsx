@@ -62,6 +62,7 @@ export default function BulkBar({
       </select>
       <input
         type="text"
+        aria-label="Bulk triage note"
         placeholder="Optional note"
         value={note}
         onChange={(e) => setNote(e.target.value)}

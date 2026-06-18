@@ -286,6 +286,7 @@ function SavedQueriesRail({
       <h3 style={{ marginBottom: 8 }}>Saved queries</h3>
       <input
         type="text"
+        aria-label="Search saved queries"
         value={search}
         placeholder="Search name / description"
         onChange={(e) => setSearch(e.target.value)}

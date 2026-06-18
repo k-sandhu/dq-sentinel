@@ -96,6 +96,7 @@ export default function DatasetDetailPage() {
             type="button"
             className={`icon-only star-btn${fav ? " on" : ""}`}
             aria-pressed={fav}
+            aria-label={fav ? "Remove from favorites" : "Add to favorites"}
             title={fav ? "Remove from favorites" : "Add to favorites"}
             onClick={() => {
               setFav(toggleFavorite(datasetId)); // optimistic; dq:prefs keeps siblings in sync
