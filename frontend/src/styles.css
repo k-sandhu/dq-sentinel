@@ -719,66 +719,107 @@ details.step .body { padding: 4px 12px 10px; }
 .lineage-note { font-size: 11.5px; color: var(--text-light); margin-top: 6px; }
 
 /* --- Lineage Explorer 2.0 (#107) --- */
-.lf-root { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.lf-root { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
 .lf-root.fullscreen {
   position: fixed; inset: 0; z-index: 80; background: var(--bg); padding: 14px;
 }
+
+/* Toolbar — search grows on the left, filters grouped in the middle, view
+   actions pinned right. Selects are toned down so the bar doesn't read as a
+   wall of raw form controls. */
 .lf-toolbar {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  background: var(--card2); border: 1px solid var(--border-light); border-radius: 7px;
-  padding: 8px 10px;
+  background: var(--card); border: 1px solid var(--border-light); border-radius: 10px;
+  padding: 8px 10px; box-shadow: var(--shadow);
 }
-.lf-toolbar select, .lf-toolbar input { margin-top: 0; min-height: 30px; font-size: 12.5px; }
-.lf-search { display: flex; align-items: center; gap: 6px; min-width: min(420px, 100%); flex: 1; }
-.lf-search input { flex: 1; min-width: 160px; padding-left: 8px; }
-.lf-body {
-  display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 12px; min-height: 560px;
+.lf-toolbar select {
+  margin-top: 0; width: auto; min-height: 32px; font-size: 12.5px; font-weight: 600;
+  color: var(--text-dark); background: var(--card2); border-color: var(--border-light); cursor: pointer;
 }
+.lf-toolbar select:hover { border-color: var(--border); }
+.lf-search {
+  display: flex; align-items: center; gap: 7px; flex: 1 1 280px; min-width: 220px; color: var(--text-light);
+  background: var(--card2); border: 1px solid var(--border-light); border-radius: 8px; padding: 0 8px;
+}
+.lf-search:focus-within { border-color: var(--brand); box-shadow: 0 0 0 2px var(--brand-light); color: var(--brand); }
+.lf-search input { flex: 1; min-width: 110px; margin-top: 0; border: none; background: transparent; padding: 7px 0; color: var(--text-dark); }
+.lf-search input:focus { border: none; box-shadow: none; }
+.lf-filters { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.lf-tool-right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+/* Granularity rendered as a true segmented control rather than loose chips. */
+.lf-seg { background: var(--card2); border: 1px solid var(--border-light); border-radius: 8px; padding: 2px; gap: 2px; }
+.lf-seg .filter-chip { border: none; background: transparent; min-height: 26px; border-radius: 6px; text-transform: capitalize; color: var(--text); }
+.lf-seg .filter-chip.on { background: var(--brand); color: #fff; box-shadow: var(--shadow); }
+
+/* Body — canvas + side rail. */
+.lf-body { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 12px; min-height: 560px; }
 .lf-canvas {
-  height: min(72vh, 760px); min-height: 520px; border: 1px solid var(--border-light);
-  border-radius: 7px; overflow: hidden; background: var(--card2);
+  height: min(72vh, 760px); min-height: 520px; border: 1px solid var(--border);
+  border-radius: 10px; overflow: hidden; background: var(--card2);
 }
 .lf-root.fullscreen .lf-canvas { height: calc(100vh - 120px); }
+
+/* Nodes — health shown as a left accent rail (color), a StatusPill (word), and a
+   toned count line, so the signal survives both color-blindness and a quick scan. */
 .lf-node {
-  border: 1px solid var(--border); border-radius: 8px; background: var(--card);
-  box-shadow: var(--shadow); padding: 10px 12px; width: 100%; height: 100%;
-  transition: opacity 0.12s, border-color 0.12s, box-shadow 0.12s;
+  position: relative; overflow: hidden; width: 100%; height: 100%;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--card);
+  box-shadow: var(--shadow); padding: 9px 12px 9px 14px;
+  transition: transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
 }
+.lf-node::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--slate); }
 .lf-node.table { width: 224px; height: 76px; }
 .lf-node.column { width: 250px; height: 62px; }
-.lf-node.pass { border-color: var(--ok); }
-.lf-node.warn { border-color: var(--warn-strong); }
-.lf-node.fail { border-color: var(--danger); }
-.lf-node.dim { opacity: 0.28; }
-.lf-node.hit { box-shadow: 0 0 0 3px var(--brand-light), var(--shadow); }
-.lf-node-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
-.lf-node-title { color: var(--text-dark); font-weight: 800; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lf-node-meta { color: var(--text-light); font-size: 11.5px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lf-node-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-light); font-size: 10.5px; margin-top: 7px; text-transform: uppercase; letter-spacing: 0.3px; }
+.lf-node.pass::before { background: var(--ok); }
+.lf-node.warn::before { background: var(--warn-strong); }
+.lf-node.fail::before { background: var(--danger); }
+.lf-node:hover { border-color: var(--brand-light); box-shadow: var(--shadow-pop); transform: translateY(-1px); }
+.lf-node.dim { opacity: 0.3; }
+.lf-node.hit { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-light), var(--shadow-pop); }
+.lf-node-top { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.lf-node-icon { flex-shrink: 0; display: inline-flex; color: var(--text-light); }
+.lf-node-title { flex: 1; min-width: 0; color: var(--text-dark); font-weight: 800; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lf-node-meta { color: var(--text-light); font-size: 11.5px; margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lf-node-meta.alert { color: var(--danger-dark); font-weight: 700; }
+.lf-node-meta.watch { color: #9a6a16; font-weight: 700; }
+.lf-node-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; color: var(--text-light); font-size: 10px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; }
+.lf-node-owner { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+html[data-theme="dark"] .lf-node-meta.watch { color: #ecb277; }
+
+/* Side rail (detail / overview). */
 .lf-panel {
-  border: 1px solid var(--border); border-radius: 7px; background: var(--card); box-shadow: var(--shadow);
+  border: 1px solid var(--border); border-radius: 10px; background: var(--card); box-shadow: var(--shadow);
   min-width: 0; max-height: min(72vh, 760px); overflow: hidden; display: flex; flex-direction: column;
 }
-.lf-panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border-light); }
-.lf-panel-head h3 { margin: 0 0 2px; font-size: 14px; }
-.lf-panel-body { padding: 14px; display: flex; flex-direction: column; gap: 15px; overflow-y: auto; }
-.lf-kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.lf-kpis > div { border: 1px solid var(--border-light); border-radius: 6px; padding: 10px; background: var(--card2); }
-.lf-kpis strong { display: block; color: var(--text-dark); font-size: 22px; line-height: 1; }
-.lf-kpis span { display: block; color: var(--text-light); font-size: 11px; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.4px; }
-.lf-panel-section { display: flex; flex-direction: column; gap: 6px; }
-.lf-panel-label { font-size: 11px; font-weight: 800; letter-spacing: 0.6px; text-transform: uppercase; color: var(--text-light); }
+.lf-panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 13px 15px; border-bottom: 1px solid var(--border-light); }
+.lf-panel-head h3 { margin: 0 0 2px; font-size: 14.5px; }
+.lf-panel-body { padding: 15px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }
+.lf-kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.lf-kpis > div { border: 1px solid var(--border-light); border-radius: 8px; padding: 11px 12px; background: var(--card2); }
+.lf-kpis strong { display: block; color: var(--text-dark); font-size: 23px; line-height: 1; }
+.lf-kpis span { display: block; color: var(--text-light); font-size: 10.5px; margin-top: 5px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; }
+.lf-panel-section { display: flex; flex-direction: column; gap: 7px; }
+.lf-panel-label { font-size: 10.5px; font-weight: 800; letter-spacing: 0.6px; text-transform: uppercase; color: var(--text-light); }
 .lf-panel-badges { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; }
 .lf-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .lf-open { width: 100%; justify-content: center; }
 .lf-att-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .lf-att-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dark); font-weight: 700; }
 .lf-legend { margin-top: 0; }
-.react-flow__node { border-radius: 8px; }
+
+/* React Flow chrome — hide the connection handles (the graph is read-only, so
+   the default dots were pure noise) and theme the controls / minimap. */
+.react-flow__node { border-radius: 10px; }
+.react-flow__handle { opacity: 0; width: 1px; height: 1px; min-width: 0; min-height: 0; border: none; background: transparent; pointer-events: none; }
+.react-flow__edge-path { transition: stroke 0.12s ease, stroke-width 0.12s ease; }
 .react-flow__edge-textbg { fill: var(--card); }
-.react-flow__edge-text { fill: var(--text-light); font-size: 11px; font-weight: 700; }
-.react-flow__controls, .react-flow__minimap { box-shadow: var(--shadow); border: 1px solid var(--border-light); }
-.react-flow__controls-button { background: var(--card); border-bottom-color: var(--border-light); }
+.react-flow__edge-text { fill: var(--text-light); font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px; }
+.react-flow__controls { border-radius: 8px; overflow: hidden; box-shadow: var(--shadow); border: 1px solid var(--border-light); }
+.react-flow__controls-button { background: var(--card); border-bottom-color: var(--border-light); fill: var(--text); }
+.react-flow__controls-button:hover { background: var(--hover); fill: var(--brand-dark); }
+.react-flow__minimap { border-radius: 8px; box-shadow: var(--shadow); border: 1px solid var(--border-light); }
+.react-flow__attribution { background: transparent; font-size: 9px; }
+.react-flow__attribution a { color: var(--text-light); }
 html[data-theme="dark"] .react-flow__minimap { background: var(--card); }
 @media (max-width: 1100px) {
   .lf-body { grid-template-columns: 1fr; }

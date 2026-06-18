@@ -119,17 +119,23 @@ function TableNode({ data }: NodeProps<FlowNode>) {
   const counts: string[] = [];
   if (node.failing_checks) counts.push(`${node.failing_checks} failing`);
   if (node.open_exceptions) counts.push(`${node.open_exceptions} open`);
+  // Tone the count line so an at-risk table reads at a glance (the left accent
+  // rail carries the same signal as color; StatusPill carries it as a word).
+  const tone = node.health === "fail" ? "alert" : node.health === "warn" ? "watch" : "";
   return (
     <div className={`lf-node table ${node.health} ${data.dim ? "dim" : ""} ${data.highlight ? "hit" : ""}`}>
       <Handle type="target" position={Position.Left} />
       <div className="lf-node-top">
-        <span className="lf-node-title">{shortLabel(data.label, 32)}</span>
+        <span className="lf-node-icon"><Icon name={node.kind === "view" ? "graph" : "table"} size={13} /></span>
+        <span className="lf-node-title">{shortLabel(data.label, 28)}</span>
         <StatusPill value={node.health} />
       </div>
-      <div className="lf-node-meta">{shortLabel(counts.length ? counts.join(" · ") : data.meta, 42)}</div>
+      <div className={`lf-node-meta ${counts.length ? tone : ""}`}>
+        {shortLabel(counts.length ? counts.join(" · ") : data.meta, 40)}
+      </div>
       <div className="lf-node-foot">
         <span>{node.kind}</span>
-        {node.owner && <span>{shortLabel(node.owner, 20)}</span>}
+        {node.owner && <span className="lf-node-owner">{shortLabel(node.owner, 18)}</span>}
       </div>
       <Handle type="source" position={Position.Right} />
     </div>
@@ -143,10 +149,11 @@ function ColumnNode({ data }: NodeProps<FlowNode>) {
     <div className={`lf-node column ${table.health} ${data.dim ? "dim" : ""} ${data.highlight ? "hit" : ""}`}>
       <Handle type="target" position={Position.Left} />
       <div className="lf-node-top">
-        <span className="lf-node-title">{shortLabel(data.column.column, 34)}</span>
+        <span className="lf-node-icon"><Icon name="rows" size={13} /></span>
+        <span className="lf-node-title">{shortLabel(data.column.column, 28)}</span>
         <span className="badge kind">{data.column.dtype || "unknown"}</span>
       </div>
-      <div className="lf-node-meta">{shortLabel(tableLabel(table), 42)}</div>
+      <div className="lf-node-meta">{shortLabel(tableLabel(table), 40)}</div>
       <div className="lf-node-foot">
         <span>{data.column.nullable ? "nullable" : "required"}</span>
         <StatusPill value={table.health} />
@@ -162,7 +169,9 @@ function edgeTone(kind?: string) {
   if (kind === "aggregate") return "var(--purple)";
   if (kind === "derived") return "var(--brand-dark)";
   if (kind === "unresolved") return "var(--warn-strong)";
-  return "var(--border-light)";
+  // --slate (#b8c0c8) reads clearly on both light and dark canvases; the previous
+  // --border-light was so pale that direct edges were effectively invisible.
+  return "var(--slate)";
 }
 
 function toFlow(
@@ -260,11 +269,11 @@ function toFlow(
         source: edge.source,
         target: edge.target,
         animated: active,
-        markerEnd: { type: MarkerType.ArrowClosed, color: active ? "var(--brand)" : edgeTone(edge.kind) },
+        markerEnd: { type: MarkerType.ArrowClosed, color: active ? "var(--brand)" : edgeTone(edge.kind), width: 16, height: 16 },
         style: {
           stroke: active ? "var(--brand)" : edgeTone(edge.kind),
-          strokeWidth: active ? 2.4 : 1.6,
-          opacity: dim ? 0.18 : 1,
+          strokeWidth: active ? 2.6 : 1.75,
+          opacity: dim ? 0.16 : 1,
         },
         label: granularity === "column" && edge.kind !== "direct" ? edge.kind : undefined,
         data: edge,
@@ -372,7 +381,7 @@ function LineageCanvas({
     <div className={`lf-root${fullscreen ? " fullscreen" : ""}`}>
       <div className="lf-toolbar">
         <div className="lf-search">
-          <Icon name="search" size={13} />
+          <Icon name="search" size={14} />
           <input
             aria-label="Search lineage"
             value={search}
@@ -380,47 +389,56 @@ function LineageCanvas({
             onKeyDown={(e) => e.key === "Enter" && jumpToSearch()}
             placeholder={granularity === "column" ? "Search table.column" : "Search table, owner, importance"}
           />
-          <button className="small" onClick={jumpToSearch} disabled={searchMatches.size === 0}>
+          <button className="ghost small" onClick={jumpToSearch} disabled={searchMatches.size === 0}>
             Jump
           </button>
         </div>
-        <select value={healthFilter} onChange={(e) => setHealthFilter(e.target.value as HealthFilter)} aria-label="Health filter">
-          <option value="all">all health</option>
-          <option value="attention">fail or warn</option>
-          <option value="fail">fail</option>
-          <option value="warn">warn</option>
-          <option value="pass">pass</option>
-          <option value="unknown">unknown</option>
-        </select>
-        <select value={schemaFilter} onChange={(e) => setSchemaFilter(e.target.value)} aria-label="Schema filter">
-          {schemas.map((s) => <option key={s} value={s}>{s === "all" ? "all schemas" : s}</option>)}
-        </select>
-        <select value={focusMode} onChange={(e) => setFocusMode(e.target.value as FocusMode)} aria-label="Focus mode">
-          <option value="none">no focus</option>
-          <option value="upstream">upstream</option>
-          <option value="downstream">downstream</option>
-          <option value="both">up + down</option>
-        </select>
-        {onDepthChange && (
-          <select value={depth ?? 2} onChange={(e) => onDepthChange(Number(e.target.value))} aria-label="Depth">
-            {[1, 2, 3, 4, 5].map((d) => <option key={d} value={d}>{d} hop{d === 1 ? "" : "s"}</option>)}
+        <div className="lf-filters">
+          <select value={healthFilter} onChange={(e) => setHealthFilter(e.target.value as HealthFilter)} aria-label="Health filter">
+            <option value="all">all health</option>
+            <option value="attention">fail or warn</option>
+            <option value="fail">fail</option>
+            <option value="warn">warn</option>
+            <option value="pass">pass</option>
+            <option value="unknown">unknown</option>
           </select>
-        )}
-        {onGranularityChange && (
-          <div className="chip-row">
-            {(["table", "column"] as const).map((g) => (
-              <button key={g} className={`filter-chip${granularity === g ? " on" : ""}`} onClick={() => onGranularityChange(g)}>
-                {g}
-              </button>
-            ))}
-          </div>
-        )}
-        <button className="small" onClick={() => reactFlow.fitView({ padding: 0.18, duration: 250 })}>
-          Fit
-        </button>
-        <button className="small" onClick={() => setFullscreen((v) => !v)}>
-          {fullscreen ? "Exit full" : "Full"}
-        </button>
+          <select value={schemaFilter} onChange={(e) => setSchemaFilter(e.target.value)} aria-label="Schema filter">
+            {schemas.map((s) => <option key={s} value={s}>{s === "all" ? "all schemas" : s}</option>)}
+          </select>
+          <select value={focusMode} onChange={(e) => setFocusMode(e.target.value as FocusMode)} aria-label="Focus mode">
+            <option value="none">no focus</option>
+            <option value="upstream">upstream</option>
+            <option value="downstream">downstream</option>
+            <option value="both">up + down</option>
+          </select>
+          {onDepthChange && (
+            <select value={depth ?? 2} onChange={(e) => onDepthChange(Number(e.target.value))} aria-label="Depth">
+              {[1, 2, 3, 4, 5].map((d) => <option key={d} value={d}>{d} hop{d === 1 ? "" : "s"}</option>)}
+            </select>
+          )}
+          {onGranularityChange && (
+            <div className="chip-row lf-seg" role="group" aria-label="Granularity">
+              {(["table", "column"] as const).map((g) => (
+                <button
+                  key={g}
+                  className={`filter-chip${granularity === g ? " on" : ""}`}
+                  aria-pressed={granularity === g}
+                  onClick={() => onGranularityChange(g)}
+                >
+                  {g}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="lf-tool-right">
+          <button className="small" onClick={() => reactFlow.fitView({ padding: 0.18, duration: 250 })}>
+            Fit
+          </button>
+          <button className="small" onClick={() => setFullscreen((v) => !v)}>
+            {fullscreen ? "Exit full" : "Full"}
+          </button>
+        </div>
       </div>
 
       <div className="lf-body">
@@ -439,9 +457,9 @@ function LineageCanvas({
               if (href) navigate(href);
             }}
           >
-            <Background gap={18} size={1} />
+            <Background gap={20} size={1} />
             <Controls showInteractive={false} />
-            <MiniMap pannable zoomable nodeColor={(n) => {
+            <MiniMap pannable zoomable nodeStrokeWidth={0} nodeBorderRadius={3} nodeColor={(n) => {
               const d = n.data as FlowData;
               const health = d.kind === "table" ? d.node.health : d.table.health;
               return health === "fail" ? "#ed6e6e" : health === "warn" ? "#e8a541" : health === "pass" ? "#84bb4c" : "#b8c0c8";
