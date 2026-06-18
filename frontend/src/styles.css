@@ -317,6 +317,12 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
 .scorecard-metric.warn .scorecard-metric-value { color: var(--warn-strong); }
 .scorecard-metric.danger .scorecard-metric-value { color: var(--danger-dark); }
 .scorecard-metric-hint { color: var(--text-light); font-size: 12px; margin-top: 1px; }
+a.scorecard-metric {
+  text-decoration: none; color: inherit; display: block;
+  transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
+}
+a.scorecard-metric:hover { border-color: var(--brand-light); background: var(--hover-soft); }
+a.scorecard-metric:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 .scorecard-dashboard-grid {
   display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
   gap: 16px; margin-bottom: 16px; align-items: stretch;
