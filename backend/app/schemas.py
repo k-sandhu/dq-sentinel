@@ -1125,6 +1125,9 @@ MAX_WIDGETS = 12  # quota policy; per-tenant quotas (multi-tenancy track) hook h
 MAX_DATASET_IDS = 20  # checks-widget cap; same quota posture
 MAX_NOTE_CHARS = 5_000
 SNAPSHOT_ROW_CAP = 200  # rows persisted per sql-widget snapshot (quota policy)
+MAX_MATRIX_CHECKS = 25  # status-matrix widget / insights check-matrix cap (cost bound)
+MATRIX_DAYS = (7, 14, 30)  # allowed check-matrix windows (UTC days)
+MAX_SERIES_DAYS = 90  # exception-series window cap (cost bound)
 
 Visibility = Literal["private", "team"]
 WidgetSpan = Literal[1, 2]
@@ -1230,8 +1233,56 @@ class NoteWidget(WidgetBase):
     config: NoteWidgetConfig
 
 
+class StatusMatrixWidgetConfig(BaseModel):
+    """Checks (possibly across datasets/connections) x recent UTC days. The
+    renderer fetches ``GET /insights/check-matrix`` with these ids; ``days`` is
+    one of the allowed windows. Cross-connection is free — all check runs live in
+    one app DB, so "checks from different databases" is just ``check_id IN (...)``.
+    """
+
+    check_ids: list[int] = []
+    days: Literal[7, 14, 30] = 14
+
+    @field_validator("check_ids")
+    @classmethod
+    def _cap_ids(cls, v: list[int]) -> list[int]:
+        if len(v) > MAX_MATRIX_CHECKS:
+            raise ValueError(f"At most {MAX_MATRIX_CHECKS} checks per status-matrix widget")
+        return v
+
+
+class StatusMatrixWidget(WidgetBase):
+    type: Literal["status_matrix"] = "status_matrix"
+    config: StatusMatrixWidgetConfig
+
+
+class TrendWidgetConfig(BaseModel):
+    """New-exceptions-per-day for an exceptions filter — the trend #67 deferred.
+    ``params`` shares the metric/exceptions widget allowlist; the renderer fetches
+    ``GET /insights/exception-series`` with them."""
+
+    params: dict[str, str] = {}
+    days: int = Field(default=30, ge=1, le=MAX_SERIES_DAYS)
+
+    @field_validator("params")
+    @classmethod
+    def _params_ok(cls, v: dict[str, str]) -> dict[str, str]:
+        return _validate_param_keys(v)
+
+
+class TrendWidget(WidgetBase):
+    type: Literal["trend"] = "trend"
+    config: TrendWidgetConfig
+
+
 Widget = Annotated[
-    MetricWidget | ExceptionsWidget | ChecksWidget | SqlWidget | NoteWidget,
+    MetricWidget
+    | ExceptionsWidget
+    | ChecksWidget
+    | SqlWidget
+    | NoteWidget
+    | StatusMatrixWidget
+    | TrendWidget,
     Field(discriminator="type"),
 ]
 
@@ -1286,6 +1337,40 @@ class CustomDashboardMeta(ORMModel):
 class CustomDashboardOut(CustomDashboardMeta):
     layout: DashboardLayout = DashboardLayout()
     can_edit: bool = False  # owner or admin — drives the builder Edit toggle
+
+
+# --- insights API (issue #69): curated app-metadata aggregates ---
+class CheckMatrixCell(BaseModel):
+    """One UTC day for one check. ``status`` is the WORST run status that day
+    (precedence error > fail > warn > pass); None means no run that day."""
+
+    status: RunStatus | None = None
+    runs: int = 0  # runs that day (tooltip data)
+
+
+class CheckMatrixRow(BaseModel):
+    check_id: int
+    check_name: str
+    dataset_id: int  # for the "open this check's dataset" row link
+    dataset_name: str
+    connection_name: str
+    severity: str
+    cells: list[CheckMatrixCell]  # parallel to ``CheckMatrixOut.columns``
+
+
+class CheckMatrixOut(BaseModel):
+    columns: list[str]  # ISO dates, oldest -> newest, UTC days
+    rows: list[CheckMatrixRow]
+
+
+class SeriesPoint(BaseModel):
+    t: str  # ISO date (UTC day)
+    value: int
+
+
+class ExceptionSeriesOut(BaseModel):
+    points: list[SeriesPoint]  # one per UTC day in the window, oldest -> newest
+    total: int  # new exceptions in the window (sum of points)
 
 
 # --- global search (issue #43) ---
