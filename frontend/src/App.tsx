@@ -18,6 +18,7 @@ import HomePage from "./pages/HomePage";
 import IncidentsPage from "./pages/IncidentsPage";
 import LineagePage from "./pages/LineagePage";
 import LoginPage from "./pages/LoginPage";
+import MyWorkPage from "./pages/MyWorkPage";
 import ReliabilityPage from "./pages/ReliabilityPage";
 import RunDetailPage from "./pages/RunDetailPage";
 import RunsPage from "./pages/RunsPage";
@@ -83,6 +84,7 @@ export default function App() {
             </LandingRedirect>
           }
         />
+        <Route path="/my-work" element={<MyWorkPage />} />
         <Route path="/dashboards" element={<DashboardsListPage />} />
         <Route path="/dashboards/:id" element={<CustomDashboardPage />} />
         <Route path="/connections" element={<ConnectionsPage />} />

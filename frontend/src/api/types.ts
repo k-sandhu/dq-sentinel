@@ -526,6 +526,25 @@ export interface Dashboard {
   worst_datasets: Dataset[];
 }
 
+// ---- daily operating console / "My work" (#64) ----
+export interface DatasetMover {
+  dataset_id: number;
+  dataset_name: string;
+  opened_24h: number;
+  resolved_24h: number;
+  open_total: number;
+}
+
+export interface DashboardConsole {
+  new_exceptions_24h: number;
+  resolved_24h: number;
+  regressed_open: number;
+  assigned_to_me_open: number;
+  open_total: number;
+  failing_now: Check[];
+  movers: DatasetMover[];
+}
+
 // ---- executive scorecards (issues #118-#120) ----
 export type ScorecardSloStatus = "met" | "at_risk" | "breached" | "unknown" | "disabled";
 export type ScorecardSloTargetSource = "explicit" | "importance_default" | "disabled";

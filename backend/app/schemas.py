@@ -1038,6 +1038,28 @@ class DashboardOut(BaseModel):
     worst_datasets: list[DatasetOut]
 
 
+class DatasetMover(BaseModel):
+    dataset_id: int
+    dataset_name: str
+    opened_24h: int
+    resolved_24h: int
+    open_total: int
+
+
+class DashboardConsoleOut(BaseModel):
+    """Analyst's 9am work queue (#64): rolling-24h counters (NOT calendar days),
+    what's failing right now, and the datasets with the most new exceptions. All
+    "24h" numbers are rolling windows from utcnow(), labeled "last 24h" in the UI."""
+
+    new_exceptions_24h: int
+    resolved_24h: int
+    regressed_open: int
+    assigned_to_me_open: int
+    open_total: int
+    failing_now: list[CheckOut]
+    movers: list[DatasetMover]
+
+
 # --- DDL & lineage (issue #51) ---
 class DatasetDdlOut(BaseModel):
     """Source definition of a dataset's table/view.
