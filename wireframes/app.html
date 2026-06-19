@@ -63,6 +63,7 @@
           <button data-set-dir="editorial"><span class="sw sw-editorial"></span>Editorial</button>
         </div>
         <button class="icon-btn" data-theme-toggle title="Toggle light/dark"><span data-theme-icon>☾</span></button>
+        <button class="icon-btn" data-nav="welcome" title="Get started / tour"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.8.4-1 .8-1 1.7"/><path d="M12 17v.5"/></svg></button>
         <button class="icon-btn" title="Notifications"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span class="notif">3</span></button>
       </div>
     </header>
@@ -96,6 +97,10 @@
           <div class="card">
             <div class="card-head"><h3>Check results — last 24h</h3><span class="dim-cap">9,841 passed · 64 failed · 12 degraded</span></div>
             <div class="card-body">
+              <div class="row between" style="margin-bottom:6px"><span class="dim-cap" style="font-weight:700">Pass rate vs failures (30d)</span><div class="legend"><span><i class="brand"></i>pass rate</span><span><i class="danger"></i>failures</span></div></div>
+              <div class="chartbox tall" data-chart="area" data-values="97,96,98,97,99,98,96,94,97,98,99,97,95,96,98,99,98,97,96,94,93,96,97,96" data-values2="2,3,1,2,1,2,4,7,3,2,1,3,6,4,2,1,2,3,5,8,9,4,3,6"></div>
+              <div class="divider"></div>
+              <div class="dim-cap" style="font-weight:700;margin-bottom:6px">Hourly sweep status</div>
               <div class="heat" id="homeHeat" style="grid-template-columns:repeat(24,1fr);margin-bottom:18px"></div>
               <div class="divider"></div>
               <div class="row between" style="margin-bottom:10px"><h3 style="font-size:13px">Quality by dimension</h3><span class="dim-cap">6 DQ dimensions</span></div>
@@ -179,6 +184,9 @@
                 <tr data-open-drawer="excDrawer"><td><span class="strong">row volume −22%</span></td><td><span class="badge kind">volume</span></td><td class="num">—</td><td>8m</td></tr>
               </tbody>
             </table></div></div>
+            <div class="card"><div class="card-head"><h3>Row volume — anomaly that triggered</h3><span class="dim-cap">shaded = expected band</span></div><div class="card-body">
+              <div class="chartbox tall" data-chart="line" data-values="100,104,98,102,99,101,103,100,97,99,78,74" data-band="92:108"></div>
+            </div></div>
             <div class="card"><div class="card-head"><h3>Impact — affected & downstream</h3></div><div class="card-body">
               <div class="lineage"><div class="lnode fail"><span class="badge-status fail">!</span><div class="t">orders</div><div class="m">3 failing</div></div><div class="ledge fail"></div><div class="lnode warn"><div class="t">daily_revenue</div><div class="m">at risk</div></div><div class="ledge"></div><div class="lnode warn"><div class="t">exec_dashboard</div><div class="m">revenue KPI</div></div></div>
             </div></div>
@@ -313,7 +321,7 @@
         </div></div>
 
         <div data-tabpanel="ds:checks"><div class="card">
-          <div class="card-head"><h3>Checks (14)</h3><div class="row"><span class="badge ai">3 AI-proposed</span><button class="btn sm">Export as YAML</button><button class="btn sm primary" data-nav="generate">+ Generate with AI</button></div></div>
+          <div class="card-head"><h3>Checks (14)</h3><div class="row"><span class="badge ai">3 AI-proposed</span><button class="btn sm" data-open-drawer="checkDrawer">+ New check</button><button class="btn sm primary" data-nav="generate">+ Generate with AI</button></div></div>
           <div class="table-wrap"><table class="tbl">
             <thead><tr><th>Check</th><th>Type</th><th>Column</th><th>Schedule</th><th>Status</th></tr></thead>
             <tbody>
@@ -387,7 +395,7 @@
     <!-- ============ CHECKS ============ -->
     <section data-route="checks">
       <div class="page">
-        <div class="page-head"><div><h1>Checks</h1><div class="sub">218 across 34 datasets · 13 check types</div></div><div class="row"><button class="btn">Export as YAML</button><button class="btn primary" data-nav="generate"><span class="badge ai">AI</span> Generate checks</button></div></div>
+        <div class="page-head"><div><h1>Checks</h1><div class="sub">218 across 34 datasets · 13 check types</div></div><div class="row"><button class="btn" data-open-drawer="checkDrawer">+ New check</button><button class="btn">Export as YAML</button><button class="btn primary" data-nav="generate"><span class="badge ai">AI</span> Generate checks</button></div></div>
         <div class="grid cols-4" style="margin-bottom:16px">
           <div class="card kpi"><div class="label">Passing</div><div class="value ok">211</div></div>
           <div class="card kpi"><div class="label">Failing</div><div class="value danger">7</div></div>
@@ -525,6 +533,11 @@
             <div class="tool-call"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12l5 5L20 6"/></svg> <span>recent_failures</span> <span class="mono">dataset=orders</span> <span class="pill ok" style="margin-left:auto">3 checks</span></div>
             <div class="tool-call"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/></svg> <span class="mono">run_sql</span> <span class="mono" style="color:var(--text-mut)">SELECT … WHERE total_amount &lt; 0</span> <span class="pill neutral" style="margin-left:auto">18 rows</span></div>
             <div>The range check on <code>total_amount</code> started failing at 09:14 with <b>18 rows below 0</b>, all <code>status='refunded'</code> — expected modelling, not corruption.</div>
+            <div class="tool-call"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19V5M4 19h16M8 16v-5M13 16V8M18 16v-9"/></svg> <span class="mono">render_chart</span> <span class="mono" style="color:var(--text-mut)">negative-amount rows, last 24h</span></div>
+            <div class="card pad" style="margin-top:4px">
+              <div class="row between" style="margin-bottom:6px"><span class="dim-cap" style="font-weight:700">Negative-amount rows / hour</span><div class="legend"><span><i class="brand"></i>count</span></div></div>
+              <div class="chartbox" data-chart="bars" data-values="0,0,0,0,0,0,0,0,0,3,5,4,2,1,2,1,0,0,0,0,0,0,0,0" data-hot="9,10,11"></div>
+            </div>
             <div class="row" style="margin-top:12px"><button class="btn sm primary">Mark 18 expected</button><button class="btn sm">Create check excluding refunds</button><button class="btn sm" data-nav="incident">Open incident</button></div>
           </div></div>
         </div>
@@ -602,6 +615,44 @@
       </div>
     </section>
 
+    <!-- ============ WELCOME / ONBOARDING ============ -->
+    <section data-route="welcome">
+      <div class="page">
+        <div class="hero-band" style="margin-bottom:22px">
+          <h1>Data quality with agents that investigate your data — not just watch it.</h1>
+          <p>Open and self-hostable. Read-only by design. Your LLM or ours, across 9 SQL engines. Get to your first caught issue in minutes.</p>
+          <div class="row" style="margin-top:18px"><button class="btn" data-nav="connections">Connect a source</button><button class="btn ghost" data-nav="home">Skip — explore the demo</button></div>
+        </div>
+        <div class="split">
+          <div class="card pad">
+            <h3 style="margin-bottom:14px">Get started in 5 steps</h3>
+            <div class="steps">
+              <div class="step done"><span class="num">✓</span><span><div class="st">Connect a data source</div><div class="sd">SQLite · DuckDB · Postgres · MySQL · SQL Server · Snowflake · BigQuery · Trino · ClickHouse</div></span><button class="btn sm" data-nav="connections">Open</button></div>
+              <div class="step done"><span class="num">✓</span><span><div class="st">Register datasets</div><div class="sd">Pick the tables &amp; views to monitor</div></span><button class="btn sm" data-nav="datasets">Open</button></div>
+              <div class="step on"><span class="num">3</span><span><div class="st">Profile &amp; generate checks</div><div class="sd">Heuristics + an LLM that explores your data first, then proposes checks</div></span><button class="btn sm primary" data-nav="generate">Generate</button></div>
+              <div class="step"><span class="num">4</span><span><div class="st">Schedule &amp; run</div><div class="sd">A worker runs checks and captures violating rows as exceptions</div></span><button class="btn sm" data-nav="checks">Open</button></div>
+              <div class="step"><span class="num">5</span><span><div class="st">Triage &amp; teach</div><div class="sd">Mark expected → feeds the knowledge base so it learns your data</div></span><button class="btn sm" data-nav="exceptions">Open</button></div>
+            </div>
+          </div>
+          <div class="stack">
+            <div class="card"><div class="card-head"><h3>Why DQ Sentinel</h3></div><div class="card-body stack" style="gap:10px">
+              <div class="row" style="gap:10px"><span class="pill ok">read-only</span><span class="dim-cap">every query passes guard_sql()</span></div>
+              <div class="row" style="gap:10px"><span class="pill accent">your LLM</span><span class="dim-cap">Anthropic / OpenAI-compat / OpenRouter / local</span></div>
+              <div class="row" style="gap:10px"><span class="pill info">self-hosted</span><span class="dim-cap">runs in your VPC, nothing leaves</span></div>
+              <div class="row" style="gap:10px"><span class="badge ai">exploration agent</span><span class="dim-cap">writes SQL to learn the data before proposing checks</span></div>
+            </div></div>
+            <!-- empty-state example -->
+            <div class="card"><div class="empty">
+              <div class="eic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg></div>
+              <h3>No datasets yet</h3>
+              <p>Connect a source and register a table to start profiling. Empty states everywhere ladder back to the next best action.</p>
+              <button class="btn primary" data-nav="connections">Connect a source</button>
+            </div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
   </div>
 </div>
 
@@ -642,6 +693,43 @@
     </div>
     <div class="divider"></div>
     <div class="row"><button class="btn" data-close-drawer data-nav="incident">Promote to incident</button><button class="btn" data-close-drawer data-nav="dataset"><span class="badge ai">AI</span> Run RCA</button></div>
+  </div>
+</aside>
+
+<!-- ===================== CHECK AUTHORING WIZARD ===================== -->
+<aside class="drawer wide" id="checkDrawer">
+  <div class="drawer-head"><div><div class="dim-cap" style="font-weight:700">orders</div><h3 style="font-size:16px;margin-top:2px">New check</h3></div><button class="icon-btn" data-close-drawer>✕</button></div>
+  <div class="drawer-body stack">
+    <div class="field"><label>Check type</label>
+      <div class="type-grid">
+        <div class="type-opt on"><div class="tt">Range</div><div class="td">numeric min / max bounds</div></div>
+        <div class="type-opt"><div class="tt">Not null</div><div class="td">completeness</div></div>
+        <div class="type-opt"><div class="tt">Unique</div><div class="td">no duplicates</div></div>
+        <div class="type-opt"><div class="tt">Accepted values</div><div class="td">enum set</div></div>
+        <div class="type-opt"><div class="tt">Regex</div><div class="td">pattern match</div></div>
+        <div class="type-opt"><div class="tt">Freshness</div><div class="td">max lag</div></div>
+        <div class="type-opt"><div class="tt">Volume</div><div class="td">row-count delta</div></div>
+        <div class="type-opt"><div class="tt">IsolationForest <span class="badge ai">ML</span></div><div class="td">outlier detection</div></div>
+      </div>
+    </div>
+    <div class="grid cols-2">
+      <div class="field"><label>Column</label><select class="input"><option>total_amount</option><option>status</option><option>created_at</option></select></div>
+      <div class="field"><label>Schedule</label><select class="input"><option>hourly</option><option>every 15 min</option><option>daily</option></select></div>
+      <div class="field"><label>Min</label><input class="input" value="0"></div>
+      <div class="field"><label>Max</label><input class="input" placeholder="(none)"></div>
+      <div class="field"><label>Severity if violated</label><select class="input"><option>Sev1</option><option selected>Sev2</option><option>Sev3</option></select></div>
+      <div class="field"><label>Filter (optional)</label><input class="input mono" value="status != 'refunded'"></div>
+    </div>
+    <div>
+      <div class="dim-cap" style="font-weight:700;margin-bottom:8px">Violation SQL preview · guard_sql() enforced</div>
+      <pre class="code-pane"><span class="k">SELECT</span> * <span class="k">FROM</span> orders
+<span class="k">WHERE</span> total_amount &lt; 0
+  <span class="k">AND</span> status != <span class="s">'refunded'</span>
+<span class="k">LIMIT</span> 500;</pre>
+    </div>
+    <div class="note info">Dry-run on the last sample found <b>0 violating rows</b> — this check would pass today.</div>
+    <div class="divider"></div>
+    <div class="row"><button class="btn primary" data-close-drawer>Create check</button><button class="btn">Dry run</button><button class="btn ghost" data-close-drawer>Cancel</button></div>
   </div>
 </aside>
 
