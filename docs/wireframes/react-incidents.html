@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="en" data-dir="aurora" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DQ Sentinel — Incidents (real React)</title>
+<!-- Reuses the SAME design-token system as the rest of the wireframes. -->
+<link rel="stylesheet" href="assets/app.css">
+<!-- React 18 + Babel (in-browser JSX). This file is a self-contained wireframe and
+     is fully ISOLATED from the actual app in frontend/ — it imports nothing from it
+     and is imported by nothing in it. Needs internet at view-time for the CDN. -->
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
+<style>
+  .dir-switch { display: inline-flex; gap: 2px; padding: 3px; background: var(--bg-2); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); }
+  .dir-switch button { border: none; background: transparent; cursor: pointer; font-family: var(--font); font-weight: 700; font-size: 11.5px; color: var(--text-mut); padding: 5px 10px; border-radius: calc(var(--radius-sm) - 2px); display: flex; align-items: center; gap: 6px; }
+  .dir-switch button.on { background: var(--card); color: var(--text-dim); box-shadow: var(--shadow); }
+  .dir-switch .sw { width: 9px; height: 9px; border-radius: 3px; }
+  .sw-aurora { background: #2f8fe6; } .sw-graphite { background: #2fb6a3; } .sw-editorial { background: #5b5bd6; }
+  .toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 80; background: var(--inverse-bg); color: #fff; padding: 11px 18px; border-radius: var(--radius); box-shadow: var(--shadow-pop); font-weight: 650; font-size: 13px; display: flex; gap: 10px; align-items: center; }
+  .modal-card { position: fixed; z-index: 60; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 540px; max-width: 94vw; }
+  .selectable tbody tr.sel { background: var(--brand-ghost); }
+  .react-badge { font-size: 10.5px; font-weight: 800; color: #61dafb; border: 1px solid currentColor; border-radius: 5px; padding: 1px 7px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useReducer, useState, useEffect, useRef } = React;
+
+/* ============================================================================
+   demo data — consistent with the static wireframes (orders scenario)
+   ============================================================================ */
+const OWNER = { orders: "revenue@", customers: "growth@", payments: "payments@", events_raw: "product@" };
+const DOWNSTREAM = { orders: ["daily_revenue", "exec_dashboard"], customers: ["cohorts"], payments: ["finance_close"], events_raw: [] };
+
+const initialState = {
+  view: "inbox",          // inbox | incidents | incident
+  currentId: null,
+  toast: null,
+  seq: 205,               // next incident number
+  exceptions: [
+    { id: "EX-9001", title: "Negative total_amount", dataset: "orders", check: "range", kind: "value", sev: 1, rows: 18, seen: "11m", status: "open" },
+    { id: "EX-9002", title: "Freshness ≤ 1h breached", dataset: "orders", check: "freshness", kind: "freshness", sev: 2, rows: 0, seen: "9m", status: "open" },
+    { id: "EX-9003", title: "Row volume −22%", dataset: "orders", check: "volume", kind: "volume", sev: 2, rows: 0, seen: "8m", status: "open" },
+    { id: "EX-9004", title: "Invalid email format", dataset: "customers", check: "regex", kind: "value", sev: 2, rows: 4, seen: "1h", status: "acknowledged" },
+    { id: "EX-9005", title: "Amount distribution shift", dataset: "payments", check: "isolation_forest", ml: true, kind: "ml", sev: 3, rows: 3, seen: "2h", status: "grouped", incidentId: "INC-202" },
+  ],
+  incidents: [
+    { id: "INC-202", code: "INC-202", title: "payments distribution shift", sev: 3, datasets: ["payments"], status: "open", owner: "payments@", age: "2h",
+      timeline: [{ t: "2h ago", what: "Incident opened — ML anomaly on amount", tone: "warn" }], rca: { state: "idle" } },
+    { id: "INC-203", code: "INC-203", title: "customers load missed SLA", sev: 2, datasets: ["customers"], status: "investigating", owner: "growth@", age: "6h",
+      timeline: [{ t: "6h ago", what: "Incident opened — freshness SLA breach", tone: "warn" }, { t: "5h ago", what: "K. Patel set status → Investigating", tone: "" }], rca: { state: "idle" } },
+  ],
+};
+
+/* group correlated exceptions: same dataset (lineage) within the time window + open */
+function correlate(ids, exceptions) {
+  const picked = exceptions.filter(e => ids.includes(e.id) && e.status !== "grouped");
+  const keys = new Set(picked.map(e => e.dataset));
+  return exceptions.filter(e => e.status !== "grouped" && e.incidentId == null && keys.has(e.dataset));
+}
+
+function reducer(state, a) {
+  switch (a.type) {
+    case "VIEW": return { ...state, view: a.view, currentId: a.id ?? state.currentId };
+    case "PROMOTE": {
+      const code = "INC-" + state.seq;
+      const datasets = [...new Set(a.group.map(e => e.dataset))];
+      const sev = Math.min(...a.group.map(e => e.sev));
+      const title = datasets[0] === "orders" ? "Negative amounts + freshness on orders" : `${a.group.map(e => e.kind).join(" + ")} on ${datasets.join(", ")}`;
+      const inc = {
+        id: code, code, title, sev, datasets, status: "open", owner: OWNER[datasets[0]] || "—", age: "just now",
+        memberIds: a.group.map(e => e.id),
+        downstream: [...new Set(datasets.flatMap(d => DOWNSTREAM[d] || []))],
+        timeline: [
+          { t: "now", what: `Incident opened from ${a.group.length} alerts`, tone: "danger" },
+          { t: "now", what: "Correlated by lineage + 5h window + issue type", tone: "warn" },
+          { t: "now", what: `Routed to #${(OWNER[datasets[0]] || "data").replace("@", "")}-oncall · PagerDuty`, tone: "" },
+        ],
+        rca: { state: "idle" },
+      };
+      const exceptions = state.exceptions.map(e => a.group.find(g => g.id === e.id) ? { ...e, status: "grouped", incidentId: code } : e);
+      return { ...state, exceptions, incidents: [inc, ...state.incidents], seq: state.seq + 1, view: "incident", currentId: code,
+        toast: `${code} created · ${a.group.length} alerts grouped` };
+    }
+    case "ASSIGN": return mapInc(state, a.id, i => ({ ...i, owner: a.owner, timeline: [...i.timeline, { t: "now", what: `Assigned to ${a.owner}`, tone: "" }] }), `Assigned to ${a.owner}`);
+    case "STATUS": return mapInc(state, a.id, i => ({ ...i, status: a.status, timeline: [...i.timeline, { t: "now", what: `Status → ${a.status}`, tone: a.status === "resolved" ? "ok" : "" }] }), `Status set to ${a.status}`);
+    case "RCA_START": return mapInc(state, a.id, i => ({ ...i, rca: { state: "running", steps: [] }, timeline: [...i.timeline, { t: "now", what: "RCA agent investigating…", tone: "" }] }));
+    case "RCA_STEP": return mapInc(state, a.id, i => ({ ...i, rca: { ...i.rca, steps: [...(i.rca.steps || []), a.step] } }));
+    case "RCA_DONE": return mapInc(state, a.id, i => ({ ...i, rca: { state: "done", steps: i.rca.steps, ...a.result }, timeline: [...i.timeline, { t: "now", what: "RCA complete — evidence-backed report ready", tone: "ok" }] }), "Root-cause analysis complete");
+    case "RESOLVE": {
+      const s = mapInc(state, a.id, i => ({ ...i, status: "resolved", timeline: [...i.timeline, { t: "now", what: "Incident resolved", tone: "ok" }] }), "Incident resolved");
+      const inc = state.incidents.find(i => i.id === a.id);
+      const exceptions = s.exceptions.map(e => inc?.memberIds?.includes(e.id) ? { ...e, status: "resolved" } : e);
+      return { ...s, exceptions };
+    }
+    case "TOAST": return { ...state, toast: a.msg };
+    case "CLEAR_TOAST": return { ...state, toast: null };
+    default: return state;
+  }
+}
+function mapInc(state, id, fn, toast) {
+  return { ...state, incidents: state.incidents.map(i => i.id === id ? fn(i) : i), ...(toast ? { toast } : {}) };
+}
+
+/* ============================================================================
+   small presentational helpers
+   ============================================================================ */
+const Sev = ({ n }) => <span className={`sev s${n}`}>Sev{n}</span>;
+const StatusPill = ({ s }) => {
+  const tone = { open: "info", investigating: "accent", resolved: "ok" }[s] || "neutral";
+  return <span className={`pill ${tone}`}>{s}</span>;
+};
+
+function MiniChart({ values, band }) {
+  const W = 100, H = 38, pad = 3;
+  const lo = Math.min(...values), hi = Math.max(...values), span = (hi - lo) || 1;
+  const X = i => pad + (i / (values.length - 1)) * (W - 2 * pad);
+  const Y = v => H - pad - ((v - lo) / span) * (H - 2 * pad);
+  const pts = values.map((v, i) => `${X(i)},${Y(v)}`).join(" ");
+  return (
+    <div className="chartbox tall">
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img">
+        {band && <rect x="0" y={Y(band[1])} width={W} height={Y(band[0]) - Y(band[1])} style={{ fill: "var(--brand)", opacity: .07 }} />}
+        <line x1="0" y1={H - pad} x2={W} y2={H - pad} style={{ stroke: "var(--border-soft)" }} strokeWidth="0.5" />
+        <polyline points={pts} fill="none" style={{ stroke: "var(--brand)" }} strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" />
+        <circle cx={X(values.length - 1)} cy={Y(values[values.length - 1])} r="1.7" style={{ fill: "var(--danger)" }} />
+      </svg>
+    </div>
+  );
+}
+
+function Timeline({ items }) {
+  return <div className="tl">{items.map((it, i) =>
+    <div key={i} className={`tl-item ${it.tone}`}>
+      <div className="when">{it.t}</div>
+      <div className="what" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        {it.what.includes("investigating…") && <span className="pulse"></span>}{it.what}
+      </div>
+    </div>)}</div>;
+}
+
+/* ============================================================================
+   screens
+   ============================================================================ */
+function ExceptionsInbox({ state, dispatch }) {
+  const [sel, setSel] = useState([]);
+  const [promote, setPromote] = useState(null);   // {group:[...]}
+  const inbox = state.exceptions.filter(e => e.status !== "grouped" && e.status !== "resolved");
+  const toggle = id => setSel(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
+
+  const openPromote = () => { if (sel.length) setPromote({ group: correlate(sel, state.exceptions) }); };
+
+  return (
+    <div className="page">
+      <div className="page-head">
+        <div><h1>Exceptions</h1><div className="sub">Row-level alerts — select one or more, then promote into a correlated incident</div></div>
+      </div>
+      <div className="card selectable"><div className="table-wrap"><table className="tbl">
+        <thead><tr><th></th><th>Exception</th><th>Sev</th><th>Dataset</th><th className="num">Rows</th><th>Owner</th><th>Status</th></tr></thead>
+        <tbody>{inbox.map(e =>
+          <tr key={e.id} className={sel.includes(e.id) ? "sel" : ""} onClick={() => toggle(e.id)}>
+            <td><input type="checkbox" readOnly checked={sel.includes(e.id)} /></td>
+            <td><span className="strong">{e.title}</span> {e.ml && <span className="badge ai">ML</span>} <span className="badge" style={{ marginLeft: 4 }}>{e.id}</span></td>
+            <td><Sev n={e.sev} /></td><td>{e.dataset}</td><td className="num">{e.rows || "—"}</td><td>{OWNER[e.dataset]}</td>
+            <td><span className={`pill ${e.status === "open" ? "info" : "accent"}`}>{e.status}</span></td>
+          </tr>)}</tbody>
+      </table></div></div>
+      <div className="row" style={{ marginTop: 12 }}>
+        <span className="dim-cap">{sel.length} selected</span>
+        <button className="btn sm">Assign</button><button className="btn sm">Set severity</button>
+        <button className="btn sm primary" disabled={!sel.length} onClick={openPromote}>Promote to incident →</button>
+      </div>
+      {promote && <PromoteDialog group={promote.group} onCancel={() => setPromote(null)}
+        onConfirm={() => { dispatch({ type: "PROMOTE", group: promote.group }); setPromote(null); setSel([]); }} />}
+    </div>
+  );
+}
+
+function PromoteDialog({ group, onCancel, onConfirm }) {
+  const sev = Math.min(...group.map(e => e.sev));
+  const datasets = [...new Set(group.map(e => e.dataset))];
+  return (<>
+    <div className="scrim show" onClick={onCancel}></div>
+    <div className="card modal-card">
+      <div className="card-head"><h3>Promote to incident</h3><button className="icon-btn" onClick={onCancel}>✕</button></div>
+      <div className="card-body stack">
+        <div className="note info">These <b>{group.length} alerts</b> will be grouped into one incident — correlated by <b>lineage + 5h window + issue type</b>. Acknowledge + confirm in one step.</div>
+        <div className="card"><table className="tbl"><tbody>{group.map(e =>
+          <tr key={e.id}><td><Sev n={e.sev} /></td><td><span className="strong">{e.title}</span></td><td>{e.dataset}</td><td><span className="badge kind">{e.check}</span></td></tr>)}</tbody></table></div>
+        <div className="row wrap"><span className="dim-cap">Resulting incident:</span><Sev n={sev} /><span className="badge">{datasets.join(", ")}</span><span className="dim-cap">owner {OWNER[datasets[0]]}</span></div>
+        <div className="row" style={{ justifyContent: "flex-end" }}><button className="btn" onClick={onCancel}>Cancel</button><button className="btn primary" onClick={onConfirm}>Create incident</button></div>
+      </div>
+    </div>
+  </>);
+}
+
+function IncidentsList({ state, dispatch }) {
+  const open = state.incidents.filter(i => i.status !== "resolved").length;
+  return (
+    <div className="page">
+      <div className="page-head"><div><h1>Incidents</h1><div className="sub">{open} open · correlated failures grouped by lineage + time</div></div></div>
+      <div className="card"><div className="table-wrap"><table className="tbl">
+        <thead><tr><th>Incident</th><th>Severity</th><th>Datasets</th><th className="num">Alerts</th><th>Status</th><th>Owner</th><th>Age</th></tr></thead>
+        <tbody>{state.incidents.map(i =>
+          <tr key={i.id} onClick={() => dispatch({ type: "VIEW", view: "incident", id: i.id })}>
+            <td><span className="strong">{i.title}</span> <span className="badge">{i.code}</span></td>
+            <td><Sev n={i.sev} /></td><td>{i.datasets.join(" → ")}</td>
+            <td className="num">{i.memberIds ? i.memberIds.length : 1}</td>
+            <td><StatusPill s={i.status} /></td><td>{i.owner}</td><td>{i.age}</td>
+          </tr>)}</tbody>
+      </table></div></div>
+    </div>
+  );
+}
+
+function IncidentDetail({ state, dispatch }) {
+  const inc = state.incidents.find(i => i.id === state.currentId);
+  const members = state.exceptions.filter(e => inc.memberIds?.includes(e.id));
+  const timers = useRef([]);
+  useEffect(() => () => timers.current.forEach(clearTimeout), []);
+
+  const runRca = () => {
+    dispatch({ type: "RCA_START", id: inc.id });
+    const isOrders = inc.datasets[0] === "orders";
+    const steps = isOrders ? [
+      { when: "query 1 · 18 rows", what: "SELECT * FROM orders WHERE total_amount < 0", mono: true },
+      { when: "query 3 · 18/18 match", what: "…WHERE status='refunded' AND total_amount<0", mono: true },
+      { when: "query 6 · confirmed", what: "each refund maps to a prior paid order by customer_id" },
+    ] : [
+      { when: "query 1", what: "profiling recent partitions vs baseline", mono: false },
+      { when: "query 3", what: "isolating the segment that shifted", mono: false },
+    ];
+    steps.forEach((s, k) => timers.current.push(setTimeout(() => dispatch({ type: "RCA_STEP", id: inc.id, step: s }), 700 * (k + 1))));
+    timers.current.push(setTimeout(() => dispatch({
+      type: "RCA_DONE", id: inc.id, result: isOrders ? {
+        hypothesis: "data modelling",
+        what: "The range check on total_amount began failing at 09:14 with 18 negative rows.",
+        analysis: "All 18 rows are status='refunded' with a matching prior paid order. Refunds are written with negated amounts upstream — modelling, not corruption.",
+        next: "Mark the 18 as expected, or edit the check to exclude refunds.",
+        attribution: [{ label: "status = refunded", pct: 100 }, { label: "amount < 0", pct: 100 }, { label: "has prior order", pct: 100 }],
+      } : {
+        hypothesis: "upstream data shift",
+        what: "An anomaly was detected in the monitored metric.",
+        analysis: "A single segment drove the deviation; upstream volume changed.",
+        next: "Confirm with the data owner; tune the threshold if expected.",
+        attribution: [{ label: "segment = EU", pct: 82 }, { label: "source delay", pct: 61 }],
+      },
+    }), 700 * (steps.length + 1)));
+  };
+
+  const resolved = inc.status === "resolved";
+  return (
+    <div className="page wide">
+      <div className="crumbs"><a onClick={() => dispatch({ type: "VIEW", view: "incidents" })} style={{ cursor: "pointer" }}>Incidents</a> <span>/</span> <span style={{ color: "var(--text-dim)" }}>{inc.code}</span></div>
+      <div className="page-head">
+        <div><h1 className="row" style={{ gap: 10 }}><Sev n={inc.sev} /> {inc.title}</h1><div className="sub">{inc.code} · {inc.memberIds?.length || 1} correlated alerts · grouped by lineage + time</div></div>
+        <div className="row">
+          <select className="input" style={{ width: "auto" }} value={inc.owner} onChange={e => dispatch({ type: "ASSIGN", id: inc.id, owner: e.target.value })}>
+            {["revenue@", "growth@", "payments@", "Amrit K.", "Unassigned"].map(o => <option key={o}>{o}</option>)}
+          </select>
+          <select className="input" style={{ width: "auto" }} value={inc.status} onChange={e => dispatch({ type: "STATUS", id: inc.id, status: e.target.value })}>
+            {["open", "investigating", "resolved"].map(s => <option key={s}>{s}</option>)}
+          </select>
+          {!resolved && <button className="btn primary" onClick={() => dispatch({ type: "RESOLVE", id: inc.id })}>Resolve</button>}
+          {resolved && <span className="pill ok">✓ resolved</span>}
+        </div>
+      </div>
+
+      <div className="grid cols-4" style={{ marginBottom: 18 }}>
+        <div className="card kpi"><div className="label">Status</div><div className="value" style={{ fontSize: 18 }}><StatusPill s={inc.status} /></div></div>
+        <div className="card kpi"><div className="label">Severity</div><div className="value" style={{ fontSize: 18 }}><Sev n={inc.sev} /></div></div>
+        <div className="card kpi"><div className="label">Member alerts</div><div className="value">{inc.memberIds?.length || 1}</div></div>
+        <div className="card kpi"><div className="label">Downstream at risk</div><div className="value warn">{inc.downstream?.length || 0}</div><div className="foot">{(inc.downstream || []).join(", ") || "none"}</div></div>
+      </div>
+
+      <div className="split">
+        <div className="stack">
+          {members.length > 0 && <div className="card"><div className="card-head"><h3>Member alerts</h3></div><div className="table-wrap"><table className="tbl">
+            <thead><tr><th>Alert</th><th>Check</th><th className="num">Rows</th><th>Status</th></tr></thead>
+            <tbody>{members.map(e => <tr key={e.id}><td><span className="strong">{e.title}</span></td><td><span className="badge kind">{e.check}</span></td><td className="num">{e.rows || "—"}</td><td><span className={`pill ${e.status === "resolved" ? "ok" : "neutral"}`}>{e.status}</span></td></tr>)}</tbody>
+          </table></div></div>}
+
+          {inc.datasets[0] === "orders" && <div className="card"><div className="card-head"><h3>Row volume — anomaly that triggered</h3><span className="dim-cap">shaded = expected band</span></div>
+            <div className="card-body"><MiniChart values={[100, 104, 98, 102, 99, 101, 103, 100, 97, 99, 78, 74]} band={[92, 108]} /></div></div>}
+
+          <RcaPanel inc={inc} onRun={runRca} dispatch={dispatch} />
+        </div>
+
+        <div className="stack">
+          <div className="card"><div className="card-head"><h3>Impact</h3></div><div className="card-body">
+            <div className="lineage">
+              <div className="lnode fail"><span className="badge-status fail">!</span><div className="t">{inc.datasets[0]}</div><div className="m">source of failure</div></div>
+              {(inc.downstream || []).map((d, k) => <React.Fragment key={d}><div className={`ledge ${k === 0 ? "fail" : ""}`}></div><div className="lnode warn"><div className="t">{d}</div><div className="m">at risk</div></div></React.Fragment>)}
+            </div>
+            <div className="note warn" style={{ marginTop: 14 }}>Upstream = root cause · downstream = blast radius. {(inc.downstream?.length || 0)} assets affected.</div>
+          </div></div>
+          <div className="card"><div className="card-head"><h3>Timeline</h3></div><div className="card-body"><Timeline items={inc.timeline} /></div></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RcaPanel({ inc, onRun }) {
+  const r = inc.rca || { state: "idle" };
+  return (
+    <div className="card"><div className="card-head"><h3>Root-cause analysis <span className="badge ai">AI agent</span></h3>
+      {r.state === "idle" && <button className="btn sm primary" onClick={onRun}>Run RCA</button>}
+      {r.state === "running" && <span className="row" style={{ gap: 8 }}><span className="pulse"></span><span className="dim-cap">investigating…</span></span>}
+      {r.state === "done" && <span className="pill ok">complete · {(r.steps || []).length} read-only queries</span>}
+    </div>
+    <div className="card-body">
+      {r.state === "idle" && <div className="empty" style={{ padding: "26px 16px" }}><div className="eic"><b style={{ fontSize: 18 }}>◆</b></div><h3 style={{ fontSize: 14 }}>No analysis yet</h3><p>The agent writes read-only SQL (guard_sql()) to investigate, then returns an evidence-backed report.</p></div>}
+      {r.state !== "idle" && <>
+        {r.state === "done" && <div className="row wrap" style={{ gap: 8, marginBottom: 12 }}>
+          <span className="dim-cap" style={{ fontWeight: 700 }}>Verdict:</span>
+          {["bad source data", "data modelling", "ETL failure", "transform bug"].map(h => <span key={h} className={`chip ${r.hypothesis === h ? "on" : ""}`}>{h}{r.hypothesis === h ? " ✓" : ""}</span>)}
+        </div>}
+        {r.state === "done" && <div className="grid cols-3" style={{ marginBottom: 14 }}>
+          {[["What happened", r.what], ["Analysis", r.analysis], ["Next steps", r.next]].map(([h, b]) =>
+            <div key={h} className="card pad"><div className="dim-cap" style={{ fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: "var(--text-mut)" }}>{h}</div><p style={{ margin: "8px 0 0", color: "var(--text)" }}>{b}</p></div>)}
+        </div>}
+        <div className="split">
+          <div><div className="dim-cap" style={{ fontWeight: 700, marginBottom: 8 }}>Investigation steps {r.state === "running" && "(streaming live)"}</div>
+            <div className="tl">{(r.steps || []).map((s, i) => <div key={i} className="tl-item ok"><div className="when">{s.when}</div><div className={`what ${s.mono ? "mono" : ""}`} style={s.mono ? { fontSize: 12 } : {}}>{s.what}</div></div>)}
+              {r.state === "running" && <div className="tl-item"><div className="when">…</div><div className="what row" style={{ gap: 8 }}><span className="pulse"></span> testing hypotheses</div></div>}
+            </div>
+          </div>
+          {r.state === "done" && r.attribution && <div><div className="dim-cap" style={{ fontWeight: 700, marginBottom: 8 }}>Why these rows? (attribution)</div>
+            {r.attribution.map((at, i) => <div key={i} className="attr-row"><span className="dim-cap">{at.label}</span><div className="ab"><span style={{ width: at.pct + "%" }}></span></div><span className="dim-cap tabular">{at.pct}%</span></div>)}
+            <p className="dim-cap" style={{ marginTop: 8 }}>A decision tree separating failing from healthy rows splits cleanly on the top factor.</p>
+          </div>}
+        </div>
+        {r.state === "done" && <div className="row" style={{ marginTop: 14 }}><button className="btn primary">Mark as expected</button><button className="btn">Edit check</button></div>}
+      </>}
+    </div></div>
+  );
+}
+
+/* ============================================================================
+   shell
+   ============================================================================ */
+function Topbar({ state, dispatch }) {
+  const dir = document.documentElement.dataset.dir || "aurora";
+  const openInc = state.incidents.filter(i => i.status !== "resolved").length;
+  return (
+    <header className="topbar">
+      <a href="index.html" className="btn ghost sm">← Hub</a>
+      <span className="row" style={{ gap: 8, fontWeight: 800, color: "var(--text-dim)" }}>
+        <span className="mark" style={{ width: 24, height: 24, borderRadius: 7 }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2"><path d="M12 2 4 6v6c0 5 3.5 8 8 10 4.5-2 8-5 8-10V6z" /></svg></span>
+        Incidents <span className="react-badge">REAL REACT</span>
+      </span>
+      <div className="seg" style={{ marginLeft: 18 }}>
+        <button className={state.view === "inbox" ? "on" : ""} onClick={() => dispatch({ type: "VIEW", view: "inbox" })}>Exceptions {state.exceptions.filter(e => e.status === "open" || e.status === "acknowledged").length}</button>
+        <button className={state.view !== "inbox" ? "on" : ""} onClick={() => dispatch({ type: "VIEW", view: "incidents" })}>Incidents {openInc}</button>
+      </div>
+      <div className="right" style={{ marginLeft: "auto" }}>
+        <div className="dir-switch">
+          {["aurora", "graphite", "editorial"].map(d => <button key={d} data-set-dir={d} className={dir === d ? "on" : ""}><span className={`sw sw-${d}`}></span>{d[0].toUpperCase() + d.slice(1)}</button>)}
+        </div>
+        <button className="icon-btn" data-theme-toggle><span data-theme-icon>☾</span></button>
+      </div>
+    </header>
+  );
+}
+
+function App() {
+  const [state, dispatch] = useReducer(reducer, initialState);
+  useEffect(() => { if (state.toast) { const t = setTimeout(() => dispatch({ type: "CLEAR_TOAST" }), 2600); return () => clearTimeout(t); } }, [state.toast]);
+  return (
+    <div className="app">
+      <div className="main">
+        <Topbar state={state} dispatch={dispatch} />
+        {state.view === "inbox" && <ExceptionsInbox state={state} dispatch={dispatch} />}
+        {state.view === "incidents" && <IncidentsList state={state} dispatch={dispatch} />}
+        {state.view === "incident" && <IncidentDetail state={state} dispatch={dispatch} />}
+      </div>
+      {state.toast && <div className="toast"><span className="pill ok" style={{ background: "rgba(255,255,255,.18)", color: "#fff" }}>✓</span>{state.toast}</div>}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+
+<!-- shared theme/direction switcher (same persistence as the rest of the wireframes) -->
+<script src="assets/app.js"></script>
+</body>
+</html>

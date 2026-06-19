@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en" data-dir="aurora" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DQ Sentinel — component reference</title>
+<link rel="stylesheet" href="assets/app.css">
+<style>
+  body { overflow-y: auto; }
+  .ref { max-width: 1100px; margin: 0 auto; padding: 28px 28px 80px; }
+  .ref-top { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 12px; padding: 14px 0; margin-bottom: 18px; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border-soft); }
+  .ref-top h1 { font-size: 18px; flex: 1; }
+  .dir-switch { display: inline-flex; gap: 2px; padding: 3px; background: var(--bg-2); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); }
+  .dir-switch button { border: none; background: transparent; cursor: pointer; font-family: var(--font); font-weight: 700; font-size: 11.5px; color: var(--text-mut); padding: 5px 10px; border-radius: calc(var(--radius-sm) - 2px); display: flex; align-items: center; gap: 6px; }
+  .dir-switch button.on { background: var(--card); color: var(--text-dim); box-shadow: var(--shadow); }
+  .sw { width: 9px; height: 9px; border-radius: 3px; }
+  .sw-aurora { background: #2f8fe6; } .sw-graphite { background: #2fb6a3; } .sw-editorial { background: #5b5bd6; }
+  section.block { margin-bottom: 30px; }
+  section.block > h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .8px; color: var(--text-mut); margin-bottom: 12px; }
+  .demo { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 22px; }
+  .demo .row { flex-wrap: wrap; }
+  .swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px,1fr)); gap: 12px; }
+  .swatch { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+  .swatch .chip { height: 52px; border-radius: 0; border: 0; }
+  .swatch .lab { padding: 7px 9px; font-size: 11px; }
+  .swatch .lab b { color: var(--text-dim); display: block; }
+  .swatch .lab code { color: var(--text-mut); }
+</style>
+</head>
+<body>
+<div class="ref">
+  <div class="ref-top">
+    <a href="index.html" class="btn ghost sm">← Hub</a>
+    <h1>Component reference</h1>
+    <div class="dir-switch">
+      <button data-set-dir="aurora" class="on"><span class="sw sw-aurora"></span>Aurora</button>
+      <button data-set-dir="graphite"><span class="sw sw-graphite"></span>Graphite</button>
+      <button data-set-dir="editorial"><span class="sw sw-editorial"></span>Editorial</button>
+    </div>
+    <button class="icon-btn" data-theme-toggle><span data-theme-icon>☾</span></button>
+  </div>
+
+  <div class="note info" style="margin-bottom:24px">Switch direction or theme above — every component re-skins instantly from design tokens. This is the single source of truth for the prototype's look.</div>
+
+  <section class="block"><h2>Color tokens</h2><div class="demo"><div class="swatches">
+    <div class="swatch"><div class="chip" style="background:var(--brand)"></div><div class="lab"><b>Brand</b><code>--brand</code></div></div>
+    <div class="swatch"><div class="chip" style="background:var(--ok)"></div><div class="lab"><b>Success</b><code>--ok</code></div></div>
+    <div class="swatch"><div class="chip" style="background:var(--warn)"></div><div class="lab"><b>Warning</b><code>--warn</code></div></div>
+    <div class="swatch"><div class="chip" style="background:var(--danger)"></div><div class="lab"><b>Danger</b><code>--danger</code></div></div>
+    <div class="swatch"><div class="chip" style="background:var(--accent)"></div><div class="lab"><b>Accent / AI</b><code>--accent</code></div></div>
+    <div class="swatch"><div class="chip" style="background:var(--card);border-bottom:1px solid var(--border)"></div><div class="lab"><b>Surface</b><code>--card</code></div></div>
+  </div></div></section>
+
+  <section class="block"><h2>Buttons</h2><div class="demo"><div class="row">
+    <button class="btn primary">Primary</button>
+    <button class="btn">Secondary</button>
+    <button class="btn ghost">Ghost</button>
+    <button class="btn danger">Danger</button>
+    <button class="btn sm primary">Small</button>
+    <button class="btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg> With icon</button>
+    <button class="btn icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button>
+  </div></div></section>
+
+  <section class="block"><h2>Status pills &amp; badges</h2><div class="demo"><div class="row" style="margin-bottom:14px">
+    <span class="pill ok"><span class="pdot"></span> Passing</span>
+    <span class="pill warn"><span class="pdot"></span> Degraded</span>
+    <span class="pill danger"><span class="pdot"></span> Failing</span>
+    <span class="pill info">Open</span>
+    <span class="pill accent">Acknowledged</span>
+    <span class="pill neutral">Muted</span>
+  </div><div class="row">
+    <span class="badge">default</span>
+    <span class="badge kind">range</span>
+    <span class="badge kind">isolation_forest</span>
+    <span class="badge ai">AI</span>
+    <span class="chip">Filter chip</span>
+    <span class="chip on">Active chip</span>
+  </div></div></section>
+
+  <section class="block"><h2>KPI cards</h2><div class="demo"><div class="grid cols-4">
+    <div class="card kpi"><div class="label">Health score</div><div class="value ok">96.4%</div><div class="foot"><span class="delta up">▲ 1.2</span> vs last week</div></div>
+    <div class="card kpi"><div class="label">Open exceptions</div><div class="value danger">23</div><div class="foot"><span class="delta down">▲ 8</span> today</div></div>
+    <div class="card kpi"><div class="label">Checks</div><div class="value">211/218</div><div class="foot">7 failing</div></div>
+    <div class="card kpi"><div class="label">SLA</div><div class="value warn">98.1%</div><div class="foot">2 at risk</div></div>
+  </div></div></section>
+
+  <section class="block"><h2>Table</h2><div class="demo" style="padding:0"><div class="table-wrap"><table class="tbl">
+    <thead><tr><th>Dataset</th><th>Engine</th><th class="num">Checks</th><th>Health</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td><span class="strong">orders</span></td><td><span class="badge kind">postgres</span></td><td class="num">14</td><td style="width:120px"><div class="meter danger"><span style="width:71%"></span></div></td><td><span class="pill danger">71%</span></td></tr>
+      <tr><td><span class="strong">payments</span></td><td><span class="badge kind">snowflake</span></td><td class="num">19</td><td style="width:120px"><div class="meter ok"><span style="width:97%"></span></div></td><td><span class="pill ok">97%</span></td></tr>
+    </tbody>
+  </table></div></div></section>
+
+  <section class="block"><h2>Tabs &amp; segmented control</h2><div class="demo">
+    <div class="tabs" style="margin-bottom:14px"><span class="tab active" data-tab="r:a">Profile</span><span class="tab" data-tab="r:b">Checks</span><span class="tab" data-tab="r:c">Runs</span></div>
+    <div data-tabpanel="r:a" class="active"><p class="dim-cap" style="margin:0">Profile panel content.</p></div>
+    <div data-tabpanel="r:b"><p class="dim-cap" style="margin:0">Checks panel content.</p></div>
+    <div data-tabpanel="r:c"><p class="dim-cap" style="margin:0">Runs panel content.</p></div>
+    <div class="divider"></div>
+    <div class="seg"><button class="on">24h</button><button>7d</button><button>30d</button></div>
+  </div></section>
+
+  <section class="block"><h2>Inputs</h2><div class="demo"><div class="grid cols-2">
+    <div class="field"><label>Connection name</label><input class="input" placeholder="warehouse-prod"></div>
+    <div class="field"><label>Engine</label><select class="input"><option>PostgreSQL</option><option>Snowflake</option><option>DuckDB</option></select></div>
+    <div class="field" style="grid-column:span 2"><label>DSN</label><input class="input mono" value="postgresql://analytics@warehouse:5432/prod"></div>
+  </div></div></section>
+
+  <section class="block"><h2>Callouts &amp; notes</h2><div class="demo stack">
+    <div class="note info">Heuristic generation still works without an API key.</div>
+    <div class="note warn"><b>customers</b> freshness 6h stale — expected hourly load missed.</div>
+    <div class="note danger"><b>orders.total_amount</b> — 18 rows below 0.</div>
+  </div></section>
+
+  <section class="block"><h2>Data viz primitives</h2><div class="demo"><div class="grid cols-2">
+    <div><div class="dim-cap" style="font-weight:700;margin-bottom:10px">Meter</div><div class="meter" style="margin-bottom:8px"><span style="width:96%"></span></div><div class="meter warn" style="margin-bottom:8px"><span style="width:62%"></span></div><div class="meter danger"><span style="width:30%"></span></div></div>
+    <div><div class="dim-cap" style="font-weight:700;margin-bottom:10px">Sparkline &amp; heatmap</div><div class="spark" style="height:40px;margin-bottom:12px"><i style="height:30%"></i><i style="height:55%" class="hi"></i><i style="height:80%" class="hi"></i><i style="height:45%"></i><i style="height:95%" class="hi"></i><i style="height:70%" class="hi"></i></div><div class="heat" style="grid-template-columns:repeat(12,1fr)"><i class="l0"></i><i class="l1"></i><i class="l1"></i><i class="l2"></i><i class="l1"></i><i class="l3"></i><i class="l1"></i><i class="l1"></i><i class="l2"></i><i class="l1"></i><i class="l0"></i><i class="l1"></i></div></div>
+  </div></div></section>
+
+  <section class="block"><h2>Timeline &amp; lineage</h2><div class="demo"><div class="grid cols-2">
+    <div class="tl">
+      <div class="tl-item danger"><div class="when">11 min ago</div><div class="what">range check failed — 18 rows</div></div>
+      <div class="tl-item ok"><div class="when">1h ago</div><div class="what">14 checks passed</div></div>
+      <div class="tl-item warn"><div class="when">2h ago</div><div class="what">ML flagged 3 outliers</div></div>
+    </div>
+    <div class="lineage" style="flex-wrap:wrap;gap:0"><div class="lnode"><div class="t">raw.orders</div><div class="m">source</div></div><div class="ledge fail"></div><div class="lnode fail"><div class="t">orders</div><div class="m">3 failing</div></div></div>
+  </div></div></section>
+
+  <section class="block"><h2>Drawer</h2><div class="demo"><button class="btn primary" data-open-drawer="refDrawer">Open exception drawer →</button></div></section>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="refDrawer">
+  <div class="drawer-head"><h3 style="font-size:16px">Exception detail</h3><button class="icon-btn" data-close-drawer>✕</button></div>
+  <div class="drawer-body stack">
+    <div class="row"><span class="pill danger">18 rows</span><span class="pill info">open</span></div>
+    <div class="note danger"><b>total_amount ≥ 0</b> violated.</div>
+    <div class="row wrap"><button class="btn primary">Mark expected</button><button class="btn">Acknowledge</button><button class="btn ghost">Mute</button></div>
+  </div>
+</aside>
+
+<script src="assets/app.js"></script>
+</body>
+</html>

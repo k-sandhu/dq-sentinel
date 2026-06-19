@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en" data-dir="aurora" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DQ Sentinel — system wireframes</title>
+<link rel="stylesheet" href="assets/app.css">
+<style>
+  body { overflow-y: auto; }
+  .hub { max-width: 1160px; margin: 0 auto; padding: 48px 28px 80px; }
+  .hero { text-align: center; margin-bottom: 44px; }
+  .hero .mark { width: 56px; height: 56px; border-radius: 16px; margin: 0 auto 18px; background: linear-gradient(135deg, var(--brand-2), var(--brand-deep)); display: grid; place-items: center; color: #fff; box-shadow: 0 10px 30px var(--brand-ghost); }
+  .hero h1 { font-size: 36px; letter-spacing: -.03em; }
+  .hero p { color: var(--text-mut); font-size: 16px; max-width: 620px; margin: 12px auto 0; }
+  .toprow { display: flex; justify-content: center; gap: 10px; margin-top: 24px; }
+  .sec-label { font-size: 12px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: var(--text-mut); margin: 40px 0 16px; }
+
+  /* mini browser-frame preview of a direction */
+  .frame { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); background: var(--card); }
+  .frame .bar { height: 30px; display: flex; align-items: center; gap: 6px; padding: 0 12px; border-bottom: 1px solid var(--border-soft); background: var(--card-2); }
+  .frame .bar i { width: 9px; height: 9px; border-radius: 99px; background: var(--border); }
+  .prev { padding: 16px; }
+  .dir-card h3 { font-size: 17px; margin-bottom: 2px; }
+  .dir-card .tag { font-size: 12.5px; color: var(--text-mut); margin-bottom: 14px; }
+  .dir-card ul { margin: 14px 0 0; padding-left: 18px; color: var(--text); font-size: 13px; line-height: 1.7; }
+
+  /* tiny rendered UI inside each preview, themed independently */
+  .mini { font-size: 11px; }
+  .mini .mtop { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
+  .mini .mlogo { width: 18px; height: 18px; border-radius: 5px; background: linear-gradient(135deg, var(--brand-2), var(--brand-deep)); }
+  .mini .mkpis { display: grid; grid-template-columns: repeat(3,1fr); gap: 7px; margin-bottom: 9px; }
+  .mini .mk { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 7px 8px; background: var(--card); }
+  .mini .mk b { display: block; font-size: 15px; color: var(--text-dim); }
+  .mini .mk span { color: var(--text-mut); font-size: 9.5px; text-transform: uppercase; letter-spacing: .4px; }
+  .mini .mrow { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); margin-bottom: 5px; background: var(--card); }
+  .mini .mrow b { color: var(--text-dim); }
+  .entry { display: flex; gap: 16px; flex-wrap: wrap; }
+  .entry a { flex: 1; min-width: 260px; text-decoration: none; }
+  .entry .card { padding: 20px; height: 100%; transition: transform .12s, border-color .12s, box-shadow .12s; }
+  .entry a:hover .card { transform: translateY(-3px); border-color: var(--brand); box-shadow: var(--shadow-pop); }
+  .entry .ic { width: 40px; height: 40px; border-radius: 11px; background: var(--brand-ghost); color: var(--brand); display: grid; place-items: center; margin-bottom: 12px; }
+  .entry h3 { font-size: 16px; }
+  .entry p { color: var(--text-mut); font-size: 13px; margin: 6px 0 0; }
+</style>
+</head>
+<body>
+<div class="hub">
+  <div class="hero">
+    <div class="mark"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 4 6v6c0 5 3.5 8 8 10 4.5-2 8-5 8-10V6z"/></svg></div>
+    <h1>DQ Sentinel — System Wireframes</h1>
+    <p>Clickable, crisp wireframes for the data-quality platform. Three visual directions, one full interactive prototype, and a component reference — all switchable live, no build step.</p>
+    <div class="toprow">
+      <a class="btn primary" href="app.html">Open interactive prototype →</a>
+      <a class="btn" href="components.html">Component reference</a>
+      <button class="btn icon" data-theme-toggle title="Light / dark"><span data-theme-icon>☾</span></button>
+    </div>
+  </div>
+
+  <div class="sec-label">Three directions for "the look" — same product, three personalities</div>
+  <div class="grid cols-3">
+
+    <!-- AURORA -->
+    <div class="card dir-card" data-dir="aurora" style="padding:18px">
+      <h3>① Aurora <span class="pill info" style="font-weight:700">recommended</span></h3>
+      <div class="tag">Refined Metabase — airy, friendly, approachable</div>
+      <div class="frame"><div class="bar"><i></i><i></i><i></i></div><div class="prev"><div class="mini">
+        <div class="mtop"><span class="mlogo"></span><b style="color:var(--text-dim)">Overview</b><span class="pill danger" style="margin-left:auto">23 open</span></div>
+        <div class="mkpis"><div class="mk"><b>96.4%</b><span>Health</span></div><div class="mk"><b style="color:var(--danger-fg)">23</b><span>Exceptions</span></div><div class="mk"><b>98%</b><span>SLA</span></div></div>
+        <div class="mrow"><b>orders</b><span class="pill danger">71%</span></div>
+        <div class="mrow"><b>customers</b><span class="pill warn">88%</span></div>
+        <div class="mrow"><b>payments</b><span class="pill ok">97%</span></div>
+      </div></div></div>
+      <ul><li>Brand blue, 12px radii, soft shadows</li><li>Generous spacing, gradient accents</li><li>Best for broad/exec adoption</li></ul>
+    </div>
+
+    <!-- GRAPHITE -->
+    <div class="card dir-card" data-dir="graphite" data-theme="dark" style="padding:18px;background:#161b22;border-color:#242c36">
+      <h3 style="color:#e8edf3">② Graphite</h3>
+      <div class="tag" style="color:#6d7888">Dense ops/terminal — sharp, technical, dark-first</div>
+      <div class="frame" style="border-color:#242c36;background:#161b22"><div class="bar" style="background:#12171d;border-color:#1c232c"><i></i><i></i><i></i></div><div class="prev"><div class="mini">
+        <div class="mtop"><span class="mlogo"></span><b style="color:#e8edf3">overview</b><span class="pill danger" style="margin-left:auto">23 open</span></div>
+        <div class="mkpis"><div class="mk" style="background:#161b22;border-color:#242c36"><b style="color:#e8edf3">96.4%</b><span style="color:#6d7888">health</span></div><div class="mk" style="background:#161b22;border-color:#242c36"><b style="color:#f08a82">23</b><span style="color:#6d7888">exc</span></div><div class="mk" style="background:#161b22;border-color:#242c36"><b style="color:#e8edf3">98%</b><span style="color:#6d7888">sla</span></div></div>
+        <div class="mrow" style="background:#161b22;border-color:#1c232c"><b style="color:#e8edf3">orders</b><span class="pill danger">71%</span></div>
+        <div class="mrow" style="background:#161b22;border-color:#1c232c"><b style="color:#e8edf3">customers</b><span class="pill warn">88%</span></div>
+        <div class="mrow" style="background:#161b22;border-color:#1c232c"><b style="color:#e8edf3">payments</b><span class="pill ok">97%</span></div>
+      </div></div></div>
+      <ul style="color:#aab4c2"><li>Teal accent, 6px radii, mono numerals</li><li>Compact rows, maximum density</li><li>Best for on-call data engineers</li></ul>
+    </div>
+
+    <!-- EDITORIAL -->
+    <div class="card dir-card" data-dir="editorial" style="padding:18px">
+      <h3>③ Editorial</h3>
+      <div class="tag">Linear/Notion — calm, premium, lots of whitespace</div>
+      <div class="frame"><div class="bar"><i></i><i></i><i></i></div><div class="prev"><div class="mini">
+        <div class="mtop"><span class="mlogo"></span><b style="color:var(--text-dim)">Overview</b><span class="pill danger" style="margin-left:auto">23 open</span></div>
+        <div class="mkpis"><div class="mk"><b>96.4%</b><span>Health</span></div><div class="mk"><b style="color:var(--danger-fg)">23</b><span>Exceptions</span></div><div class="mk"><b>98%</b><span>SLA</span></div></div>
+        <div class="mrow"><b>orders</b><span class="pill danger">71%</span></div>
+        <div class="mrow"><b>customers</b><span class="pill warn">88%</span></div>
+        <div class="mrow"><b>payments</b><span class="pill ok">97%</span></div>
+      </div></div></div>
+      <ul><li>Indigo accent, Inter type, thin borders</li><li>Minimal shadows, premium calm feel</li><li>Best for a modern SaaS brand</li></ul>
+    </div>
+  </div>
+
+  <div class="note info" style="margin-top:18px">Tip: in the prototype you can flip between all three directions live from the topbar switcher, and toggle dark mode. Your choice persists across every wireframe file.</div>
+
+  <div class="sec-label">Jump in</div>
+  <div class="entry">
+    <a href="app.html#home"><div class="card"><div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></div><h3>Interactive prototype <span class="pill info" style="font-weight:700">v2</span></h3><p>17 connected screens — Overview, Incidents, Exceptions triage, tabbed dataset detail, AI check-generation with the exploration trace, Contracts, Lineage impact, RCA agent, Alerts &amp; routing, status page, Assistant.</p></div></a>
+    <a href="app.html#dataset"><div class="card"><div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg></div><h3>Key flow: dataset detail</h3><p>The tabbed Profile → Checks → Exceptions → RCA workspace — the heart of the triage experience, including the AI root-cause report.</p></div></a>
+    <a href="components.html"><div class="card"><div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="7" cy="7" r="3.5"/><circle cx="17" cy="7" r="3.5"/><circle cx="7" cy="17" r="3.5"/><circle cx="17" cy="17" r="3.5"/></svg></div><h3>Component reference</h3><p>The building blocks — buttons, pills, KPIs, tables, tabs, drawers, charts — rendered in every direction. Your Figma-style library.</p></div></a>
+    <a href="react-incidents.html"><div class="card"><div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="2.2"/><ellipse cx="12" cy="12" rx="10" ry="4"/><ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(60 12 12)"/><ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(120 12 12)"/></svg></div><h3>Incidents — real React <span class="pill accent" style="font-weight:700">live</span></h3><p>The Incidents flow as an actual React app (components, hooks, reducer) — not a mockup. Promote → group → assign → run RCA (streamed) → resolve, end-to-end. Same design tokens; fully isolated from the real app.</p></div></a>
+  </div>
+
+  <div class="sec-label">What the prototype covers (v2 — shaped by the market scan)</div>
+  <div class="grid cols-4">
+    <div class="card pad"><b style="color:var(--text-dim)">Monitor</b><p class="dim-cap" style="margin:6px 0 0">Inverted-pyramid overview (health ring, dimension scorecard, coverage/MTTR/SLA, 90-day heatmap), <b>Incidents</b> (grouping + severity + owner + timeline), exceptions inbox, My work.</p></div>
+    <div class="card pad"><b style="color:var(--text-dim)">Build</b><p class="dim-cap" style="margin:6px 0 0">Connections (9 engines), datasets, profiling, <b>AI check-generation</b> with the exploration-agent SQL trace + checks-as-code, and <b>Data Contracts</b> (editor + breaking-change diff + CI gate).</p></div>
+    <div class="card pad"><b style="color:var(--text-dim)">Investigate</b><p class="dim-cap" style="margin:6px 0 0"><b>RCA</b> (what-happened/analysis/next-steps + live steps + attribution), assistant that <i>acts</i>, workbench, <b>Alerts &amp; routing</b> with interactive Slack.</p></div>
+    <div class="card pad"><b style="color:var(--text-dim)">Understand</b><p class="dim-cap" style="margin:6px 0 0"><b>Lineage</b> neighborhood/hop view with health propagation + ranked downstream impact, and a read-only <b>data status page</b>.</p></div>
+  </div>
+  <div class="note info" style="margin-top:16px">See <code>COMPETITIVE-ANALYSIS.md</code> (market scan + where the white space is) and <code>DESIGN-NOTES.md</code> (what's good/bad and what we deliberately left out) for the thinking behind v2.</div>
+</div>
+<script src="assets/app.js"></script>
+</body>
+</html>
