@@ -62,11 +62,24 @@
           <button data-set-dir="graphite"><span class="sw sw-graphite"></span>Graphite</button>
           <button data-set-dir="editorial"><span class="sw sw-editorial"></span>Editorial</button>
         </div>
+        <button class="icon-btn" data-open-drawer="prefsDrawer" title="Appearance &amp; preferences"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h7M15 18h5"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="13" cy="18" r="2"/></svg></button>
         <button class="icon-btn" data-theme-toggle title="Toggle light/dark"><span data-theme-icon>☾</span></button>
         <button class="icon-btn" data-nav="welcome" title="Get started / tour"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.8.4-1 .8-1 1.7"/><path d="M12 17v.5"/></svg></button>
         <button class="icon-btn" title="Notifications"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span class="notif">3</span></button>
       </div>
     </header>
+
+    <!-- centered nav (shown only when nav-layout = centered) -->
+    <nav class="topnav">
+      <a class="nav-item" data-nav="home">Overview</a>
+      <a class="nav-item" data-nav="incidents">Incidents <span class="count alert">4</span></a>
+      <a class="nav-item" data-nav="exceptions">Exceptions <span class="count alert">23</span></a>
+      <a class="nav-item" data-nav="datasets">Datasets</a>
+      <a class="nav-item" data-nav="checks">Checks</a>
+      <a class="nav-item" data-nav="contracts">Contracts</a>
+      <a class="nav-item" data-nav="lineage">Lineage</a>
+      <a class="nav-item" data-nav="assistant">Assistant</a>
+    </nav>
 
     <!-- ============ OVERVIEW (inverted pyramid) ============ -->
     <section data-route="home" class="active">
@@ -730,6 +743,87 @@
     <div class="note info">Dry-run on the last sample found <b>0 violating rows</b> — this check would pass today.</div>
     <div class="divider"></div>
     <div class="row"><button class="btn primary" data-close-drawer>Create check</button><button class="btn">Dry run</button><button class="btn ghost" data-close-drawer>Cancel</button></div>
+  </div>
+</aside>
+
+<!-- ===================== APPEARANCE & PREFERENCES ===================== -->
+<aside class="drawer prefs" id="prefsDrawer">
+  <div class="drawer-head">
+    <div class="row" style="gap:11px">
+      <span class="icon-btn" style="cursor:default;border-color:var(--border)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h7M15 18h5"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="13" cy="18" r="2"/></svg></span>
+      <div><h3 style="font-size:16px">Appearance &amp; preferences</h3><div class="dim-cap">Make it yours — applies instantly, saved on this device</div></div>
+    </div>
+    <button class="icon-btn" data-close-drawer>✕</button>
+  </div>
+  <div class="drawer-body">
+    <div class="pref-sec">Theme</div>
+    <div class="theme-grid">
+      <button class="theme-card" data-pref="dir:aurora">
+        <div class="tc-prev" style="background:#18212e"><div class="tc-bar" style="width:78%;background:linear-gradient(90deg,#5ab0f2,#2f8fe6)"></div><div class="tc-bar" style="width:58%;background:#2a3a4d"></div><div class="tc-dot" style="background:#2f8fe6"></div></div>
+        <div class="tc-name">Aurora <span class="chk">✓</span></div>
+      </button>
+      <button class="theme-card" data-pref="dir:graphite">
+        <div class="tc-prev" style="background:#14181d"><div class="tc-bar" style="width:78%;background:linear-gradient(90deg,#45d6c0,#2fb6a3)"></div><div class="tc-bar" style="width:58%;background:#232a31"></div><div class="tc-dot" style="background:#2fb6a3"></div></div>
+        <div class="tc-name">Graphite <span class="chk">✓</span></div>
+      </button>
+      <button class="theme-card" data-pref="dir:editorial">
+        <div class="tc-prev" style="background:#1c1b24"><div class="tc-bar" style="width:78%;background:linear-gradient(90deg,#9a9af6,#5b5bd6)"></div><div class="tc-bar" style="width:58%;background:#2c2a37"></div><div class="tc-dot" style="background:#5b5bd6"></div></div>
+        <div class="tc-name">Editorial <span class="chk">✓</span></div>
+      </button>
+    </div>
+    <div class="dim-cap" style="margin-top:8px">Each theme ships with a tailored light <b>and</b> dark mode ↓</div>
+
+    <div class="pref-sec">Mode</div>
+    <div class="seg wide">
+      <button data-pref="mode:light">☀ Light</button>
+      <button data-pref="mode:dark">☾ Dark</button>
+      <button data-pref="mode:system">⊕ System</button>
+    </div>
+
+    <div class="pref-sec">Accent</div>
+    <div class="swatch-row">
+      <button class="swatch-btn" data-accent="#2f8fe6" style="background:#2f8fe6" title="Blue"></button>
+      <button class="swatch-btn" data-accent="#7c5cff" style="background:#7c5cff" title="Violet"></button>
+      <button class="swatch-btn" data-accent="#2fb6a3" style="background:#2fb6a3" title="Teal"></button>
+      <button class="swatch-btn" data-accent="#3aa564" style="background:#3aa564" title="Green"></button>
+      <button class="swatch-btn" data-accent="#e0594f" style="background:#e0594f" title="Red"></button>
+      <button class="swatch-btn" data-accent="#e08a2c" style="background:#e08a2c" title="Orange"></button>
+      <button class="swatch-btn" data-accent="#e0518a" style="background:#e0518a" title="Pink"></button>
+      <button class="swatch-btn custom" data-accent="reset" title="Reset to theme accent" style="background:var(--bg-2);color:var(--text-mut)">↺</button>
+      <span class="dim-cap">Reset</span>
+    </div>
+
+    <div class="pref-sec">Density &amp; spacing</div>
+    <div class="seg wide">
+      <button data-pref="density:compact">Compact</button>
+      <button data-pref="density:cozy">Cozy</button>
+      <button data-pref="density:comfortable">Comfortable</button>
+    </div>
+
+    <div class="pref-sec">Navigation &amp; layout</div>
+    <div class="seg wide">
+      <button data-pref="nav:full">Full nav</button>
+      <button data-pref="nav:icons">Icons only</button>
+      <button data-pref="nav:centered">Centered</button>
+    </div>
+
+    <div class="pref-sec">Interface font</div>
+    <div class="seg wide">
+      <button data-pref="font:theme">Theme</button>
+      <button data-pref="font:inter">Inter</button>
+      <button data-pref="font:system">System</button>
+      <button data-pref="font:rounded">Rounded</button>
+    </div>
+
+    <div class="pref-sec">Live preview</div>
+    <div class="card pad">
+      <div class="row between">
+        <div><div class="dim-cap" style="font-weight:700">Open exceptions</div><div style="font-size:28px;font-weight:800;color:var(--text-dim);line-height:1.1">18</div></div>
+        <div class="ring warn" style="--p:73"><span>73%</span></div>
+      </div>
+      <div class="row wrap" style="margin-top:12px;gap:6px"><span class="pill ok"><span class="pdot"></span>T0</span><span class="pill info"><span class="pdot"></span>T1</span><span class="pill warn"><span class="pdot"></span>T2</span><span class="pill danger"><span class="pdot"></span>T3</span><span class="pill ok">96%</span></div>
+      <div class="row" style="margin-top:12px"><button class="btn primary sm">Primary</button><button class="btn sm">Default</button><span class="badge ai">evidence</span></div>
+    </div>
   </div>
 </aside>
 

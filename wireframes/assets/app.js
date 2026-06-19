@@ -1,36 +1,62 @@
-/* DQ Sentinel wireframes — tiny interaction layer (no framework).
-   Handles: direction + theme switching (persisted), SPA section routing,
-   tabs, drawers, and a couple of demo toggles. */
+/* DQ Sentinel wireframes — interaction layer (no framework).
+   Appearance prefs (theme / mode / density / accent / font / nav-layout),
+   persisted per device, plus SPA routing, tabs, drawers, charts. */
 (function () {
   const root = document.documentElement;
-  const LS_DIR = "dqw-dir", LS_THEME = "dqw-theme";
+  const LS = "dqw-prefs";
 
-  /* ---- direction + theme, persisted across the whole wireframe set ---- */
-  function applyDir(dir) {
-    root.setAttribute("data-dir", dir);
-    localStorage.setItem(LS_DIR, dir);
-    document.querySelectorAll("[data-set-dir]").forEach(b =>
-      b.classList.toggle("on", b.getAttribute("data-set-dir") === dir));
+  /* ---- appearance preferences ---- */
+  const defaults = { dir: "aurora", mode: "light", density: "cozy", accent: null, font: "theme", nav: "full" };
+  let prefs = Object.assign({}, defaults);
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS) || "null");
+    if (saved) prefs = Object.assign(prefs, saved);
+    else { // migrate old per-key storage
+      const od = localStorage.getItem("dqw-dir"), ot = localStorage.getItem("dqw-theme");
+      if (od) prefs.dir = od;
+      if (ot) prefs.mode = ot;
+    }
+  } catch (e) {}
+  if (!localStorage.getItem(LS)) prefs.dir = prefs.dir || root.getAttribute("data-dir") || "aurora";
+
+  const mq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+  const resolveMode = () => prefs.mode === "system" ? (mq && mq.matches ? "dark" : "light") : prefs.mode;
+
+  function apply() {
+    root.setAttribute("data-dir", prefs.dir);
+    root.setAttribute("data-theme", resolveMode());
+    root.setAttribute("data-density", prefs.density);
+    root.setAttribute("data-nav-layout", prefs.nav);
+    if (prefs.font && prefs.font !== "theme") root.setAttribute("data-font", prefs.font);
+    else root.removeAttribute("data-font");
+    if (prefs.accent) root.style.setProperty("--brand", prefs.accent);
+    else root.style.removeProperty("--brand");
+    syncUI();
   }
-  function applyTheme(theme) {
-    root.setAttribute("data-theme", theme);
-    localStorage.setItem(LS_THEME, theme);
-    document.querySelectorAll("[data-theme-icon]").forEach(el => {
-      el.textContent = theme === "dark" ? "☀" : "☾";
+  function syncUI() {
+    const tm = resolveMode();
+    document.querySelectorAll("[data-set-dir]").forEach(b => b.classList.toggle("on", b.getAttribute("data-set-dir") === prefs.dir));
+    document.querySelectorAll("[data-theme-icon]").forEach(el => el.textContent = tm === "dark" ? "☀" : "☾");
+    document.querySelectorAll("[data-pref]").forEach(b => {
+      const [k, v] = b.getAttribute("data-pref").split(":");
+      b.classList.toggle("on", String(prefs[k]) === v);
+    });
+    document.querySelectorAll("[data-accent]").forEach(b => {
+      const v = b.getAttribute("data-accent");
+      if (v !== "reset") b.classList.toggle("on", (prefs.accent || "").toLowerCase() === v.toLowerCase());
     });
   }
-  window.dqw = {
-    setDir: applyDir,
-    setTheme: applyTheme,
-    toggleTheme: () => applyTheme(root.getAttribute("data-theme") === "dark" ? "light" : "dark"),
-  };
+  function setPref(key, val) { prefs[key] = val; localStorage.setItem(LS, JSON.stringify(prefs)); apply(); }
+  if (mq && mq.addEventListener) mq.addEventListener("change", () => { if (prefs.mode === "system") apply(); });
 
-  // restore (graphite implies dark unless the user chose otherwise on this device)
-  const savedDir = localStorage.getItem(LS_DIR) || root.getAttribute("data-dir") || "aurora";
-  const savedTheme = localStorage.getItem(LS_THEME) || root.getAttribute("data-theme") ||
-                     (savedDir === "graphite" ? "dark" : "light");
-  applyDir(savedDir);
-  applyTheme(savedTheme);
+  window.dqw = {
+    prefs, setPref,
+    setDir: (d) => setPref("dir", d),
+    setTheme: (t) => setPref("mode", t),
+    toggleTheme: () => setPref("mode", resolveMode() === "dark" ? "light" : "dark"),
+    setAccent: (hex) => setPref("accent", hex === "reset" ? null : hex),
+  };
+  apply();
 
   /* ---- SPA routing: [data-nav="x"] shows [data-route="x"] ---- */
   function route(name) {
@@ -71,8 +97,12 @@
     const tabEl = e.target.closest("[data-tab]");
     if (tabEl) { e.preventDefault(); tab(tabEl.getAttribute("data-tab")); return; }
     const dirEl = e.target.closest("[data-set-dir]");
-    if (dirEl) { applyDir(dirEl.getAttribute("data-set-dir")); return; }
+    if (dirEl) { window.dqw.setDir(dirEl.getAttribute("data-set-dir")); return; }
     if (e.target.closest("[data-theme-toggle]")) { window.dqw.toggleTheme(); return; }
+    const prefEl = e.target.closest("[data-pref]");
+    if (prefEl) { const p = prefEl.getAttribute("data-pref").split(":"); window.dqw.setPref(p[0], p[1]); return; }
+    const accEl = e.target.closest("[data-accent]");
+    if (accEl) { window.dqw.setAccent(accEl.getAttribute("data-accent")); return; }
     const drwEl = e.target.closest("[data-open-drawer]");
     if (drwEl) { window.dqw.openDrawer(drwEl.getAttribute("data-open-drawer")); return; }
     const typeEl = e.target.closest(".type-opt");

@@ -14,6 +14,26 @@
 
 /* ---------- theme: LIGHT surfaces (default) ---------- */
 :root {
+  /* status — shared across ALL themes (kept identical everywhere) */
+  --ok:        #58a531;  --ok-bg:  #eaf4df;  --ok-fg:  #4a7a26;
+  --warn:      #e89a3c;  --warn-bg:#fbeed8;  --warn-fg:#8a5a18;
+  --danger:    #e0594f;  --danger-bg:#fce4e2;--danger-fg:#b23a32;
+  --info:      #4a8fd6;  --info-bg:#e6f0fb;  --info-fg:#2b6aa0;
+  --accent:    #9a7bc8;  --accent-bg:#f1ebf9;--accent-fg:#6f4f9c;
+
+  /* brand — themes (and the accent picker) set --brand; the rest derive from it */
+  --brand:      #2f8fe6;
+  --brand-2:    color-mix(in srgb, var(--brand) 68%, #fff);
+  --brand-deep: color-mix(in srgb, var(--brand) 82%, #000);
+  --brand-ghost:color-mix(in srgb, var(--brand) 20%, transparent);
+  --ring:       0 0 0 3px var(--brand-ghost);
+
+  /* shape + type defaults (aurora) */
+  --radius:12px; --radius-sm:8px;
+  --font: "Segoe UI", -apple-system, "Helvetica Neue", system-ui, sans-serif;
+  --font-head: var(--font); --head-weight:750; --head-spacing:-0.01em;
+
+  /* surfaces — aurora light (default) */
   --bg:        #f6f9fb;
   --bg-2:      #eef3f7;
   --card:      #ffffff;
@@ -27,88 +47,66 @@
   --hover:     #f3f8fd;
   --shadow:    0 1px 2px rgba(20,30,50,.05), 0 4px 14px rgba(20,30,50,.05);
   --shadow-pop:0 16px 44px rgba(20,30,50,.16);
-  --ring:      0 0 0 3px var(--brand-ghost);
 
-  --ok:        #58a531;  --ok-bg:  #eaf4df;  --ok-fg:  #4a7a26;
-  --warn:      #e89a3c;  --warn-bg:#fbeed8;  --warn-fg:#8a5a18;
-  --danger:    #e0594f;  --danger-bg:#fce4e2;--danger-fg:#b23a32;
-  --info:      #4a8fd6;  --info-bg:#e6f0fb;  --info-fg:#2b6aa0;
-  --accent:    #9a7bc8;  --accent-bg:#f1ebf9;--accent-fg:#6f4f9c;
+  /* density & sizing — cozy default (overridden by [data-density]) */
+  --pad:18px; --gap:15px; --row-h:40px; --ctl-h:36px; --fs:13.5px; --card-pad:18px;
 }
 
-/* ---------- theme: DARK surfaces ---------- */
-[data-theme="dark"] {
-  --bg:        #0e1218;
-  --bg-2:      #0a0d12;
-  --card:      #161b22;
-  --card-2:    #12171d;
-  --border:    #242c36;
-  --border-soft:#1c232c;
-  --text:      #aab4c2;
-  --text-dim:  #e8edf3;
-  --text-mut:  #6d7888;
-  --input-bg:  #11151b;
-  --hover:     #1b222b;
-  --shadow:    0 1px 2px rgba(0,0,0,.5), 0 6px 20px rgba(0,0,0,.4);
-  --shadow-pop:0 18px 50px rgba(0,0,0,.6);
-
-  --ok-bg:  rgba(88,165,49,.16);  --ok-fg:  #93cf66;
-  --warn-bg:rgba(232,154,60,.16); --warn-fg:#edb472;
-  --danger-bg:rgba(224,89,79,.18);--danger-fg:#f08a82;
-  --info-bg:rgba(74,143,214,.18); --info-fg:#7fb6ec;
-  --accent-bg:rgba(154,123,200,.2);--accent-fg:#c0a6e0;
+/* ============================================================================
+   THEME personalities — brand + shape + font + LIGHT surfaces.
+   (aurora light == :root defaults, so aurora only restates brand/shape/font.)
+   ============================================================================ */
+[data-dir="aurora"] {
+  --brand:#2f8fe6; --radius:12px; --radius-sm:8px;
+  --font:"Segoe UI",-apple-system,"Helvetica Neue",system-ui,sans-serif; --font-head:var(--font);
+  --head-weight:750; --head-spacing:-0.01em;
 }
-
-/* ---------- direction: AURORA (default) — refined Metabase, airy & friendly */
-[data-dir="aurora"], :root {
-  --brand:     #2f8fe6;
-  --brand-2:   #5ab0f2;
-  --brand-deep:#1f6fbd;
-  --brand-ghost:rgba(47,143,230,.18);
-  --radius:    12px;
-  --radius-sm: 8px;
-  --pad:       20px;
-  --gap:       16px;
-  --row-h:     42px;
-  --font: "Segoe UI", -apple-system, "Helvetica Neue", system-ui, sans-serif;
-  --font-head: var(--font);
-  --head-weight: 750;
-  --head-spacing: -0.01em;
-}
-
-/* ---------- direction: GRAPHITE — dense ops/terminal, sharp & technical */
 [data-dir="graphite"] {
-  --brand:     #2fb6a3;
-  --brand-2:   #45d6c0;
-  --brand-deep:#1f8475;
-  --brand-ghost:rgba(47,182,163,.2);
-  --radius:    6px;
-  --radius-sm: 4px;
-  --pad:       16px;
-  --gap:       12px;
-  --row-h:     34px;
-  --font: "SF Mono", "Cascadia Code", ui-monospace, "Segoe UI", system-ui, sans-serif;
-  --font-head: "Segoe UI", system-ui, sans-serif;
-  --head-weight: 700;
-  --head-spacing: 0.01em;
+  --brand:#2fb6a3; --radius:6px; --radius-sm:4px;
+  --font:"SF Mono","Cascadia Code",ui-monospace,"Segoe UI",system-ui,sans-serif; --font-head:"Segoe UI",system-ui,sans-serif;
+  --head-weight:700; --head-spacing:.01em;
+  --bg:#f5f6f7; --bg-2:#e9ebed; --card:#ffffff; --card-2:#fafbfb; --border:#e0e3e6; --border-soft:#eceef0;
+  --text:#444b54; --text-dim:#20262c; --text-mut:#828a93; --input-bg:#ffffff; --hover:#eef1f3;
+}
+[data-dir="editorial"] {
+  --brand:#5b5bd6; --radius:10px; --radius-sm:7px;
+  --font:"Inter","Segoe UI",-apple-system,system-ui,sans-serif; --font-head:var(--font);
+  --head-weight:680; --head-spacing:-0.02em;
+  --bg:#faf9f7; --bg-2:#f1efeb; --card:#ffffff; --card-2:#fcfbf9; --border:#e9e6e1; --border-soft:#f0eeea;
+  --text:#4a4a55; --text-dim:#28282f; --text-mut:#918d99; --input-bg:#ffffff; --hover:#f6f4ff;
 }
 
-/* ---------- direction: EDITORIAL — Linear/Notion, calm premium whitespace */
-[data-dir="editorial"] {
-  --brand:     #5b5bd6;
-  --brand-2:   #7c7cf0;
-  --brand-deep:#4444b8;
-  --brand-ghost:rgba(91,91,214,.16);
-  --radius:    10px;
-  --radius-sm: 7px;
-  --pad:       24px;
-  --gap:       20px;
-  --row-h:     46px;
-  --font: "Inter", "Segoe UI", -apple-system, system-ui, sans-serif;
-  --font-head: "Inter", "Segoe UI", system-ui, sans-serif;
-  --head-weight: 680;
-  --head-spacing: -0.02em;
+/* ============================================================================
+   DARK mode — every theme has its own. Generic block = aurora dark; the
+   per-theme blocks (higher specificity) tailor graphite & editorial.
+   ============================================================================ */
+[data-theme="dark"] {
+  --bg:#0f1620; --bg-2:#0a0f17; --card:#18212e; --card-2:#141c28; --border:#283545; --border-soft:#1e2835;
+  --text:#aab8c8; --text-dim:#eaf1f8; --text-mut:#6f7f92; --input-bg:#121a25; --hover:#1d2937;
+  --shadow:0 1px 2px rgba(0,0,0,.5),0 6px 20px rgba(0,0,0,.4); --shadow-pop:0 18px 50px rgba(0,0,0,.6);
+  --ok-bg:rgba(88,165,49,.16); --ok-fg:#93cf66; --warn-bg:rgba(232,154,60,.16); --warn-fg:#edb472;
+  --danger-bg:rgba(224,89,79,.18); --danger-fg:#f08a82; --info-bg:rgba(74,143,214,.18); --info-fg:#7fb6ec;
+  --accent-bg:rgba(154,123,200,.2); --accent-fg:#c0a6e0;
 }
+[data-dir="graphite"][data-theme="dark"] {
+  --bg:#0b0e11; --bg-2:#070809; --card:#14181d; --card-2:#0f1318; --border:#222831; --border-soft:#191e25;
+  --text:#a6b0ba; --text-dim:#e9edf2; --text-mut:#6a7480; --input-bg:#0d1014; --hover:#181d24;
+}
+[data-dir="editorial"][data-theme="dark"] {
+  --bg:#14131a; --bg-2:#100f15; --card:#1c1b24; --card-2:#17161e; --border:#2c2a37; --border-soft:#211f2a;
+  --text:#b0acbd; --text-dim:#ecebf3; --text-mut:#756f82; --input-bg:#161520; --hover:#221f2e;
+}
+
+/* ============================================================================
+   DENSITY & SIZING (independent axis) and INTERFACE FONT (overrides theme font)
+   ============================================================================ */
+[data-density="compact"]     { --pad:13px; --gap:10px; --row-h:32px; --ctl-h:31px; --fs:12.5px; --card-pad:14px; }
+[data-density="cozy"]        { --pad:18px; --gap:15px; --row-h:40px; --ctl-h:36px; --fs:13.5px; --card-pad:18px; }
+[data-density="comfortable"] { --pad:26px; --gap:22px; --row-h:50px; --ctl-h:44px; --fs:15px;   --card-pad:26px; }
+
+[data-font="inter"]   { --font:"Inter","Segoe UI",-apple-system,system-ui,sans-serif; --font-head:var(--font); }
+[data-font="system"]  { --font:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; --font-head:var(--font); }
+[data-font="rounded"] { --font:"SF Pro Rounded","Nunito","Quicksand",ui-rounded,"Segoe UI",system-ui,sans-serif; --font-head:var(--font); }
 
 /* ============================================================================
    base
@@ -118,7 +116,7 @@ html, body { height: 100%; }
 body {
   margin: 0;
   font-family: var(--font);
-  font-size: 13.5px;
+  font-size: var(--fs);
   line-height: 1.5;
   color: var(--text);
   background: var(--bg);
@@ -282,7 +280,7 @@ code, .mono { font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, mono
 /* buttons */
 .btn {
   display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
-  height: 36px; padding: 0 14px; border-radius: var(--radius-sm);
+  height: var(--ctl-h); padding: 0 14px; border-radius: var(--radius-sm);
   border: 1px solid var(--border); background: var(--card); color: var(--text-dim);
   font-family: var(--font); font-size: 13px; font-weight: 650; white-space: nowrap;
   transition: border-color .12s, background .12s, transform .05s;
@@ -360,7 +358,7 @@ table.tbl .check-cell { display: flex; align-items: center; gap: 9px; }
 .field { display: block; }
 .field > label { display: block; font-size: 12px; font-weight: 700; color: var(--text-dim); margin-bottom: 6px; }
 .input, select.input, textarea.input {
-  width: 100%; height: 38px; padding: 0 12px; border: 1px solid var(--border);
+  width: 100%; height: var(--ctl-h); padding: 0 12px; border: 1px solid var(--border);
   border-radius: var(--radius-sm); background: var(--input-bg); color: var(--text-dim);
   font-size: 13px; font-family: var(--font);
 }
@@ -447,10 +445,10 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; }
    ============================================================================ */
 
 /* health ring (conic gauge) */
-.ring { --p: 96; --col: var(--ok); width: 92px; height: 92px; border-radius: 99px; flex: none;
+.ring { --p: 96; --col: var(--ok); width: 92px; height: 92px; border-radius: 99px; flex: none; position: relative;
   background: conic-gradient(var(--col) calc(var(--p) * 1%), var(--bg-2) 0); display: grid; place-items: center; }
-.ring::before { content: ""; position: absolute; width: 70px; height: 70px; border-radius: 99px; background: var(--card); }
-.ring > span { position: relative; font-weight: 800; font-size: 20px; color: var(--text-dim); }
+.ring::before { content: ""; grid-area: 1 / 1; width: 70px; height: 70px; border-radius: 99px; background: var(--card); }
+.ring > span { grid-area: 1 / 1; align-self: center; justify-self: center; font-weight: 800; font-size: 20px; color: var(--text-dim); }
 .ring.warn { --col: var(--warn); } .ring.danger { --col: var(--danger); }
 
 /* dimension scorecard tile */
@@ -556,6 +554,47 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; }
 .type-opt .tt { font-weight: 700; color: var(--text-dim); font-size: 12.5px; }
 .type-opt .td { font-size: 11px; color: var(--text-mut); margin-top: 1px; }
 .drawer.wide { width: 540px; }
+.drawer.prefs { width: 480px; }
+
+/* ---- navigation layouts (data-nav-layout = full | icons | centered) ---- */
+.topnav { display: none; }
+[data-nav-layout="icons"] .sidebar { width: 66px; padding: 14px 8px; }
+[data-nav-layout="icons"] .nav-item { font-size: 0; justify-content: center; gap: 0; padding: 9px 0; }
+[data-nav-layout="icons"] .nav-item .count, [data-nav-layout="icons"] .nav-item .badge { display: none; }
+[data-nav-layout="icons"] .nav-label { font-size: 0; height: 6px; padding: 0; }
+[data-nav-layout="icons"] .brand { font-size: 0; justify-content: center; padding: 6px 0 16px; }
+[data-nav-layout="icons"] .user-box { justify-content: center; padding: 12px 0 4px; }
+[data-nav-layout="icons"] .user-box .who { display: none; }
+[data-nav-layout="centered"] .sidebar { display: none; }
+[data-nav-layout="centered"] .topnav {
+  display: flex; gap: 3px; justify-content: center; flex-wrap: wrap; align-items: center;
+  padding: 8px 18px; border-bottom: 1px solid var(--border-soft);
+  background: color-mix(in srgb, var(--bg) 86%, transparent); backdrop-filter: blur(10px);
+  position: sticky; top: 56px; z-index: 14;
+}
+[data-nav-layout="centered"] .topnav .nav-item { margin-bottom: 0; padding: 6px 11px; font-size: 13px; }
+[data-nav-layout="centered"] .topnav .nav-item svg { display: none; }
+[data-nav-layout="centered"] .topnav .count { margin-left: 6px; }
+[data-nav-layout="centered"] .page { max-width: 1120px; }
+
+/* ---- Appearance & preferences panel ---- */
+.pref-sec { font-size: 11px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: var(--text-mut); margin: 20px 0 9px; }
+.pref-sec:first-child { margin-top: 0; }
+.theme-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.theme-card { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; cursor: pointer; background: var(--card); padding: 0; text-align: left; font-family: var(--font); }
+.theme-card.on { border-color: var(--brand); box-shadow: 0 0 0 2px var(--brand-ghost); }
+.theme-card .tc-prev { height: 62px; padding: 11px 12px; display: flex; flex-direction: column; gap: 7px; justify-content: center; }
+.theme-card .tc-bar { height: 6px; border-radius: 99px; }
+.theme-card .tc-dot { width: 13px; height: 13px; border-radius: 4px; }
+.theme-card .tc-name { padding: 9px 12px; font-weight: 700; color: var(--text-dim); border-top: 1px solid var(--border-soft); font-size: 12.5px; display: flex; align-items: center; justify-content: space-between; }
+.theme-card .tc-name .chk { color: var(--brand); opacity: 0; font-weight: 900; }
+.theme-card.on .tc-name .chk { opacity: 1; }
+.swatch-row { display: flex; gap: 9px; flex-wrap: wrap; align-items: center; }
+.swatch-btn { width: 28px; height: 28px; border-radius: 8px; border: 2px solid transparent; cursor: pointer; padding: 0; }
+.swatch-btn.on { box-shadow: 0 0 0 2px var(--card), 0 0 0 4px var(--text-mut); }
+.swatch-btn.custom { display: grid; place-items: center; }
+.seg.wide { display: flex; width: 100%; }
+.seg.wide button { flex: 1; justify-content: center; display: flex; align-items: center; gap: 6px; }
 
 /* responsive */
 @media (max-width: 1080px) {

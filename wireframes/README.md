@@ -19,8 +19,24 @@ python -m http.server -d wireframes 4173   # then open http://localhost:4173
 | `react-incidents.html` | The **Incidents flow built in real React** (React 18 + hooks + `useReducer`) — promote → group → assign → RCA (streamed) → resolve, end-to-end with live state. **Fully isolated** from the real app. Needs internet at view-time (loads React from a CDN). |
 | `COMPETITIVE-ANALYSIS.md` | Market scan of ~18 DQ/observability vendors — focus, differentiators, UX patterns, white space, and the v2 iteration plan. |
 | `DESIGN-NOTES.md` | Editorial critique — what's good/bad in v1, what v2 adds, and what we deliberately **leave out** to avoid enterprise bloat. |
-| `assets/app.css` | The whole design system: token-driven, three direction themes × light/dark. |
-| `assets/app.js` | Vanilla JS: direction/theme switching (persisted), SPA routing, tabs, drawers. |
+| `assets/app.css` | The whole design system: token-driven. 3 themes (Aurora/Graphite/Editorial) each with a tailored **light + dark**, plus independent **density, accent, font, and nav-layout** axes. |
+| `assets/app.js` | Vanilla JS: appearance preferences (persisted), SPA routing, tabs, drawers, charts. |
+
+### Appearance & preferences
+
+Open the **sliders icon** in the topbar (or build your own — it's the `#prefsDrawer`). Every axis is a
+`data-*` attribute on `<html>`, persisted per-device in `localStorage` (`dqw-prefs`):
+
+| Axis | Attribute | Options |
+|---|---|---|
+| Theme | `data-dir` | aurora · graphite · editorial (each has light **and** dark) |
+| Mode | `data-theme` | light · dark · **system** (follows OS) |
+| Density & sizing | `data-density` | compact · cozy · comfortable |
+| Accent | inline `--brand` | any colour (the rest derive via `color-mix`); Reset clears it |
+| Interface font | `data-font` | theme · Inter · System · Rounded |
+| Navigation | `data-nav-layout` | full · icons-only · centered |
+
+Status colours (ok/warn/danger/info) are shared across every theme — only brand + surfaces change.
 
 ## Three directions for "the look"
 
