@@ -5,8 +5,9 @@ step — open the files directly in a browser (or serve the folder).
 
 ```bash
 # from repo root
-python -m http.server -d wireframes 4173   # then open http://localhost:4173
-# or just double-click wireframes/index.html
+python -m http.server -d docs/wireframes 4173   # then open http://localhost:4173
+# or just double-click docs/wireframes/index.html
+# …or open a single-file build that needs nothing else: docs/wireframes/standalone/prototype.html
 ```
 
 ## Files
@@ -16,7 +17,9 @@ python -m http.server -d wireframes 4173   # then open http://localhost:4173
 | `index.html` | **Start here.** Hub/gallery presenting the three visual directions side by side, with entry points. |
 | `app.html` | **Interactive prototype (v2)** — the full clickable system (17 connected screens). Direction + dark-mode switchers live in the topbar. |
 | `components.html` | Component reference sheet (the Figma-style library) — every primitive in every direction. |
-| `react-incidents.html` | The **Incidents flow built in real React** (React 18 + hooks + `useReducer`) — promote → group → assign → RCA (streamed) → resolve, end-to-end with live state. **Fully isolated** from the real app. Needs internet at view-time (loads React from a CDN). |
+| `react-incidents.html` | The **Incidents flow built in real React** (React 18 + hooks + `useReducer`) — promote → group → assign → RCA (streamed) → resolve, end-to-end with live state. **Fully isolated** from the real app. Loads React from a CDN (readable source). |
+| `standalone/` | Single-file, self-contained builds (CSS/JS — and React — inlined). Open with no server, no unzip, **fully offline**. These match the files handed out for review. Regenerate with `build-standalone.py`. |
+| `DESIGN-PHILOSOPHY.md` | The holistic design philosophy — principles, the token system, the three themes, density/accent/font/nav axes, accessibility, and the "why" behind the decisions. |
 | `COMPETITIVE-ANALYSIS.md` | Market scan of ~18 DQ/observability vendors — focus, differentiators, UX patterns, white space, and the v2 iteration plan. |
 | `DESIGN-NOTES.md` | Editorial critique — what's good/bad in v1, what v2 adds, and what we deliberately **leave out** to avoid enterprise bloat. |
 | `assets/app.css` | The whole design system: token-driven. 3 themes (Aurora/Graphite/Editorial) each with a tailored **light + dark**, plus independent **density, accent, font, and nav-layout** axes. |
