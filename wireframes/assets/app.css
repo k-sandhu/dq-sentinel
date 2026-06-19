@@ -442,6 +442,83 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; }
 [data-route]:not(.active) { display: none; }
 [data-tabpanel]:not(.active) { display: none; }
 
+/* ============================================================================
+   v2 components (incidents, scorecard, hop-graph, attribution, contracts…)
+   ============================================================================ */
+
+/* health ring (conic gauge) */
+.ring { --p: 96; --col: var(--ok); width: 92px; height: 92px; border-radius: 99px; flex: none;
+  background: conic-gradient(var(--col) calc(var(--p) * 1%), var(--bg-2) 0); display: grid; place-items: center; }
+.ring::before { content: ""; position: absolute; width: 70px; height: 70px; border-radius: 99px; background: var(--card); }
+.ring > span { position: relative; font-weight: 800; font-size: 20px; color: var(--text-dim); }
+.ring.warn { --col: var(--warn); } .ring.danger { --col: var(--danger); }
+
+/* dimension scorecard tile */
+.dim-tile { padding: 12px 14px; }
+.dim-tile .dn { font-size: 11.5px; font-weight: 700; color: var(--text-mut); text-transform: uppercase; letter-spacing: .4px; }
+.dim-tile .dv { font-size: 20px; font-weight: 800; color: var(--text-dim); margin: 6px 0 8px; font-variant-numeric: tabular-nums; }
+
+/* GitHub-style calendar heatmap */
+.cal { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 11px); gap: 3px; }
+.cal i { width: 11px; height: 11px; border-radius: 2px; background: var(--ok-bg); }
+.cal i.q0 { background: var(--border-soft); } .cal i.q1 { background: var(--ok-bg); }
+.cal i.q2 { background: var(--warn-bg); } .cal i.q3 { background: var(--danger-bg); }
+.cal i.q4 { background: var(--danger); }
+
+/* lineage hop-graph: expand buttons w/ counts */
+.lnode { position: relative; }
+.lnode .hop { position: absolute; top: 50%; transform: translateY(-50%); width: 20px; height: 20px; border-radius: 99px;
+  border: 1px solid var(--border); background: var(--card); color: var(--text-mut); font-size: 10px; font-weight: 800;
+  display: grid; place-items: center; cursor: pointer; }
+.lnode .hop:hover { border-color: var(--brand); color: var(--brand); }
+.lnode .hop.left { left: -10px; } .lnode .hop.right { right: -10px; }
+.lnode .badge-status { position: absolute; top: -7px; right: -7px; width: 16px; height: 16px; border-radius: 99px;
+  display: grid; place-items: center; font-size: 9px; color: #fff; border: 2px solid var(--card); }
+.lnode .badge-status.ok { background: var(--ok); } .lnode .badge-status.fail { background: var(--danger); } .lnode .badge-status.pending { background: var(--text-mut); }
+
+/* good-vs-bad attribution (decision-tree style) */
+.attr-row { display: grid; grid-template-columns: 150px 1fr 52px; align-items: center; gap: 10px; padding: 6px 0; }
+.attr-row .ab { height: 8px; border-radius: 99px; background: var(--bg-2); overflow: hidden; }
+.attr-row .ab > span { display: block; height: 100%; background: var(--danger); border-radius: 99px; }
+.gb-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.gb-cols .gb-h { font-size: 11.5px; font-weight: 700; padding: 6px 10px; border-radius: var(--radius-sm) var(--radius-sm) 0 0; }
+.gb-cols .gb-h.good { background: var(--ok-bg); color: var(--ok-fg); } .gb-cols .gb-h.bad { background: var(--danger-bg); color: var(--danger-fg); }
+
+/* severity dots */
+.sev { display: inline-flex; align-items: center; gap: 5px; font-weight: 700; font-size: 11.5px; }
+.sev::before { content: ""; width: 8px; height: 8px; border-radius: 2px; }
+.sev.s1::before { background: var(--danger); } .sev.s1 { color: var(--danger-fg); }
+.sev.s2::before { background: var(--warn); } .sev.s2 { color: var(--warn-fg); }
+.sev.s3::before { background: var(--info); } .sev.s3 { color: var(--info-fg); }
+
+/* contract / breaking-change diff rows */
+.diff-row { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); margin-bottom: 6px; font-size: 12.5px; }
+.diff-row .tag { font-size: 10.5px; font-weight: 800; padding: 1px 7px; border-radius: 4px; }
+.diff-row.safe .tag { background: var(--ok-bg); color: var(--ok-fg); }
+.diff-row.breaking { border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); }
+.diff-row.breaking .tag { background: var(--danger-bg); color: var(--danger-fg); }
+.code-pane { margin: 0; padding: 14px 16px; background: var(--card-2); border-radius: var(--radius-sm); border: 1px solid var(--border-soft);
+  font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.75; color: var(--text-dim); overflow: auto; }
+.code-pane .k { color: var(--brand-deep); } .code-pane .s { color: var(--ok-fg); } .code-pane .c { color: var(--text-mut); }
+
+/* PR comment mock */
+.pr { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.pr .pr-top { display: flex; align-items: center; gap: 9px; padding: 10px 14px; background: var(--card-2); border-bottom: 1px solid var(--border-soft); font-size: 12.5px; }
+.pr .pr-top .gh { width: 22px; height: 22px; border-radius: 99px; background: var(--inverse-bg); color: #fff; display: grid; place-items: center; }
+.pr .pr-body { padding: 14px 16px; }
+
+/* routing rule rows */
+.rule { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; padding: 12px 14px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); margin-bottom: 8px; }
+.rule .arrow { color: var(--text-mut); }
+
+/* live "streaming" pulse dot for agent steps */
+.pulse { width: 9px; height: 9px; border-radius: 99px; background: var(--brand); box-shadow: 0 0 0 0 var(--brand-ghost); animation: pulse 1.5s infinite; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 var(--brand-ghost); } 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+@media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
+
+/* nav-group spacing tweak for 3 groups */
+.sidebar .nav-scroll { overflow-y: auto; flex: 1; margin: 0 -4px; padding: 0 4px; }
+
 /* responsive */
 @media (max-width: 1080px) {
   .split { grid-template-columns: 1fr; }

@@ -87,10 +87,22 @@ just schema/row-count); **the PR comment is the killer surface** — auto-posts 
 **downstream impact (incl. BI dashboards)** into the pull request. **No-Code CI**. 2025 **Migration Agent**
 (LLM translate→diff→self-correct until parity). [[Data Diff]](https://www.datafold.com/data-diff/) [[CI]](https://docs.datafold.com/deployment-testing/how-it-works)
 
-**Enterprise (Collibra DQ / Ataccama / Informatica)** — **auto-generated / "adaptive" rules** + **DQ
-scoring across the 6 dimensions** (completeness, accuracy, timeliness, consistency, validity, uniqueness),
-fused with catalog + governance + AI (CLAIRE / Ataccama AI). Heavier, governance-led, slower UIs;
-strongest on **scorecards by domain/CDE** and stewardship workflows. Ataccama is a loud **shift-left** voice.
+**Enterprise (Collibra DQ / Ataccama / Informatica / IBM Databand)** — **auto-generated / "adaptive"
+rules** + **DQ scoring across the 6 dimensions** (completeness, accuracy, consistency, validity,
+uniqueness, integrity), fused with catalog + governance + AI. Concrete patterns worth stealing:
+- **Collibra** — a single **0–100 score = passing monitors ÷ total active monitors**, rolled up with
+  **per-dimension ring charts** and a score-history trend; "**adaptive rules** … 100% coverage, zero
+  maintenance"; **Text2SQL** assistant turns NL → a SQL rule. [[scores]](https://productresources.collibra.com/docs/collibra/latest/Content/UnifiedDataQuality/co_about-data-quality-scores.htm)
+- **Ataccama** — most autonomous: the **ONE AI Agent** ("digital data steward") auto-generates rules
+  *and* **executes fixes at the source** (human-approved); a **single alert surface prioritized by
+  governance context** (CDEs, stewardship groups, business terms) so noise is ranked by real exposure.
+- **Informatica / CLAIRE** — signature **before/after scorecard comparison** (score the data, apply
+  rules, re-score to show the lift); **CLAIRE Data Quality Agents** turn an NL business spec → an
+  operationalized rule "in minutes."
+- **IBM Databand** — pipeline-/ops-centric; **self-learning anomaly baselines**; clean **consolidated
+  alerts → impact analysis → lineage** investigation order (impact *before* the graph).
+
+Heavier, governance-led, slower UIs; strongest on **scorecards by domain/CDE** and stewardship workflows.
 
 ---
 

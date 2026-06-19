@@ -3,10 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DQ Sentinel — clickable prototype</title>
+<title>DQ Sentinel — clickable prototype (v2)</title>
 <link rel="stylesheet" href="assets/app.css">
 <style>
-  /* page-local tweaks for the direction switcher in the topbar */
   .dir-switch { display: inline-flex; gap: 2px; padding: 3px; background: var(--bg-2); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); }
   .dir-switch button { border: none; background: transparent; cursor: pointer; font-family: var(--font); font-weight: 700; font-size: 11.5px; color: var(--text-mut); padding: 5px 10px; border-radius: calc(var(--radius-sm) - 2px); display: flex; align-items: center; gap: 6px; }
   .dir-switch button.on { background: var(--card); color: var(--text-dim); box-shadow: var(--shadow); }
@@ -20,54 +19,31 @@
   <!-- ===================== SIDEBAR ===================== -->
   <aside class="sidebar">
     <div class="brand">
-      <span class="mark">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2 4 6v6c0 5 3.5 8 8 10 4.5-2 8-5 8-10V6z"/></svg>
-      </span>
+      <span class="mark"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2 4 6v6c0 5 3.5 8 8 10 4.5-2 8-5 8-10V6z"/></svg></span>
       DQ Sentinel
     </div>
 
-    <div class="nav-label">Monitor</div>
-    <a class="nav-item active" data-nav="home">
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 12 12 4l9 8"/><path d="M5 10v9h14v-9"/></svg> Overview
-    </a>
-    <a class="nav-item" data-nav="mywork">
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M9 3v4M15 3v4M4 10h16"/></svg> My work
-      <span class="count alert">5</span>
-    </a>
-    <a class="nav-item" data-nav="exceptions">
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 3 2 20h20z"/><path d="M12 9v5M12 17v.5"/></svg> Exceptions
-      <span class="count alert">23</span>
-    </a>
+    <div class="nav-scroll">
+      <div class="nav-label">Monitor</div>
+      <a class="nav-item active" data-nav="home"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 12 12 4l9 8"/><path d="M5 10v9h14v-9"/></svg> Overview</a>
+      <a class="nav-item" data-nav="incidents"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 2a7 7 0 0 1 7 7c0 5-7 13-7 13S5 14 5 9a7 7 0 0 1 7-7z"/><circle cx="12" cy="9" r="2"/></svg> Incidents <span class="count alert">4</span></a>
+      <a class="nav-item" data-nav="exceptions"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 3 2 20h20z"/><path d="M12 9v5M12 17v.5"/></svg> Exceptions <span class="count alert">23</span></a>
+      <a class="nav-item" data-nav="mywork"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M9 3v4M15 3v4M4 10h16"/></svg> My work <span class="count">5</span></a>
 
-    <div class="nav-label">Build</div>
-    <a class="nav-item" data-nav="connections">
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/></svg> Connections
-    </a>
-    <a class="nav-item" data-nav="datasets">
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg> Datasets
-      <span class="count">34</span>
-    </a>
-    <a class="nav-item" data-nav="checks">
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 12l5 5L20 6"/></svg> Checks
-      <span class="count">218</span>
-    </a>
-    <a class="nav-item" data-nav="lineage">
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M8 7l8 4M8 17l8-4"/></svg> Lineage
-    </a>
+      <div class="nav-label">Build</div>
+      <a class="nav-item" data-nav="connections"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/></svg> Connections</a>
+      <a class="nav-item" data-nav="datasets"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg> Datasets <span class="count">34</span></a>
+      <a class="nav-item" data-nav="checks"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 12l5 5L20 6"/></svg> Checks <span class="count">218</span></a>
+      <a class="nav-item" data-nav="contracts"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M9 12l2 2 4-4"/><path d="M7 3h10l3 4v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7z"/></svg> Contracts <span class="badge" style="margin-left:auto">new</span></a>
+      <a class="nav-item" data-nav="lineage"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M8 7l8 4M8 17l8-4"/></svg> Lineage</a>
 
-    <div class="nav-label">Investigate</div>
-    <a class="nav-item" data-nav="assistant">
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 5h16v11H8l-4 4z"/><path d="M9 10h6M9 13h4"/></svg> Assistant
-      <span class="badge ai" style="margin-left:auto">AI</span>
-    </a>
-    <a class="nav-item" data-nav="workbench">
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg> Query workbench
-    </a>
+      <div class="nav-label">Investigate</div>
+      <a class="nav-item" data-nav="assistant"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 5h16v11H8l-4 4z"/><path d="M9 10h6M9 13h4"/></svg> Assistant <span class="badge ai" style="margin-left:auto">AI</span></a>
+      <a class="nav-item" data-nav="workbench"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg> Query workbench</a>
+      <a class="nav-item" data-nav="alerts"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg> Alerts &amp; routing</a>
+    </div>
 
-    <div class="spacer"></div>
-    <a class="nav-item" data-nav="settings">
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg> Settings
-    </a>
+    <a class="nav-item" data-nav="settings"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg> Settings</a>
     <div class="user-box">
       <span class="avatar">AK</span>
       <span class="who"><div class="n">Amrit K.</div><div class="r">Data platform · admin</div></span>
@@ -77,14 +53,9 @@
   <!-- ===================== MAIN ===================== -->
   <div class="main">
 
-    <!-- topbar -->
     <header class="topbar">
       <span class="env"><span class="dot warn"></span> Production · warehouse</span>
-      <div class="search">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>
-        <input placeholder="Search datasets, checks, exceptions…">
-        <span class="kbd">⌘K</span>
-      </div>
+      <div class="search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg><input placeholder="Search datasets, checks, incidents…"><span class="kbd">⌘K</span></div>
       <div class="right">
         <div class="dir-switch" title="Visual direction">
           <button data-set-dir="aurora" class="on"><span class="sw sw-aurora"></span>Aurora</button>
@@ -92,106 +63,176 @@
           <button data-set-dir="editorial"><span class="sw sw-editorial"></span>Editorial</button>
         </div>
         <button class="icon-btn" data-theme-toggle title="Toggle light/dark"><span data-theme-icon>☾</span></button>
-        <button class="icon-btn" title="Notifications">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>
-          <span class="notif">3</span>
-        </button>
+        <button class="icon-btn" title="Notifications"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span class="notif">3</span></button>
       </div>
     </header>
 
-    <!-- ============ ROUTE: HOME / OVERVIEW ============ -->
+    <!-- ============ OVERVIEW (inverted pyramid) ============ -->
     <section data-route="home" class="active">
       <div class="page wide">
         <div class="page-head">
-          <div>
-            <h1>Data quality overview</h1>
-            <div class="sub">34 datasets · 218 active checks · last sweep 4 min ago</div>
-          </div>
+          <div><h1>Data quality overview</h1><div class="sub">34 datasets · 218 active checks · last sweep 4 min ago</div></div>
           <div class="row">
+            <select class="input" style="width:auto"><option>All domains</option><option>Revenue</option><option>Growth</option><option>Finance</option></select>
             <div class="seg"><button class="on">24h</button><button>7d</button><button>30d</button></div>
             <button class="btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7M21 4v5h-5"/></svg> Run sweep</button>
           </div>
         </div>
 
-        <div class="grid cols-4" style="margin-bottom:16px">
-          <div class="card kpi link" data-nav="datasets"><div class="label">Health score</div><div class="value ok">96.4%</div><div class="foot"><span class="delta up">▲ 1.2</span> vs last week</div></div>
-          <div class="card kpi link" data-nav="exceptions"><div class="label">Open exceptions</div><div class="value danger">23</div><div class="foot"><span class="delta down">▲ 8</span> since yesterday</div></div>
-          <div class="card kpi link" data-nav="checks"><div class="label">Checks passing</div><div class="value">211 / 218</div><div class="foot">7 failing · 0 erroring</div></div>
-          <div class="card kpi link"><div class="label">SLA attainment</div><div class="value warn">98.1%</div><div class="foot">2 freshness SLAs at risk</div></div>
+        <!-- TIER 1: status -->
+        <div class="grid" style="grid-template-columns: 280px repeat(4, minmax(0,1fr)); margin-bottom:16px">
+          <div class="card pad row" style="gap:16px;align-items:center">
+            <div class="ring" style="--p:96;"><span>96<small style="font-size:11px">%</small></span></div>
+            <div><div class="label" style="font-size:11.5px;font-weight:700;color:var(--text-mut);text-transform:uppercase;letter-spacing:.5px">Health score</div><div class="row" style="gap:6px;margin-top:4px"><span class="delta up">▲ 1.2</span><span class="dim-cap">WoW</span></div><div class="dim-cap" style="margin-top:6px">211 / 218 checks passing</div></div>
+          </div>
+          <a class="card kpi link" data-nav="incidents"><div class="label">Open incidents</div><div class="value danger">4</div><div class="foot"><span class="sev s1">1 Sev1</span></div></a>
+          <a class="card kpi link" data-nav="exceptions"><div class="label">Open exceptions</div><div class="value danger">23</div><div class="foot"><span class="delta down">▲ 8</span> today</div></a>
+          <div class="card kpi"><div class="label">MTTD / MTTR</div><div class="value" style="font-size:22px">9m / 3.4h</div><div class="foot">↓ 18% MTTR WoW</div></div>
+          <div class="card kpi"><div class="label">Monitoring coverage</div><div class="value warn">78%</div><div class="foot">7 datasets uncovered</div></div>
         </div>
 
+        <!-- TIER 2: trend + needs attention -->
         <div class="split" style="margin-bottom:16px">
           <div class="card">
-            <div class="card-head"><h3>Check results — last 24h</h3><div class="tools"><span class="dim-cap">hover a cell to inspect</span></div></div>
+            <div class="card-head"><h3>Check results — last 24h</h3><span class="dim-cap">9,841 passed · 64 failed · 12 degraded</span></div>
             <div class="card-body">
-              <div class="row wrap" style="gap:18px;margin-bottom:14px">
-                <span class="pill ok"><span class="pdot"></span> 9,841 passed</span>
-                <span class="pill danger"><span class="pdot"></span> 64 failed</span>
-                <span class="pill warn"><span class="pdot"></span> 12 degraded</span>
-                <span class="pill neutral">7,930,210 rows scanned</span>
+              <div class="heat" id="homeHeat" style="grid-template-columns:repeat(24,1fr);margin-bottom:18px"></div>
+              <div class="divider"></div>
+              <div class="row between" style="margin-bottom:10px"><h3 style="font-size:13px">Quality by dimension</h3><span class="dim-cap">6 DQ dimensions</span></div>
+              <div class="grid cols-3">
+                <div class="card dim-tile"><div class="dn">Completeness</div><div class="dv ok" style="color:var(--ok-fg)">99.2%</div><div class="meter ok"><span style="width:99%"></span></div></div>
+                <div class="card dim-tile"><div class="dn">Validity</div><div class="dv" style="color:var(--danger-fg)">94.1%</div><div class="meter danger"><span style="width:94%"></span></div></div>
+                <div class="card dim-tile"><div class="dn">Freshness</div><div class="dv" style="color:var(--warn-fg)">96.8%</div><div class="meter warn"><span style="width:96%"></span></div></div>
+                <div class="card dim-tile"><div class="dn">Uniqueness</div><div class="dv">100%</div><div class="meter ok"><span style="width:100%"></span></div></div>
+                <div class="card dim-tile"><div class="dn">Consistency</div><div class="dv">98.5%</div><div class="meter"><span style="width:98%"></span></div></div>
+                <div class="card dim-tile"><div class="dn">Accuracy</div><div class="dv">97.2%</div><div class="meter"><span style="width:97%"></span></div></div>
               </div>
-              <div class="heat" id="homeHeat" style="grid-template-columns:repeat(24,1fr)"></div>
-              <div class="row between" style="margin-top:8px"><span class="dim-cap">00:00</span><span class="dim-cap">now</span></div>
             </div>
           </div>
           <div class="card">
-            <div class="card-head"><h3>Needs attention</h3><a class="btn ghost sm" data-nav="exceptions">View all</a></div>
+            <div class="card-head"><h3>Needs attention</h3><a class="btn ghost sm" data-nav="incidents">All incidents</a></div>
             <div class="card-body stack" style="gap:10px">
-              <a class="note danger" data-nav="exceptions" style="cursor:pointer">
-                <b>orders.total_amount</b> — 18 rows below 0 · not-null & range check failed 11m ago
-              </a>
-              <a class="note warn" data-nav="datasets" style="cursor:pointer">
-                <b>customers</b> freshness 6h stale — expected hourly load missed
-              </a>
-              <div class="note info">
-                <span>IsolationForest flagged <b>3 outlier days</b> in <b>payments.amount</b> distribution.</span>
-              </div>
+              <a class="note danger" data-nav="incident" style="cursor:pointer"><span><b>INC-204 · orders</b> — negative total_amount + freshness, 3 alerts grouped · Sev1</span></a>
+              <a class="note warn" data-nav="dataset" style="cursor:pointer"><span><b>customers</b> freshness 6h stale — hourly load missed</span></a>
+              <div class="note info"><span>ML flagged <b>3 outlier days</b> in payments.amount.</span></div>
+              <div class="divider"></div>
+              <div class="row between"><h3 style="font-size:13px">90-day health</h3><span class="dim-cap">incidents/day</span></div>
+              <div class="cal" id="homeCal"></div>
             </div>
           </div>
         </div>
 
+        <!-- TIER 3: worklist -->
         <div class="card">
-          <div class="card-head"><h3>Datasets by risk</h3><div class="tools"><button class="chip on">All</button><button class="chip">Failing</button><button class="chip">Stale</button></div></div>
-          <div class="table-wrap">
-            <table class="tbl">
-              <thead><tr><th>Dataset</th><th>Engine</th><th>Health</th><th class="num">Checks</th><th class="num">Open exc.</th><th>Freshness</th><th>Owner</th></tr></thead>
-              <tbody>
-                <tr data-nav="dataset"><td><span class="strong">orders</span></td><td><span class="badge kind">postgres</span></td><td style="width:130px"><div class="meter danger"><span style="width:71%"></span></div></td><td class="num">14</td><td class="num"><span class="pill danger">18</span></td><td><span class="pill warn">2h late</span></td><td>revenue@</td></tr>
-                <tr data-nav="dataset"><td><span class="strong">customers</span></td><td><span class="badge kind">postgres</span></td><td style="width:130px"><div class="meter warn"><span style="width:88%"></span></div></td><td class="num">11</td><td class="num"><span class="pill warn">3</span></td><td><span class="pill danger">6h stale</span></td><td>growth@</td></tr>
-                <tr data-nav="dataset"><td><span class="strong">payments</span></td><td><span class="badge kind">snowflake</span></td><td style="width:130px"><div class="meter ok"><span style="width:97%"></span></div></td><td class="num">19</td><td class="num"><span class="pill ok">0</span></td><td><span class="pill ok">on time</span></td><td>finance@</td></tr>
-                <tr data-nav="dataset"><td><span class="strong">events_raw</span></td><td><span class="badge kind">duckdb</span></td><td style="width:130px"><div class="meter ok"><span style="width:99%"></span></div></td><td class="num">8</td><td class="num"><span class="pill ok">0</span></td><td><span class="pill ok">on time</span></td><td>product@</td></tr>
-                <tr data-nav="dataset"><td><span class="strong">inventory</span></td><td><span class="badge kind">mysql</span></td><td style="width:130px"><div class="meter ok"><span style="width:94%"></span></div></td><td class="num">9</td><td class="num"><span class="pill warn">2</span></td><td><span class="pill ok">on time</span></td><td>ops@</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ============ ROUTE: MY WORK ============ -->
-    <section data-route="mywork">
-      <div class="page">
-        <div class="page-head"><div><h1>My work</h1><div class="sub">Your triage queue and assignments for today</div></div></div>
-        <div class="grid cols-3" style="margin-bottom:16px">
-          <div class="card kpi"><div class="label">Assigned to you</div><div class="value">5</div><div class="foot">2 high priority</div></div>
-          <div class="card kpi"><div class="label">Awaiting your review</div><div class="value">3</div><div class="foot">RCA reports ready</div></div>
-          <div class="card kpi"><div class="label">Resolved this week</div><div class="value ok">28</div><div class="foot">avg 3.4h to close</div></div>
-        </div>
-        <div class="card">
-          <div class="card-head"><h3>Triage queue</h3><div class="seg"><button class="on">Priority</button><button>Newest</button></div></div>
+          <div class="card-head"><h3>Datasets by risk</h3><div class="tools"><button class="chip on">All</button><button class="chip">Failing</button><button class="chip">Stale</button><button class="chip">Uncovered</button></div></div>
           <div class="table-wrap"><table class="tbl">
-            <thead><tr><th></th><th>Exception</th><th>Dataset</th><th>Age</th><th>Status</th></tr></thead>
+            <thead><tr><th>Dataset</th><th>Domain</th><th>Engine</th><th>Health</th><th class="num">Coverage</th><th class="num">Open</th><th>Freshness</th><th>Owner</th></tr></thead>
             <tbody>
-              <tr data-open-drawer="excDrawer"><td><span class="pill danger">P1</span></td><td><span class="strong">total_amount below 0</span> · 18 rows</td><td>orders</td><td>11m</td><td><span class="pill info">open</span></td></tr>
-              <tr data-open-drawer="excDrawer"><td><span class="pill warn">P2</span></td><td><span class="strong">email format invalid</span> · 4 rows</td><td>customers</td><td>1h</td><td><span class="pill accent">acknowledged</span></td></tr>
-              <tr data-open-drawer="excDrawer"><td><span class="pill warn">P2</span></td><td><span class="strong">freshness SLA missed</span></td><td>customers</td><td>6h</td><td><span class="pill info">open</span></td></tr>
+              <tr data-nav="dataset"><td><span class="strong">orders</span></td><td>Revenue</td><td><span class="badge kind">postgres</span></td><td style="width:120px"><div class="meter danger"><span style="width:71%"></span></div></td><td class="num">100%</td><td class="num"><span class="pill danger">18</span></td><td><span class="pill warn">2h late</span></td><td>revenue@</td></tr>
+              <tr data-nav="dataset"><td><span class="strong">customers</span></td><td>Growth</td><td><span class="badge kind">postgres</span></td><td style="width:120px"><div class="meter warn"><span style="width:88%"></span></div></td><td class="num">92%</td><td class="num"><span class="pill warn">3</span></td><td><span class="pill danger">6h stale</span></td><td>growth@</td></tr>
+              <tr data-nav="dataset"><td><span class="strong">payments</span></td><td>Finance</td><td><span class="badge kind">snowflake</span></td><td style="width:120px"><div class="meter ok"><span style="width:97%"></span></div></td><td class="num">100%</td><td class="num"><span class="pill ok">0</span></td><td><span class="pill ok">on time</span></td><td>finance@</td></tr>
+              <tr data-nav="dataset"><td><span class="strong">marketing_spend</span></td><td>Growth</td><td><span class="badge kind">bigquery</span></td><td style="width:120px"><div class="meter"><span style="width:0%"></span></div></td><td class="num" style="color:var(--text-mut)">0%</td><td class="num"><span class="pill neutral">—</span></td><td><span class="pill neutral">no checks</span></td><td>—</td></tr>
             </tbody>
           </table></div>
         </div>
       </div>
     </section>
 
-    <!-- ============ ROUTE: CONNECTIONS ============ -->
+    <!-- ============ INCIDENTS (list) ============ -->
+    <section data-route="incidents">
+      <div class="page">
+        <div class="page-head"><div><h1>Incidents</h1><div class="sub">Correlated failures grouped by lineage + time. Promote an exception to start one.</div></div><div class="seg"><button class="on">Open 4</button><button>Investigating 2</button><button>Resolved</button></div></div>
+        <div class="row wrap" style="gap:8px;margin-bottom:14px"><button class="chip on">All severities</button><button class="chip">Sev1</button><button class="chip">Sev2</button><span style="flex:1"></span><span class="dim-cap">grouped by lineage edge + 5h window + issue type</span></div>
+        <div class="card"><div class="table-wrap"><table class="tbl">
+          <thead><tr><th>Incident</th><th>Severity</th><th>Datasets</th><th class="num">Alerts</th><th>Status</th><th>Owner</th><th>Age</th></tr></thead>
+          <tbody>
+            <tr data-nav="incident"><td><span class="strong">Negative amounts + freshness on orders</span> <span class="badge">INC-204</span></td><td><span class="sev s1">Sev1</span></td><td>orders → daily_revenue</td><td class="num">3</td><td><span class="pill info">open</span></td><td>revenue@</td><td>11m</td></tr>
+            <tr data-nav="incident"><td><span class="strong">customers load missed SLA</span> <span class="badge">INC-203</span></td><td><span class="sev s2">Sev2</span></td><td>customers</td><td class="num">2</td><td><span class="pill accent">investigating</span></td><td>growth@</td><td>6h</td></tr>
+            <tr data-nav="incident"><td><span class="strong">payments distribution shift</span> <span class="badge">INC-202</span> <span class="badge ai">ML</span></td><td><span class="sev s3">Sev3</span></td><td>payments</td><td class="num">1</td><td><span class="pill info">open</span></td><td>finance@</td><td>2h</td></tr>
+            <tr data-nav="incident"><td><span class="strong">events_raw schema drift</span> <span class="badge">INC-201</span></td><td><span class="sev s3">Sev3</span></td><td>events_raw</td><td class="num">1</td><td><span class="pill accent">investigating</span></td><td>product@</td><td>1d</td></tr>
+          </tbody>
+        </table></div></div>
+      </div>
+    </section>
+
+    <!-- ============ INCIDENT (detail) ============ -->
+    <section data-route="incident">
+      <div class="page wide">
+        <div class="crumbs"><a data-nav="incidents">Incidents</a> <span>/</span> <span style="color:var(--text-dim)">INC-204</span></div>
+        <div class="page-head">
+          <div><h1 class="row" style="gap:10px"><span class="sev s1">Sev1</span> Negative amounts + freshness on orders</h1><div class="sub">Opened 11m ago · 3 correlated alerts · grouped by lineage + time window</div></div>
+          <div class="row"><select class="input" style="width:auto"><option>Owner: revenue@</option><option>Reassign…</option></select><button class="btn"><span class="badge ai">AI</span> Run RCA</button><button class="btn primary">Resolve</button></div>
+        </div>
+        <div class="grid cols-4" style="margin-bottom:18px">
+          <div class="card kpi"><div class="label">Status</div><div class="value" style="font-size:18px"><span class="pill info">Investigating</span></div></div>
+          <div class="card kpi"><div class="label">Severity</div><div class="value" style="font-size:18px"><span class="sev s1">Sev1</span></div><div class="foot">high stakeholder impact</div></div>
+          <div class="card kpi"><div class="label">Member alerts</div><div class="value">3</div></div>
+          <div class="card kpi"><div class="label">Downstream at risk</div><div class="value warn">2</div><div class="foot">daily_revenue, exec_dashboard</div></div>
+        </div>
+        <div class="split">
+          <div class="stack">
+            <div class="card"><div class="card-head"><h3>Member alerts</h3></div><div class="table-wrap"><table class="tbl">
+              <thead><tr><th>Alert</th><th>Check</th><th class="num">Rows</th><th>Seen</th></tr></thead>
+              <tbody>
+                <tr data-open-drawer="excDrawer"><td><span class="strong">total_amount ≥ 0 failed</span></td><td><span class="badge kind">range</span></td><td class="num">18</td><td>11m</td></tr>
+                <tr data-open-drawer="excDrawer"><td><span class="strong">freshness ≤ 1h breached</span></td><td><span class="badge kind">freshness</span></td><td class="num">—</td><td>9m</td></tr>
+                <tr data-open-drawer="excDrawer"><td><span class="strong">row volume −22%</span></td><td><span class="badge kind">volume</span></td><td class="num">—</td><td>8m</td></tr>
+              </tbody>
+            </table></div></div>
+            <div class="card"><div class="card-head"><h3>Impact — affected & downstream</h3></div><div class="card-body">
+              <div class="lineage"><div class="lnode fail"><span class="badge-status fail">!</span><div class="t">orders</div><div class="m">3 failing</div></div><div class="ledge fail"></div><div class="lnode warn"><div class="t">daily_revenue</div><div class="m">at risk</div></div><div class="ledge"></div><div class="lnode warn"><div class="t">exec_dashboard</div><div class="m">revenue KPI</div></div></div>
+            </div></div>
+          </div>
+          <div class="card"><div class="card-head"><h3>Timeline</h3></div><div class="card-body"><div class="tl">
+            <div class="tl-item danger"><div class="when">11m ago</div><div class="what">Incident opened — range check failed (18 rows)</div></div>
+            <div class="tl-item warn"><div class="when">10m ago</div><div class="what">freshness + volume alerts auto-grouped (lineage + 5h window)</div></div>
+            <div class="tl-item"><div class="when">9m ago</div><div class="what">Routed to #revenue-oncall (Slack) · PagerDuty Sev1</div></div>
+            <div class="tl-item"><div class="when">6m ago</div><div class="what">A. Khan set status → Investigating</div></div>
+            <div class="tl-item"><div class="when">now</div><div class="what row" style="gap:8px"><span class="pulse"></span> RCA agent investigating…</div></div>
+          </div></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ EXCEPTIONS ============ -->
+    <section data-route="exceptions">
+      <div class="page">
+        <div class="page-head"><div><h1>Exceptions</h1><div class="sub">Row-level alerts — triage to acknowledged / expected / resolved / muted, or promote to an incident</div></div><div class="seg"><button class="on">Open 23</button><button>Acknowledged 6</button><button>All</button></div></div>
+        <div class="row wrap" style="gap:8px;margin-bottom:14px"><button class="chip on">All</button><button class="chip">Sev1</button><button class="chip">Assigned to me</button><button class="chip">Unassigned</button></div>
+        <div class="card"><div class="table-wrap"><table class="tbl">
+          <thead><tr><th><input type="checkbox"></th><th>Exception</th><th>Sev</th><th>Dataset</th><th class="num">Rows</th><th>Owner</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr data-open-drawer="excDrawer"><td><input type="checkbox"></td><td><span class="strong">Negative total_amount</span></td><td><span class="sev s1">1</span></td><td>orders</td><td class="num">18</td><td>revenue@</td><td><span class="pill info">open</span></td></tr>
+            <tr data-open-drawer="excDrawer"><td><input type="checkbox"></td><td><span class="strong">Invalid email format</span></td><td><span class="sev s2">2</span></td><td>customers</td><td class="num">4</td><td>growth@</td><td><span class="pill accent">acknowledged</span></td></tr>
+            <tr data-open-drawer="excDrawer"><td><input type="checkbox"></td><td><span class="strong">Freshness SLA missed</span></td><td><span class="sev s2">2</span></td><td>customers</td><td class="num">—</td><td>growth@</td><td><span class="pill info">open</span></td></tr>
+            <tr data-open-drawer="excDrawer"><td><input type="checkbox"></td><td><span class="strong">Amount distribution shift</span> <span class="badge ai">ML</span></td><td><span class="sev s3">3</span></td><td>payments</td><td class="num">3</td><td>finance@</td><td><span class="pill info">open</span></td></tr>
+          </tbody>
+        </table></div></div>
+        <div class="row" style="margin-top:12px"><span class="dim-cap">2 selected</span><button class="btn sm">Assign</button><button class="btn sm">Set severity</button><button class="btn sm primary">Promote to incident</button></div>
+      </div>
+    </section>
+
+    <!-- ============ MY WORK ============ -->
+    <section data-route="mywork">
+      <div class="page">
+        <div class="page-head"><div><h1>My work</h1><div class="sub">Your queue and assignments for today</div></div></div>
+        <div class="grid cols-3" style="margin-bottom:16px">
+          <div class="card kpi"><div class="label">Assigned to you</div><div class="value">5</div><div class="foot">2 high priority</div></div>
+          <div class="card kpi"><div class="label">Awaiting your review</div><div class="value">3</div><div class="foot">RCA reports ready</div></div>
+          <div class="card kpi"><div class="label">Resolved this week</div><div class="value ok">28</div><div class="foot">avg 3.4h to close</div></div>
+        </div>
+        <div class="card"><div class="card-head"><h3>Triage queue</h3><div class="seg"><button class="on">Priority</button><button>Newest</button></div></div><div class="table-wrap"><table class="tbl">
+          <thead><tr><th>Sev</th><th>Exception</th><th>Dataset</th><th>Age</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr data-open-drawer="excDrawer"><td><span class="sev s1">1</span></td><td><span class="strong">total_amount below 0</span> · 18 rows</td><td>orders</td><td>11m</td><td><span class="pill info">open</span></td></tr>
+            <tr data-open-drawer="excDrawer"><td><span class="sev s2">2</span></td><td><span class="strong">email format invalid</span> · 4 rows</td><td>customers</td><td>1h</td><td><span class="pill accent">acknowledged</span></td></tr>
+            <tr data-open-drawer="excDrawer"><td><span class="sev s2">2</span></td><td><span class="strong">freshness SLA missed</span></td><td>customers</td><td>6h</td><td><span class="pill info">open</span></td></tr>
+          </tbody>
+        </table></div></div>
+      </div>
+    </section>
+
+    <!-- ============ CONNECTIONS ============ -->
     <section data-route="connections">
       <div class="page">
         <div class="page-head"><div><h1>Connections</h1><div class="sub">Read-only data sources — every query passes through guard_sql()</div></div><button class="btn primary">+ New connection</button></div>
@@ -200,10 +241,11 @@
           <div class="card pad" style="cursor:pointer"><div class="row between"><div class="row"><span class="badge kind">snowflake</span><b style="color:var(--text-dim)">finance-sf</b></div><span class="dot ok"></span></div><div class="dim-cap" style="margin:10px 0">snowflake://…/FINANCE</div><div class="row" style="gap:14px"><span class="dim-cap">7 datasets</span><span class="dim-cap">read-only ✓</span></div></div>
           <div class="card pad" style="cursor:pointer"><div class="row between"><div class="row"><span class="badge kind">duckdb</span><b style="color:var(--text-dim)">events-lake</b></div><span class="dot warn"></span></div><div class="dim-cap" style="margin:10px 0">duckdb:////data/events.duckdb</div><div class="row" style="gap:14px"><span class="dim-cap">5 datasets</span><span class="pill warn">locked</span></div></div>
         </div>
+        <div class="note info" style="margin-top:16px">9 engines supported: SQLite · DuckDB · PostgreSQL · MySQL · SQL Server · Snowflake · BigQuery · Trino · ClickHouse — all opened read-only where the driver allows.</div>
       </div>
     </section>
 
-    <!-- ============ ROUTE: DATASETS ============ -->
+    <!-- ============ DATASETS ============ -->
     <section data-route="datasets">
       <div class="page">
         <div class="page-head"><div><h1>Datasets</h1><div class="sub">Registered tables &amp; views under monitoring</div></div><div class="row"><button class="btn">Import schema</button><button class="btn primary" data-nav="dataset">+ Register dataset</button></div></div>
@@ -215,32 +257,26 @@
             <tr data-nav="dataset"><td><span class="check-cell"><span class="dot warn"></span><span class="strong">customers</span></span></td><td><span class="badge kind">postgres</span> warehouse-prod</td><td class="num">318K</td><td class="num">11</td><td class="num">11</td><td><span class="pill warn">88%</span></td><td>6h ago</td></tr>
             <tr data-nav="dataset"><td><span class="check-cell"><span class="dot ok"></span><span class="strong">payments</span></span></td><td><span class="badge kind">snowflake</span> finance-sf</td><td class="num">980K</td><td class="num">9</td><td class="num">19</td><td><span class="pill ok">97%</span></td><td>4m ago</td></tr>
             <tr data-nav="dataset"><td><span class="check-cell"><span class="dot ok"></span><span class="strong">events_raw</span></span></td><td><span class="badge kind">duckdb</span> events-lake</td><td class="num">42.1M</td><td class="num">23</td><td class="num">8</td><td><span class="pill ok">99%</span></td><td>4m ago</td></tr>
-            <tr data-nav="dataset"><td><span class="check-cell"><span class="dot ok"></span><span class="strong">inventory</span></span></td><td><span class="badge kind">mysql</span> ops-db</td><td class="num">88K</td><td class="num">7</td><td class="num">9</td><td><span class="pill ok">94%</span></td><td>4m ago</td></tr>
             <tr data-nav="dataset"><td><span class="check-cell"><span class="dot neutral" style="background:var(--text-mut)"></span><span class="strong">marketing_spend</span></span></td><td><span class="badge kind">bigquery</span> ga-export</td><td class="num">12K</td><td class="num">6</td><td class="num">0</td><td><span class="pill neutral">no checks</span></td><td>—</td></tr>
           </tbody>
         </table></div></div>
       </div>
     </section>
 
-    <!-- ============ ROUTE: DATASET DETAIL (tabbed) ============ -->
+    <!-- ============ DATASET DETAIL ============ -->
     <section data-route="dataset">
       <div class="page wide">
         <div class="crumbs"><a data-nav="datasets">Datasets</a> <span>/</span> <span style="color:var(--text-dim)">orders</span></div>
         <div class="page-head">
-          <div>
-            <h1 class="row" style="gap:10px"><span class="dot danger" style="width:11px;height:11px"></span> orders</h1>
-            <div class="sub">postgres · warehouse-prod · public.orders · 1.42M rows · profiled 4 min ago</div>
-          </div>
-          <div class="row"><button class="btn" data-nav="assistant"><span class="badge ai">AI</span> Ask assistant</button><button class="btn">Profile now</button><button class="btn primary" data-tab="ds:checks">+ Add check</button></div>
+          <div><h1 class="row" style="gap:10px"><span class="dot danger" style="width:11px;height:11px"></span> orders</h1><div class="sub">postgres · warehouse-prod · public.orders · 1.42M rows · profiled 4 min ago</div></div>
+          <div class="row"><button class="btn" data-nav="assistant"><span class="badge ai">AI</span> Ask assistant</button><button class="btn">Profile now</button><button class="btn primary" data-nav="generate"><span class="badge ai">AI</span> Generate checks</button></div>
         </div>
-
         <div class="grid cols-4" style="margin-bottom:18px">
           <div class="card kpi"><div class="label">Health</div><div class="value danger">71%</div><div class="foot">3 checks failing</div></div>
           <div class="card kpi"><div class="label">Open exceptions</div><div class="value danger">18</div><div class="foot">all in total_amount</div></div>
           <div class="card kpi"><div class="label">Freshness</div><div class="value warn">2h</div><div class="foot">behind hourly SLA</div></div>
           <div class="card kpi"><div class="label">Completeness</div><div class="value">99.2%</div><div class="foot">2 cols with nulls</div></div>
         </div>
-
         <div class="tabs">
           <span class="tab active" data-tab="ds:profile">Profile</span>
           <span class="tab" data-tab="ds:code">Code</span>
@@ -249,132 +285,109 @@
           <span class="tab" data-tab="ds:runs">Runs</span>
           <span class="tab" data-tab="ds:exc">Exceptions <span class="badge danger" style="margin-left:4px;background:var(--danger-bg);color:var(--danger-fg);border:0">18</span></span>
           <span class="tab" data-tab="ds:rca">RCA</span>
+          <span class="tab" data-tab="ds:contract">Contract</span>
           <span class="tab" data-tab="ds:know">Knowledge</span>
         </div>
 
-        <!-- profile -->
         <div data-tabpanel="ds:profile" class="active">
-          <div class="card">
-            <div class="card-head"><h3>Column profile</h3><span class="dim-cap">SQL aggregates + sampled stats · click a column to add a check</span></div>
-            <div class="table-wrap"><table class="tbl">
-              <thead><tr><th>Column</th><th>Type</th><th>Nulls</th><th>Distinct</th><th>Min</th><th>Max</th><th>Distribution</th></tr></thead>
-              <tbody>
-                <tr><td><span class="strong">id</span> <span class="badge">PK</span></td><td class="mono">bigint</td><td class="num">0%</td><td class="num">1.42M</td><td class="num">1</td><td class="num">1.42M</td><td><span class="spark"><i style="height:30%"></i><i style="height:50%"></i><i style="height:70%" class="hi"></i><i style="height:90%" class="hi"></i><i style="height:100%" class="hi"></i></span></td></tr>
-                <tr><td><span class="strong">customer_id</span> <span class="badge">FK</span></td><td class="mono">bigint</td><td class="num">0%</td><td class="num">318K</td><td class="num">1</td><td class="num">318K</td><td><span class="spark"><i style="height:60%" class="hi"></i><i style="height:80%" class="hi"></i><i style="height:40%"></i><i style="height:55%"></i><i style="height:35%"></i></span></td></tr>
-                <tr style="background:var(--danger-bg)"><td><span class="strong">total_amount</span></td><td class="mono">numeric</td><td class="num">0%</td><td class="num">94K</td><td class="num" style="color:var(--danger-fg);font-weight:700">-249.00</td><td class="num">8,420.00</td><td><span class="pill danger">18 below 0</span></td></tr>
-                <tr><td><span class="strong">status</span></td><td class="mono">text</td><td class="num">0%</td><td class="num">6</td><td class="num">—</td><td class="num">—</td><td><span class="row" style="gap:4px"><span class="badge">paid</span><span class="badge">shipped</span><span class="badge">refunded</span><span class="badge">+3</span></span></td></tr>
-                <tr><td><span class="strong">created_at</span></td><td class="mono">timestamp</td><td class="num">0%</td><td class="num">1.4M</td><td class="num">2021-03</td><td class="num">today</td><td><span class="spark"><i style="height:20%"></i><i style="height:45%"></i><i style="height:70%" class="hi"></i><i style="height:85%" class="hi"></i><i style="height:95%" class="hi"></i></span></td></tr>
-                <tr><td><span class="strong">promo_code</span></td><td class="mono">text</td><td class="num" style="color:var(--warn-fg)">62%</td><td class="num">214</td><td class="num">—</td><td class="num">—</td><td><span class="pill warn">high null rate</span></td></tr>
-              </tbody>
-            </table></div>
-          </div>
+          <div class="card"><div class="card-head"><h3>Column profile</h3><span class="dim-cap">SQL aggregates + sampled stats · click a column to add a check</span></div>
+          <div class="table-wrap"><table class="tbl">
+            <thead><tr><th>Column</th><th>Type</th><th>Nulls</th><th>Distinct</th><th>Min</th><th>Max</th><th>Distribution</th></tr></thead>
+            <tbody>
+              <tr><td><span class="strong">id</span> <span class="badge">PK</span></td><td class="mono">bigint</td><td class="num">0%</td><td class="num">1.42M</td><td class="num">1</td><td class="num">1.42M</td><td><span class="spark"><i style="height:40%"></i><i style="height:60%" class="hi"></i><i style="height:80%" class="hi"></i><i style="height:100%" class="hi"></i></span></td></tr>
+              <tr style="background:var(--danger-bg)"><td><span class="strong">total_amount</span></td><td class="mono">numeric</td><td class="num">0%</td><td class="num">94K</td><td class="num" style="color:var(--danger-fg);font-weight:700">-249.00</td><td class="num">8,420.00</td><td><span class="pill danger">18 below 0</span></td></tr>
+              <tr><td><span class="strong">status</span></td><td class="mono">text</td><td class="num">0%</td><td class="num">6</td><td class="num">—</td><td class="num">—</td><td><span class="row" style="gap:4px"><span class="badge">paid</span><span class="badge">shipped</span><span class="badge">+4</span></span></td></tr>
+              <tr><td><span class="strong">promo_code</span></td><td class="mono">text</td><td class="num" style="color:var(--warn-fg)">62%</td><td class="num">214</td><td class="num">—</td><td class="num">—</td><td><span class="pill warn">high null rate</span></td></tr>
+            </tbody>
+          </table></div></div>
         </div>
 
-        <!-- code -->
-        <div data-tabpanel="ds:code">
-          <div class="card"><div class="card-head"><h3>View definition</h3><span class="badge kind">postgres</span></div>
-          <div class="card-body"><pre class="mono" style="margin:0;overflow:auto;font-size:12.5px;line-height:1.7;color:var(--text-dim)">CREATE VIEW public.orders AS
-SELECT o.id, o.customer_id, o.total_amount,
-       o.status, o.created_at, o.promo_code
-FROM   raw.orders o
-WHERE  o.deleted_at IS NULL;</pre></div></div>
-        </div>
+        <div data-tabpanel="ds:code"><div class="card"><div class="card-head"><h3>View definition</h3><span class="badge kind">postgres</span></div><div class="card-body"><pre class="code-pane"><span class="k">CREATE VIEW</span> public.orders <span class="k">AS</span>
+<span class="k">SELECT</span> o.id, o.customer_id, o.total_amount, o.status, o.created_at
+<span class="k">FROM</span>   raw.orders o
+<span class="k">WHERE</span>  o.deleted_at <span class="k">IS NULL</span>;</pre></div></div></div>
 
-        <!-- lineage (inline mini) -->
-        <div data-tabpanel="ds:lineage">
-          <div class="card pad">
-            <div class="lineage">
-              <div class="lnode"><div class="t">raw.orders</div><div class="m">source table</div></div>
-              <div class="ledge fail"></div>
-              <div class="lnode fail"><div class="t">orders</div><div class="m">3 checks failing</div></div>
-              <div class="ledge"></div>
-              <div class="lnode"><div class="t">daily_revenue</div><div class="m">downstream</div></div>
-              <div class="ledge"></div>
-              <div class="lnode warn"><div class="t">exec_dashboard</div><div class="m">impact: revenue KPI</div></div>
-            </div>
-            <div class="note danger" style="margin-top:16px">Failure in <b>orders</b> propagates to <b>daily_revenue</b> → <b>exec_dashboard</b>. 2 downstream assets at risk.</div>
-          </div>
-        </div>
+        <div data-tabpanel="ds:lineage"><div class="card pad">
+          <div class="lineage"><div class="lnode"><div class="t">raw.orders</div><div class="m">source</div></div><div class="ledge fail"></div><div class="lnode fail"><span class="badge-status fail">!</span><div class="t">orders</div><div class="m">3 failing</div></div><div class="ledge"></div><div class="lnode"><div class="t">daily_revenue</div><div class="m">downstream</div></div><div class="ledge"></div><div class="lnode warn"><div class="t">exec_dashboard</div><div class="m">revenue KPI</div></div></div>
+          <div class="note danger" style="margin-top:16px">Failure propagates to <b>daily_revenue</b> → <b>exec_dashboard</b>. 2 downstream assets at risk. <a data-nav="lineage">Open full lineage →</a></div>
+        </div></div>
 
-        <!-- checks -->
-        <div data-tabpanel="ds:checks">
-          <div class="card">
-            <div class="card-head"><h3>Checks (14)</h3><div class="row"><span class="badge ai">3 AI-proposed</span><button class="btn sm primary">+ Add check</button></div></div>
-            <div class="table-wrap"><table class="tbl">
-              <thead><tr><th>Check</th><th>Type</th><th>Column</th><th>Schedule</th><th>Last run</th><th>Status</th></tr></thead>
-              <tbody>
-                <tr data-tab="ds:exc"><td><span class="strong">total_amount ≥ 0</span></td><td><span class="badge kind">range</span></td><td>total_amount</td><td>hourly</td><td>11m ago</td><td><span class="pill danger">18 failing</span></td></tr>
-                <tr><td><span class="strong">id is unique</span></td><td><span class="badge kind">unique</span></td><td>id</td><td>hourly</td><td>11m ago</td><td><span class="pill ok">pass</span></td></tr>
-                <tr><td><span class="strong">customer_id not null</span></td><td><span class="badge kind">not_null</span></td><td>customer_id</td><td>hourly</td><td>11m ago</td><td><span class="pill ok">pass</span></td></tr>
-                <tr><td><span class="strong">status in allowed set</span></td><td><span class="badge kind">accepted_values</span></td><td>status</td><td>hourly</td><td>11m ago</td><td><span class="pill ok">pass</span></td></tr>
-                <tr><td><span class="strong">amount outlier (ML)</span> <span class="badge ai">AI</span></td><td><span class="badge kind">isolation_forest</span></td><td>total_amount</td><td>daily</td><td>2h ago</td><td><span class="pill warn">3 flagged</span></td></tr>
-                <tr><td><span class="strong">freshness ≤ 1h</span></td><td><span class="badge kind">freshness</span></td><td>created_at</td><td>15 min</td><td>3m ago</td><td><span class="pill warn">2h late</span></td></tr>
-              </tbody>
-            </table></div>
-          </div>
-        </div>
+        <div data-tabpanel="ds:checks"><div class="card">
+          <div class="card-head"><h3>Checks (14)</h3><div class="row"><span class="badge ai">3 AI-proposed</span><button class="btn sm">Export as YAML</button><button class="btn sm primary" data-nav="generate">+ Generate with AI</button></div></div>
+          <div class="table-wrap"><table class="tbl">
+            <thead><tr><th>Check</th><th>Type</th><th>Column</th><th>Schedule</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr data-tab="ds:exc"><td><span class="strong">total_amount ≥ 0</span></td><td><span class="badge kind">range</span></td><td>total_amount</td><td>hourly</td><td><span class="pill danger">18 failing</span></td></tr>
+              <tr><td><span class="strong">id is unique</span></td><td><span class="badge kind">unique</span></td><td>id</td><td>hourly</td><td><span class="pill ok">pass</span></td></tr>
+              <tr><td><span class="strong">status in allowed set</span></td><td><span class="badge kind">accepted_values</span></td><td>status</td><td>hourly</td><td><span class="pill ok">pass</span></td></tr>
+              <tr><td><span class="strong">amount outlier (ML)</span> <span class="badge ai">AI</span></td><td><span class="badge kind">isolation_forest</span></td><td>total_amount</td><td>daily</td><td><span class="pill warn">3 flagged</span></td></tr>
+              <tr><td><span class="strong">freshness ≤ 1h</span></td><td><span class="badge kind">freshness</span></td><td>created_at</td><td>15 min</td><td><span class="pill warn">2h late</span></td></tr>
+            </tbody>
+          </table></div></div></div>
 
-        <!-- runs -->
-        <div data-tabpanel="ds:runs">
-          <div class="card pad"><div class="tl">
-            <div class="tl-item danger"><div class="when">11 min ago · hourly sweep</div><div class="what">range check failed — 18 violating rows captured</div></div>
-            <div class="tl-item ok"><div class="when">1h 11m ago</div><div class="what">14 checks ran · 13 passed</div></div>
-            <div class="tl-item warn"><div class="when">2h ago · ML</div><div class="what">IsolationForest flagged 3 outlier rows</div></div>
-            <div class="tl-item ok"><div class="when">2h 11m ago</div><div class="what">14 checks ran · all passed</div></div>
-          </div></div>
-        </div>
+        <div data-tabpanel="ds:runs"><div class="card pad"><div class="tl">
+          <div class="tl-item danger"><div class="when">11 min ago · hourly sweep</div><div class="what">range check failed — 18 violating rows captured</div></div>
+          <div class="tl-item ok"><div class="when">1h 11m ago</div><div class="what">14 checks ran · 13 passed</div></div>
+          <div class="tl-item warn"><div class="when">2h ago · ML</div><div class="what">IsolationForest flagged 3 outlier rows</div></div>
+        </div></div></div>
 
-        <!-- exceptions (in-dataset) -->
-        <div data-tabpanel="ds:exc">
-          <div class="card">
-            <div class="card-head"><h3>Exceptions — total_amount ≥ 0</h3><div class="row"><button class="btn sm">Mark expected</button><button class="btn sm">Mute</button><button class="btn sm primary" data-tab="ds:rca">Investigate (RCA)</button></div></div>
-            <div class="table-wrap"><table class="tbl">
-              <thead><tr><th><input type="checkbox"></th><th>id</th><th>customer_id</th><th>total_amount</th><th>status</th><th>created_at</th></tr></thead>
-              <tbody>
-                <tr data-open-drawer="excDrawer"><td><input type="checkbox"></td><td class="mono">8841201</td><td class="mono">44192</td><td class="num" style="color:var(--danger-fg);font-weight:700">-249.00</td><td><span class="badge">refunded</span></td><td>09:14</td></tr>
-                <tr data-open-drawer="excDrawer"><td><input type="checkbox"></td><td class="mono">8841233</td><td class="mono">12048</td><td class="num" style="color:var(--danger-fg);font-weight:700">-18.50</td><td><span class="badge">refunded</span></td><td>09:18</td></tr>
-                <tr data-open-drawer="excDrawer"><td><input type="checkbox"></td><td class="mono">8841290</td><td class="mono">90021</td><td class="num" style="color:var(--danger-fg);font-weight:700">-5.00</td><td><span class="badge">refunded</span></td><td>09:22</td></tr>
-              </tbody>
-            </table></div>
-          </div>
-        </div>
+        <div data-tabpanel="ds:exc"><div class="card">
+          <div class="card-head"><h3>Exceptions — total_amount ≥ 0</h3><div class="row"><button class="btn sm">Mark expected</button><button class="btn sm">Promote to incident</button><button class="btn sm primary" data-tab="ds:rca">Investigate (RCA)</button></div></div>
+          <div class="table-wrap"><table class="tbl">
+            <thead><tr><th><input type="checkbox"></th><th>id</th><th>customer_id</th><th>total_amount</th><th>status</th><th>created_at</th></tr></thead>
+            <tbody>
+              <tr data-open-drawer="excDrawer"><td><input type="checkbox"></td><td class="mono">8841201</td><td class="mono">44192</td><td class="num" style="color:var(--danger-fg);font-weight:700">-249.00</td><td><span class="badge">refunded</span></td><td>09:14</td></tr>
+              <tr data-open-drawer="excDrawer"><td><input type="checkbox"></td><td class="mono">8841233</td><td class="mono">12048</td><td class="num" style="color:var(--danger-fg);font-weight:700">-18.50</td><td><span class="badge">refunded</span></td><td>09:18</td></tr>
+            </tbody>
+          </table></div></div></div>
 
-        <!-- rca -->
+        <!-- RCA tri-section + streamed steps + hypothesis taxonomy -->
         <div data-tabpanel="ds:rca">
-          <div class="card">
-            <div class="card-head"><h3>Root-cause analysis <span class="badge ai">AI agent</span></h3><span class="pill ok">complete · 6 SQL queries</span></div>
-            <div class="card-body stack">
-              <div class="note info"><b>Finding:</b> All 18 negative <code>total_amount</code> rows have <code>status = 'refunded'</code> and a matching positive original order. Refund rows are written with a negated amount upstream in <code>raw.orders</code> — this is data-modelling, not corruption.</div>
-              <div>
-                <div class="dim-cap" style="margin-bottom:8px;font-weight:700">Evidence trail</div>
-                <div class="tl">
-                  <div class="tl-item"><div class="when">query 1 · 18 rows</div><div class="what mono" style="font-size:12px">SELECT * FROM orders WHERE total_amount &lt; 0</div></div>
-                  <div class="tl-item"><div class="when">query 3 · 18/18 match</div><div class="what mono" style="font-size:12px">…WHERE status='refunded' AND total_amount&lt;0</div></div>
-                  <div class="tl-item ok"><div class="when">query 6 · confirmed</div><div class="what">each refund maps to a prior paid order by customer_id</div></div>
-                </div>
-              </div>
-              <div class="row"><button class="btn primary">Mark 18 as expected</button><button class="btn">Edit check → exclude refunds</button></div>
+          <div class="card" style="margin-bottom:16px"><div class="card-head"><h3>Root-cause analysis <span class="badge ai">AI agent</span></h3><span class="pill ok">complete · 6 read-only SQL queries</span></div>
+          <div class="card-body">
+            <div class="row wrap" style="gap:8px;margin-bottom:14px"><span class="dim-cap" style="font-weight:700">Hypothesis class:</span><span class="chip">bad source data</span><span class="chip on">data modelling ✓</span><span class="chip">ETL failure</span><span class="chip">transform bug</span></div>
+            <div class="grid cols-3">
+              <div class="card pad"><div class="dim-cap" style="font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--text-mut)">What happened</div><p style="margin:8px 0 0;color:var(--text)">The range check on <code>total_amount</code> began failing at 09:14 with <b>18 negative rows</b>.</p></div>
+              <div class="card pad"><div class="dim-cap" style="font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--text-mut)">Analysis</div><p style="margin:8px 0 0;color:var(--text)">All 18 rows are <code>status='refunded'</code> with a matching prior paid order. Refunds are written with negated amounts upstream — modelling, not corruption.</p></div>
+              <div class="card pad"><div class="dim-cap" style="font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--text-mut)">Next steps</div><p style="margin:8px 0 0;color:var(--text)">Mark the 18 as <b>expected</b>, or edit the check to <code>WHERE status != 'refunded'</code>.</p></div>
             </div>
+          </div></div>
+          <div class="split">
+            <div class="card"><div class="card-head"><h3>Investigation steps</h3><span class="dim-cap">streamed live</span></div><div class="card-body"><div class="tl">
+              <div class="tl-item ok"><div class="when">query 1 · 18 rows</div><div class="what mono" style="font-size:12px">SELECT * FROM orders WHERE total_amount &lt; 0</div></div>
+              <div class="tl-item ok"><div class="when">query 3 · 18/18 match</div><div class="what mono" style="font-size:12px">…WHERE status='refunded' AND total_amount&lt;0</div></div>
+              <div class="tl-item ok"><div class="when">query 6 · confirmed</div><div class="what">each refund maps to a prior paid order by customer_id</div></div>
+            </div></div></div>
+            <div class="card"><div class="card-head"><h3>Why these rows? (attribution)</h3></div><div class="card-body">
+              <div class="attr-row"><span class="dim-cap">status = refunded</span><div class="ab"><span style="width:100%"></span></div><span class="dim-cap tabular">100%</span></div>
+              <div class="attr-row"><span class="dim-cap">amount &lt; 0</span><div class="ab"><span style="width:100%"></span></div><span class="dim-cap tabular">100%</span></div>
+              <div class="attr-row"><span class="dim-cap">has prior order</span><div class="ab"><span style="width:100%"></span></div><span class="dim-cap tabular">100%</span></div>
+              <p class="dim-cap" style="margin-top:10px">A decision tree separating the 18 failing rows from healthy rows splits cleanly on <code>status='refunded'</code>.</p>
+            </div></div>
           </div>
+          <div class="row" style="margin-top:16px"><button class="btn primary">Mark 18 as expected</button><button class="btn">Edit check → exclude refunds</button></div>
         </div>
 
-        <!-- knowledge -->
-        <div data-tabpanel="ds:know">
-          <div class="card pad stack">
-            <div><div class="dim-cap" style="font-weight:700;margin-bottom:6px">Table description</div><p style="margin:0;color:var(--text)">One row per customer order. Refunds appear as negative-amount rows with <code>status='refunded'</code> (known, expected).</p></div>
-            <div class="divider"></div>
-            <div><div class="dim-cap" style="font-weight:700;margin-bottom:6px">PII columns (redacted from LLM prompts)</div><div class="row wrap"><span class="badge">customer_id</span><span class="badge">promo_code</span></div></div>
-            <div class="divider"></div>
-            <div><div class="dim-cap" style="font-weight:700;margin-bottom:6px">Expected patterns learned from triage</div><span class="pill accent">negative amounts = refunds</span></div>
-          </div>
-        </div>
+        <!-- Contract tab -->
+        <div data-tabpanel="ds:contract"><div class="card pad">
+          <div class="row between" style="margin-bottom:14px"><div class="row"><span class="pill ok">active · v2.1</span><span class="dim-cap">owner: revenue@ · SLA freshness ≤ 1h</span></div><button class="btn sm">Open in contract editor</button></div>
+          <div class="note info">This dataset publishes a data contract. Schema + quality + SLA are enforced; breaking changes are gated in CI. <a data-nav="contracts">View contract registry →</a></div>
+        </div></div>
+
+        <div data-tabpanel="ds:know"><div class="card pad stack">
+          <div><div class="dim-cap" style="font-weight:700;margin-bottom:6px">Table description</div><p style="margin:0;color:var(--text)">One row per customer order. Refunds appear as negative-amount rows with <code>status='refunded'</code> (known, expected).</p></div>
+          <div class="divider"></div>
+          <div><div class="dim-cap" style="font-weight:700;margin-bottom:6px">PII columns (redacted from LLM prompts)</div><div class="row wrap"><span class="badge">customer_id</span><span class="badge">promo_code</span></div></div>
+          <div class="divider"></div>
+          <div><div class="dim-cap" style="font-weight:700;margin-bottom:6px">Learned from triage</div><span class="pill accent">negative amounts = refunds</span></div>
+        </div></div>
       </div>
     </section>
 
-    <!-- ============ ROUTE: CHECKS ============ -->
+    <!-- ============ CHECKS ============ -->
     <section data-route="checks">
       <div class="page">
-        <div class="page-head"><div><h1>Checks</h1><div class="sub">218 across 34 datasets · 13 check types</div></div><button class="btn primary">+ New check</button></div>
+        <div class="page-head"><div><h1>Checks</h1><div class="sub">218 across 34 datasets · 13 check types</div></div><div class="row"><button class="btn">Export as YAML</button><button class="btn primary" data-nav="generate"><span class="badge ai">AI</span> Generate checks</button></div></div>
         <div class="grid cols-4" style="margin-bottom:16px">
           <div class="card kpi"><div class="label">Passing</div><div class="value ok">211</div></div>
           <div class="card kpi"><div class="label">Failing</div><div class="value danger">7</div></div>
@@ -393,57 +406,116 @@ WHERE  o.deleted_at IS NULL;</pre></div></div>
       </div>
     </section>
 
-    <!-- ============ ROUTE: EXCEPTIONS ============ -->
-    <section data-route="exceptions">
-      <div class="page">
-        <div class="page-head"><div><h1>Exceptions</h1><div class="sub">Triage violating rows — open → acknowledged / expected / resolved / muted</div></div><div class="seg"><button class="on">Open 23</button><button>Acknowledged 6</button><button>All</button></div></div>
-        <div class="card"><div class="table-wrap"><table class="tbl">
-          <thead><tr><th><input type="checkbox"></th><th>Exception</th><th>Dataset</th><th>Check</th><th>Rows</th><th>First seen</th><th>Status</th></tr></thead>
-          <tbody>
-            <tr data-open-drawer="excDrawer"><td><input type="checkbox"></td><td><span class="strong">Negative total_amount</span></td><td>orders</td><td><span class="badge kind">range</span></td><td class="num">18</td><td>11m ago</td><td><span class="pill info">open</span></td></tr>
-            <tr data-open-drawer="excDrawer"><td><input type="checkbox"></td><td><span class="strong">Invalid email format</span></td><td>customers</td><td><span class="badge kind">regex</span></td><td class="num">4</td><td>1h ago</td><td><span class="pill accent">acknowledged</span></td></tr>
-            <tr data-open-drawer="excDrawer"><td><input type="checkbox"></td><td><span class="strong">Freshness SLA missed</span></td><td>customers</td><td><span class="badge kind">freshness</span></td><td class="num">—</td><td>6h ago</td><td><span class="pill info">open</span></td></tr>
-            <tr data-open-drawer="excDrawer"><td><input type="checkbox"></td><td><span class="strong">Amount distribution shift</span> <span class="badge ai">ML</span></td><td>payments</td><td><span class="badge kind">isolation_forest</span></td><td class="num">3</td><td>2h ago</td><td><span class="pill info">open</span></td></tr>
-          </tbody>
-        </table></div></div>
-      </div>
-    </section>
-
-    <!-- ============ ROUTE: LINEAGE ============ -->
-    <section data-route="lineage">
+    <!-- ============ GENERATE CHECKS (AI review + exploration trace) ============ -->
+    <section data-route="generate">
       <div class="page wide">
-        <div class="page-head"><div><h1>Lineage</h1><div class="sub">Table-level graph parsed from view SQL · check-health overlay</div></div><div class="seg"><button class="on">Health</button><button>Freshness</button><button>Owners</button></div></div>
-        <div class="card pad">
-          <div class="stack" style="gap:26px">
-            <div class="lineage"><div class="lnode"><div class="t">raw.orders</div><div class="m">postgres</div></div><div class="ledge fail"></div><div class="lnode fail"><div class="t">orders</div><div class="m">3 failing</div></div><div class="ledge fail"></div><div class="lnode warn"><div class="t">daily_revenue</div><div class="m">1 at risk</div></div><div class="ledge"></div><div class="lnode warn"><div class="t">exec_dashboard</div><div class="m">revenue KPI</div></div></div>
-            <div class="lineage"><div class="lnode"><div class="t">raw.customers</div><div class="m">postgres</div></div><div class="ledge"></div><div class="lnode warn"><div class="t">customers</div><div class="m">stale 6h</div></div><div class="ledge"></div><div class="lnode"><div class="t">cohorts</div><div class="m">ok</div></div></div>
-            <div class="lineage"><div class="lnode"><div class="t">stripe.charges</div><div class="m">snowflake</div></div><div class="ledge"></div><div class="lnode"><div class="t">payments</div><div class="m">healthy</div></div><div class="ledge"></div><div class="lnode"><div class="t">finance_close</div><div class="m">ok</div></div></div>
+        <div class="crumbs"><a data-nav="checks">Checks</a> <span>/</span> <span style="color:var(--text-dim)">Generate for orders</span></div>
+        <div class="page-head"><div><h1 class="row" style="gap:10px"><span class="badge ai">AI</span> Proposed checks for orders</h1><div class="sub">Heuristics + LLM. Review and deploy — nothing is applied until you approve.</div></div><div class="row"><button class="btn">Export YAML</button><button class="btn primary">Deploy 5 selected</button></div></div>
+        <div class="split">
+          <div class="card">
+            <div class="card-head"><h3>Recommendations</h3><span class="dim-cap">8 proposed · 5 selected</span></div>
+            <div class="table-wrap"><table class="tbl">
+              <thead><tr><th><input type="checkbox" checked></th><th>Check</th><th>Type</th><th>Source</th><th>Confidence</th></tr></thead>
+              <tbody>
+                <tr><td><input type="checkbox" checked></td><td><span class="strong">total_amount ≥ 0</span> <span class="dim-cap">(exclude refunds)</span></td><td><span class="badge kind">range</span></td><td><span class="badge ai">explored</span></td><td><span class="pill ok">high</span></td></tr>
+                <tr><td><input type="checkbox" checked></td><td><span class="strong">status in 6 known values</span></td><td><span class="badge kind">accepted_values</span></td><td><span class="badge ai">LLM</span></td><td><span class="pill ok">high</span></td></tr>
+                <tr><td><input type="checkbox" checked></td><td><span class="strong">created_at freshness ≤ 1h</span></td><td><span class="badge kind">freshness</span></td><td><span class="badge">heuristic</span></td><td><span class="pill ok">high</span></td></tr>
+                <tr><td><input type="checkbox" checked></td><td><span class="strong">id unique &amp; not null</span></td><td><span class="badge kind">unique</span></td><td><span class="badge">heuristic</span></td><td><span class="pill ok">high</span></td></tr>
+                <tr><td><input type="checkbox" checked></td><td><span class="strong">amount outlier (ML)</span></td><td><span class="badge kind">isolation_forest</span></td><td><span class="badge ai">LLM</span></td><td><span class="pill warn">medium</span></td></tr>
+                <tr style="opacity:.6"><td><input type="checkbox"></td><td><span class="strong">promo_code not null</span></td><td><span class="badge kind">not_null</span></td><td><span class="badge ai">LLM</span></td><td><span class="pill warn">low · 62% null</span></td></tr>
+              </tbody>
+            </table></div>
           </div>
-          <div class="note warn" style="margin-top:22px">Click any node to open its dataset. Red edges show how the <b>orders</b> failure propagates to <b>exec_dashboard</b>.</div>
+          <div class="card">
+            <div class="card-head"><h3>Exploration agent <span class="badge ai">our edge</span></h3><span class="dim-cap">read-only SQL to learn the data first</span></div>
+            <div class="card-body"><div class="tl">
+              <div class="tl-item ok"><div class="when">step 1</div><div class="what mono" style="font-size:11.5px">SELECT status, count(*) FROM orders GROUP BY status</div></div>
+              <div class="tl-item ok"><div class="when">step 2 · found refunds</div><div class="what mono" style="font-size:11.5px">SELECT min(total_amount) FROM orders WHERE status='refunded'</div></div>
+              <div class="tl-item ok"><div class="when">step 3</div><div class="what">learned: negatives only occur for refunds → propose range check that excludes them</div></div>
+            </div>
+            <div class="note info" style="margin-top:8px">Because the agent <b>explored the data</b>, the range check it proposes already excludes refunds — avoiding a false-alarm check no profiler would catch.</div>
+            <div class="divider"></div>
+            <div class="dim-cap" style="font-weight:700;margin-bottom:8px">Deploy as code</div>
+            <pre class="code-pane"><span class="c"># checks/orders.yaml</span>
+<span class="k">- name:</span> total_amount_non_negative
+  <span class="k">type:</span> range
+  <span class="k">column:</span> total_amount
+  <span class="k">min:</span> 0
+  <span class="k">where:</span> <span class="s">"status != 'refunded'"</span></pre>
+            </div>
+          </div>
         </div>
       </div>
     </section>
 
-    <!-- ============ ROUTE: WORKBENCH ============ -->
-    <section data-route="workbench">
+    <!-- ============ CONTRACTS ============ -->
+    <section data-route="contracts">
       <div class="page wide">
-        <div class="page-head"><div><h1>Query workbench</h1><div class="sub">Read-only SQL · guard_sql() enforces single SELECT + LIMIT</div></div><button class="btn primary">▷ Run (⌘↵)</button></div>
-        <div class="card" style="margin-bottom:16px"><div class="card-body"><pre class="mono" style="margin:0;color:var(--text-dim);font-size:13px;line-height:1.7">SELECT status, count(*) AS n, round(avg(total_amount),2) AS avg_amt
-FROM   orders
-GROUP  BY status
-ORDER  BY n DESC;</pre></div></div>
-        <div class="card"><div class="card-head"><h3>Result · 6 rows · 38ms</h3><button class="btn sm">Save as check</button></div><div class="table-wrap"><table class="tbl">
-          <thead><tr><th>status</th><th class="num">n</th><th class="num">avg_amt</th></tr></thead>
+        <div class="page-head"><div><h1>Data contracts <span class="badge">new</span></h1><div class="sub">Producer/consumer agreements — schema + quality + SLA, enforced at merge time</div></div><div class="row"><button class="btn">Generate from profile</button><button class="btn primary">+ New contract</button></div></div>
+        <div class="card" style="margin-bottom:16px"><div class="card-head"><h3>Registry</h3><span class="dim-cap">12 contracts</span></div><div class="table-wrap"><table class="tbl">
+          <thead><tr><th>Contract</th><th>Owner</th><th>Version</th><th>Status</th><th>Compliance</th><th>SLA</th></tr></thead>
           <tbody>
-            <tr><td>paid</td><td class="num">1,021,455</td><td class="num">84.20</td></tr>
-            <tr><td>shipped</td><td class="num">298,102</td><td class="num">91.05</td></tr>
-            <tr><td>refunded</td><td class="num">12,884</td><td class="num" style="color:var(--danger-fg)">-31.40</td></tr>
+            <tr><td><span class="strong">orders</span></td><td>revenue@</td><td class="mono">v2.1</td><td><span class="pill ok">active</span></td><td><span class="pill warn">1 violation</span></td><td><span class="pill ok">99.1%</span></td></tr>
+            <tr><td><span class="strong">payments</span></td><td>finance@</td><td class="mono">v3.0</td><td><span class="pill ok">active</span></td><td><span class="pill ok">passing</span></td><td><span class="pill ok">99.9%</span></td></tr>
+            <tr><td><span class="strong">customers</span></td><td>growth@</td><td class="mono">v1.4</td><td><span class="pill accent">in review</span></td><td><span class="pill warn">SLA at risk</span></td><td><span class="pill warn">97.0%</span></td></tr>
           </tbody>
         </table></div></div>
+        <div class="split">
+          <div class="card"><div class="card-head"><h3>Editor — orders</h3><div class="seg"><button class="on">Form</button><button>YAML</button></div></div><div class="card-body">
+            <pre class="code-pane"><span class="k">apiVersion:</span> v3.0.0   <span class="c"># Open Data Contract Standard</span>
+<span class="k">info:</span>
+  <span class="k">title:</span> orders
+  <span class="k">status:</span> active
+  <span class="k">owner:</span> revenue@
+<span class="k">schema:</span>
+  <span class="k">- column:</span> total_amount  <span class="k">type:</span> numeric  <span class="k">required:</span> true
+  <span class="k">- column:</span> status        <span class="k">enum:</span> [paid, shipped, refunded, …]
+<span class="k">quality:</span>
+  <span class="k">- rule:</span> total_amount &gt;= 0 <span class="k">where</span> status != 'refunded'
+<span class="k">sl:</span>
+  <span class="k">- freshness:</span> <span class="s">"&lt;= 1h"</span>  <span class="k">availability:</span> 99.9%</pre>
+          </div></div>
+          <div class="stack">
+            <div class="card"><div class="card-head"><h3>Change diff — v2.0 → v2.1</h3><span class="pill danger">1 breaking</span></div><div class="card-body">
+              <div class="diff-row safe"><span class="tag">SAFE</span> <span>+ added nullable column <code>promo_code</code></span></div>
+              <div class="diff-row safe"><span class="tag">SAFE</span> <span>relaxed freshness SLA 1h → 2h</span></div>
+              <div class="diff-row breaking"><span class="tag">BREAKING</span> <span>changed <code>status</code> type text → enum</span></div>
+              <div class="note warn" style="margin-top:8px">Breaking change impacts <b>2 downstream consumers</b>: daily_revenue, exec_dashboard. Requires a major version bump.</div>
+            </div></div>
+            <div class="card"><div class="card-head"><h3>CI gate — PR #482</h3></div><div class="card-body"><div class="pr">
+              <div class="pr-top"><span class="gh"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-3.2 19.5c.5.1.7-.2.7-.5v-1.7c-2.8.6-3.4-1.3-3.4-1.3-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 .1 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.3-1.1.6-1.3-2.2-.3-4.5-1.1-4.5-5a3.9 3.9 0 0 1 1-2.7c-.1-.3-.4-1.3.1-2.6 0 0 .8-.3 2.7 1a9.3 9.3 0 0 1 5 0c1.9-1.3 2.7-1 2.7-1 .5 1.3.2 2.3.1 2.6.6.7 1 1.6 1 2.7 0 3.9-2.3 4.7-4.5 5 .3.3.6.9.6 1.8v2.7c0 .3.2.6.7.5A10 10 0 0 0 12 2z"/></svg></span> <b style="color:var(--text-dim)">datafold-ci</b> commented on PR #482</div>
+              <div class="pr-body"><div class="row" style="gap:8px;margin-bottom:8px"><span class="pill danger">✗ contract check failed</span><span class="dim-cap">orders</span></div><p class="dim-cap" style="margin:0">Breaking change to <code>status</code> blocks merge. 64 rows would change downstream. Bump to v3 or revert.</p></div>
+            </div></div></div>
+          </div>
+        </div>
       </div>
     </section>
 
-    <!-- ============ ROUTE: ASSISTANT ============ -->
+    <!-- ============ LINEAGE (hop / neighborhood / impact) ============ -->
+    <section data-route="lineage">
+      <div class="page wide">
+        <div class="page-head"><div><h1>Lineage</h1><div class="sub">Neighborhood view · anchored on a node, expand by hops · check-health overlay</div></div><div class="row"><select class="input" style="width:auto"><option>1 hop</option><option>2 hops</option><option>All</option></select><div class="seg"><button class="on">Health</button><button>Freshness</button><button>Owners</button></div></div></div>
+        <div class="split">
+          <div class="card pad">
+            <div class="row between" style="margin-bottom:14px"><div class="row"><span class="badge">anchor</span><b style="color:var(--text-dim)">orders</b></div><span class="dim-cap">click a node to re-anchor · numbers on ◷ = hidden upstream/downstream</span></div>
+            <div class="stack" style="gap:26px">
+              <div class="lineage"><div class="lnode"><span class="hop left">2</span><div class="t">raw.orders</div><div class="m">postgres</div></div><div class="ledge fail"></div><div class="lnode fail"><span class="badge-status fail">!</span><div class="t">orders</div><div class="m">3 failing</div></div><div class="ledge fail"></div><div class="lnode warn"><span class="badge-status pending">?</span><div class="t">daily_revenue</div><div class="m">1 at risk</div></div><div class="ledge"></div><div class="lnode warn"><span class="hop right">4</span><div class="t">exec_dashboard</div><div class="m">revenue KPI</div></div></div>
+              <div class="lineage"><div class="lnode"><div class="t">raw.customers</div><div class="m">postgres</div></div><div class="ledge"></div><div class="lnode warn"><span class="badge-status pending">?</span><div class="t">customers</div><div class="m">stale 6h</div></div><div class="ledge"></div><div class="lnode"><span class="badge-status ok">✓</span><div class="t">cohorts</div><div class="m">ok</div></div></div>
+            </div>
+          </div>
+          <div class="card"><div class="card-head"><h3>Impact of orders failure</h3></div><div class="card-body stack">
+            <div class="kpi" style="padding:0"><div class="label">Downstream affected</div><div class="value danger">2</div></div>
+            <div class="divider"></div>
+            <div class="dim-cap" style="font-weight:700">Affected assets (ranked by usage)</div>
+            <div class="row between"><span><span class="strong">exec_dashboard</span> <span class="badge">Tableau</span></span><span class="pill danger">high use</span></div>
+            <div class="row between"><span><span class="strong">daily_revenue</span> <span class="badge kind">model</span></span><span class="pill warn">medium</span></div>
+            <div class="note info">Upstream traversal = root cause · downstream = blast radius. <a data-nav="incident">Open INC-204 →</a></div>
+          </div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ ASSISTANT ============ -->
     <section data-route="assistant">
       <div class="chat-wrap">
         <div class="chat-feed">
@@ -452,35 +524,88 @@ ORDER  BY n DESC;</pre></div></div>
             <div>Let me look at the recent failures and the offending rows.</div>
             <div class="tool-call"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12l5 5L20 6"/></svg> <span>recent_failures</span> <span class="mono">dataset=orders</span> <span class="pill ok" style="margin-left:auto">3 checks</span></div>
             <div class="tool-call"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/></svg> <span class="mono">run_sql</span> <span class="mono" style="color:var(--text-mut)">SELECT … WHERE total_amount &lt; 0</span> <span class="pill neutral" style="margin-left:auto">18 rows</span></div>
-            <div>The <b>range check</b> on <code>total_amount</code> started failing at 09:14 with <b>18 rows below 0</b>. All 18 are <code>status = 'refunded'</code> — refunds are written with negated amounts upstream, so this is expected modelling rather than corruption.</div>
-            <div class="card pad" style="margin-top:10px">
-              <div class="dim-cap" style="font-weight:700;margin-bottom:8px">refunds vs sales — last 24h</div>
-              <div class="spark" style="height:48px;gap:5px"><i style="height:80%" class="hi"></i><i style="height:70%" class="hi"></i><i style="height:90%" class="hi"></i><i style="height:30%"></i><i style="height:35%"></i><i style="height:60%" class="hi"></i><i style="height:75%" class="hi"></i></div>
-            </div>
-            <div class="row" style="margin-top:12px"><button class="btn sm primary">Mark 18 expected</button><button class="btn sm" data-nav="dataset">Open orders</button></div>
+            <div>The range check on <code>total_amount</code> started failing at 09:14 with <b>18 rows below 0</b>, all <code>status='refunded'</code> — expected modelling, not corruption.</div>
+            <div class="row" style="margin-top:12px"><button class="btn sm primary">Mark 18 expected</button><button class="btn sm">Create check excluding refunds</button><button class="btn sm" data-nav="incident">Open incident</button></div>
           </div></div>
         </div>
-        <div class="chat-input"><div class="box"><textarea class="input" rows="1" placeholder="Ask about your data… (e.g. which datasets are stale?)"></textarea><button class="btn primary">Send</button></div></div>
+        <div class="chat-input"><div class="box"><textarea class="input" rows="1" placeholder="Ask about your data, or tell me to create a check / open an investigation…"></textarea><button class="btn primary">Send</button></div></div>
       </div>
     </section>
 
-    <!-- ============ ROUTE: SETTINGS ============ -->
+    <!-- ============ WORKBENCH ============ -->
+    <section data-route="workbench">
+      <div class="page wide">
+        <div class="page-head"><div><h1>Query workbench</h1><div class="sub">Read-only SQL · guard_sql() enforces single SELECT + LIMIT</div></div><button class="btn primary">▷ Run (⌘↵)</button></div>
+        <div class="card" style="margin-bottom:16px"><div class="card-body"><pre class="code-pane"><span class="k">SELECT</span> status, count(*) <span class="k">AS</span> n, round(avg(total_amount),2) <span class="k">AS</span> avg_amt
+<span class="k">FROM</span>   orders <span class="k">GROUP BY</span> status <span class="k">ORDER BY</span> n <span class="k">DESC</span>;</pre></div></div>
+        <div class="card"><div class="card-head"><h3>Result · 6 rows · 38ms</h3><button class="btn sm">Save as check</button></div><div class="table-wrap"><table class="tbl">
+          <thead><tr><th>status</th><th class="num">n</th><th class="num">avg_amt</th></tr></thead>
+          <tbody>
+            <tr><td>paid</td><td class="num">1,021,455</td><td class="num">84.20</td></tr>
+            <tr><td>refunded</td><td class="num">12,884</td><td class="num" style="color:var(--danger-fg)">-31.40</td></tr>
+          </tbody>
+        </table></div></div>
+      </div>
+    </section>
+
+    <!-- ============ ALERTS & ROUTING ============ -->
+    <section data-route="alerts">
+      <div class="page wide">
+        <div class="page-head"><div><h1>Alerts &amp; routing</h1><div class="sub">Audiences + condition rules. Route the right signal to the right place.</div></div><button class="btn primary">+ New rule</button></div>
+        <div class="split">
+          <div class="card"><div class="card-head"><h3>Routing rules</h3></div><div class="card-body">
+            <div class="rule"><span class="sev s1">Sev1</span><span class="dim-cap">any incident on <b style="color:var(--text-dim)">Revenue</b> domain</span><span class="row"><span class="arrow">→</span><span class="pill info">#revenue-oncall</span><span class="pill accent">PagerDuty</span></span></div>
+            <div class="rule"><span class="sev s2">Sev2</span><span class="dim-cap">freshness breach, any dataset</span><span class="row"><span class="arrow">→</span><span class="pill info">#data-alerts</span></span></div>
+            <div class="rule"><span class="sev s3">Sev3</span><span class="dim-cap">ML anomaly, owner = finance@</span><span class="row"><span class="arrow">→</span><span class="pill info">email</span></span></div>
+          </div></div>
+          <div class="card"><div class="card-head"><h3>Interactive Slack</h3><span class="badge">preview</span></div><div class="card-body">
+            <div class="pr"><div class="pr-top"><span class="gh" style="background:#4a154b"><b style="font-size:10px">#</b></span> <b style="color:var(--text-dim)">#revenue-oncall</b></div>
+            <div class="pr-body">
+              <div class="row" style="gap:8px;margin-bottom:8px"><span class="pill danger">Sev1</span><b style="color:var(--text-dim)">orders — negative total_amount</b></div>
+              <p class="dim-cap" style="margin:0 0 10px">18 rows · INC-204 · column-level lineage attached · 2 downstream at risk</p>
+              <div class="spark" style="height:30px;margin-bottom:10px"><i style="height:80%" class="hi"></i><i style="height:70%" class="hi"></i><i style="height:30%"></i><i style="height:60%" class="hi"></i></div>
+              <div class="row wrap"><button class="btn sm">Mark expected</button><button class="btn sm">Acknowledge</button><button class="btn sm">Resolve</button><button class="btn sm ghost">Re-run</button></div>
+            </div></div>
+            <div class="note info" style="margin-top:10px">Message updates in place as the incident evolves; threaded reminders instead of re-alerting.</div>
+          </div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ SETTINGS (+ status page link) ============ -->
     <section data-route="settings">
       <div class="page">
-        <div class="page-head"><div><h1>Settings</h1><div class="sub">Workspace, LLM provider, users &amp; roles</div></div></div>
+        <div class="page-head"><div><h1>Settings</h1><div class="sub">Workspace, LLM provider, users &amp; roles</div></div><button class="btn" data-nav="status">View public status page →</button></div>
         <div class="card pad stack">
-          <div class="field"><label>LLM provider</label><div class="row"><div class="seg"><button class="on">Anthropic</button><button>OpenAI-compat</button><button>OpenRouter</button></div><span class="pill ok">key configured</span></div></div>
+          <div class="field"><label>LLM provider (bring your own)</label><div class="row"><div class="seg"><button class="on">Anthropic</button><button>OpenAI-compat</button><button>OpenRouter</button><button>Local (vLLM/Ollama)</button></div><span class="pill ok">key configured</span></div></div>
           <div class="divider"></div>
           <div class="field"><label>Model</label><input class="input" value="claude-opus-4-8" style="max-width:340px"></div>
-          <div class="note info">Without a key, check generation falls back to heuristics and explorer / RCA return 503 — every LLM feature degrades gracefully.</div>
+          <div class="note info">Self-hosted &amp; read-only by design. Without a key, check generation falls back to heuristics and explorer / RCA return 503 — every LLM feature degrades gracefully.</div>
         </div>
+      </div>
+    </section>
+
+    <!-- ============ STATUS PAGE (read-only stakeholder) ============ -->
+    <section data-route="status">
+      <div class="page">
+        <div class="page-head"><div><h1 class="row" style="gap:10px"><span class="dot warn"></span> Data status — Revenue</h1><div class="sub">Public, read-only view for stakeholders · auto-updated</div></div><span class="pill warn">1 active incident</span></div>
+        <div class="grid cols-3" style="margin-bottom:16px">
+          <div class="card pad row between"><span><b style="color:var(--text-dim)">orders</b><div class="dim-cap">refreshed hourly</div></span><span class="pill danger">degraded</span></div>
+          <div class="card pad row between"><span><b style="color:var(--text-dim)">daily_revenue</b><div class="dim-cap">refreshed hourly</div></span><span class="pill warn">delayed</span></div>
+          <div class="card pad row between"><span><b style="color:var(--text-dim)">payments</b><div class="dim-cap">refreshed 15 min</div></span><span class="pill ok">operational</span></div>
+        </div>
+        <div class="card"><div class="card-head"><h3>Incident updates</h3></div><div class="card-body"><div class="tl">
+          <div class="tl-item warn"><div class="when">09:23 · investigating</div><div class="what">orders showing negative amounts; revenue figures may be briefly understated. Team engaged.</div></div>
+          <div class="tl-item"><div class="when">09:30 · identified</div><div class="what">Root cause = refund modelling, not data loss. Figures are correct once refunds are accounted for.</div></div>
+          <div class="tl-item ok"><div class="when">expected 10:00 · monitoring</div><div class="what">Check adjusted to exclude refunds; awaiting next clean sweep.</div></div>
+        </div></div></div>
       </div>
     </section>
 
   </div>
 </div>
 
-<!-- ===================== EXCEPTION DRAWER ===================== -->
+<!-- ===================== EXCEPTION DRAWER (severity + assignee + why) ===================== -->
 <div class="scrim" id="scrim"></div>
 <aside class="drawer" id="excDrawer">
   <div class="drawer-head">
@@ -488,36 +613,49 @@ ORDER  BY n DESC;</pre></div></div>
     <button class="icon-btn" data-close-drawer>✕</button>
   </div>
   <div class="drawer-body stack">
-    <div class="row wrap"><span class="pill danger">18 rows</span><span class="pill info">open</span><span class="pill neutral">first seen 11m ago</span></div>
-    <div class="note danger"><span><b>total_amount ≥ 0</b> violated. 18 rows have a negative amount. Highest severity: −249.00.</span></div>
+    <div class="row wrap"><span class="sev s1">Sev1</span><span class="pill info">open</span><span class="pill neutral">18 rows · 11m ago</span></div>
+    <div class="grid cols-2">
+      <div class="field"><label>Severity</label><select class="input"><option>Sev1 — high impact</option><option>Sev2</option><option>Sev3</option></select></div>
+      <div class="field"><label>Assigned to</label><select class="input"><option>revenue@ (owner)</option><option>Amrit K.</option><option>Unassigned</option></select></div>
+    </div>
     <div>
-      <div class="dim-cap" style="font-weight:700;margin-bottom:8px">Sample violating rows</div>
-      <div class="card"><div class="table-wrap"><table class="tbl">
-        <thead><tr><th>id</th><th>amount</th><th>status</th></tr></thead>
-        <tbody>
-          <tr><td class="mono">8841201</td><td class="num" style="color:var(--danger-fg)">-249.00</td><td><span class="badge">refunded</span></td></tr>
-          <tr><td class="mono">8841233</td><td class="num" style="color:var(--danger-fg)">-18.50</td><td><span class="badge">refunded</span></td></tr>
-          <tr><td class="mono">8841290</td><td class="num" style="color:var(--danger-fg)">-5.00</td><td><span class="badge">refunded</span></td></tr>
-        </tbody>
-      </table></div></div>
+      <div class="dim-cap" style="font-weight:700;margin-bottom:8px">Why these rows failed — good vs. bad</div>
+      <div class="gb-cols">
+        <div><div class="gb-h good">Healthy sample</div><div class="card" style="border-radius:0 0 var(--radius-sm) var(--radius-sm);border-top:0"><table class="tbl"><tbody>
+          <tr><td class="mono">112.00</td><td><span class="badge">paid</span></td></tr>
+          <tr><td class="mono">86.50</td><td><span class="badge">paid</span></td></tr>
+        </tbody></table></div></div>
+        <div><div class="gb-h bad">Failing sample</div><div class="card" style="border-radius:0 0 var(--radius-sm) var(--radius-sm);border-top:0"><table class="tbl"><tbody>
+          <tr><td class="mono" style="color:var(--danger-fg)">-249.00</td><td><span class="badge">refunded</span></td></tr>
+          <tr><td class="mono" style="color:var(--danger-fg)">-18.50</td><td><span class="badge">refunded</span></td></tr>
+        </tbody></table></div></div>
+      </div>
+      <div style="margin-top:12px">
+        <div class="attr-row"><span class="dim-cap">status = refunded</span><div class="ab"><span style="width:100%"></span></div><span class="dim-cap tabular">100%</span></div>
+        <div class="attr-row"><span class="dim-cap">order_type = return</span><div class="ab"><span style="width:88%"></span></div><span class="dim-cap tabular">88%</span></div>
+        <p class="dim-cap" style="margin-top:6px">The failing rows are explained almost entirely by <code>status='refunded'</code>.</p>
+      </div>
     </div>
     <div>
       <div class="dim-cap" style="font-weight:700;margin-bottom:8px">Triage</div>
-      <div class="row wrap"><button class="btn primary">Mark expected</button><button class="btn">Acknowledge</button><button class="btn">Resolve</button><button class="btn ghost">Mute</button></div>
+      <div class="row wrap"><button class="btn primary">Mark expected</button><button class="btn">False positive</button><button class="btn">Acknowledge</button><button class="btn">Resolve</button><button class="btn ghost">Mute</button></div>
     </div>
     <div class="divider"></div>
-    <button class="btn" data-close-drawer data-nav="dataset"><span class="badge ai">AI</span> Run root-cause analysis</button>
+    <div class="row"><button class="btn" data-close-drawer data-nav="incident">Promote to incident</button><button class="btn" data-close-drawer data-nav="dataset"><span class="badge ai">AI</span> Run RCA</button></div>
   </div>
 </aside>
 
 <script src="assets/app.js"></script>
 <script>
-  // paint the home heatmap (24 cells, mostly healthy with a failing window)
   (function () {
-    const el = document.getElementById("homeHeat");
-    if (!el) return;
-    const levels = "00000010000001000000232100".slice(0,24).split("");
-    el.innerHTML = levels.map(l => `<i class="l${l}"></i>`).join("");
+    const heat = document.getElementById("homeHeat");
+    if (heat) heat.innerHTML = "00000010000001000000232100".slice(0,24).split("").map(l => `<i class="l${l}"></i>`).join("");
+    const cal = document.getElementById("homeCal");
+    if (cal) {
+      let s = "";
+      for (let i = 0; i < 90; i++) { const r = Math.random(); const q = r > .94 ? 4 : r > .88 ? 3 : r > .8 ? 2 : r > .5 ? 1 : 0; s += `<i class="q${q}"></i>`; }
+      cal.innerHTML = s;
+    }
   })();
 </script>
 </body>

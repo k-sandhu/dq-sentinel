@@ -106,18 +106,19 @@
 
   <div class="sec-label">Jump in</div>
   <div class="entry">
-    <a href="app.html#home"><div class="card"><div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></div><h3>Interactive prototype</h3><p>Full clickable system — Overview, Datasets, tabbed dataset detail, Checks, Exceptions triage, Lineage, RCA agent and the AI Assistant. 11 connected screens.</p></div></a>
+    <a href="app.html#home"><div class="card"><div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></div><h3>Interactive prototype <span class="pill info" style="font-weight:700">v2</span></h3><p>17 connected screens — Overview, Incidents, Exceptions triage, tabbed dataset detail, AI check-generation with the exploration trace, Contracts, Lineage impact, RCA agent, Alerts &amp; routing, status page, Assistant.</p></div></a>
     <a href="app.html#dataset"><div class="card"><div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg></div><h3>Key flow: dataset detail</h3><p>The tabbed Profile → Checks → Exceptions → RCA workspace — the heart of the triage experience, including the AI root-cause report.</p></div></a>
     <a href="components.html"><div class="card"><div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="7" cy="7" r="3.5"/><circle cx="17" cy="7" r="3.5"/><circle cx="7" cy="17" r="3.5"/><circle cx="17" cy="17" r="3.5"/></svg></div><h3>Component reference</h3><p>The building blocks — buttons, pills, KPIs, tables, tabs, drawers, charts — rendered in every direction. Your Figma-style library.</p></div></a>
   </div>
 
-  <div class="sec-label">What the prototype covers</div>
+  <div class="sec-label">What the prototype covers (v2 — shaped by the market scan)</div>
   <div class="grid cols-4">
-    <div class="card pad"><b style="color:var(--text-dim)">Monitor</b><p class="dim-cap" style="margin:6px 0 0">Executive overview, health heatmap, My-work triage queue, exceptions inbox.</p></div>
-    <div class="card pad"><b style="color:var(--text-dim)">Build</b><p class="dim-cap" style="margin:6px 0 0">Connections, dataset registration, profiling, check authoring (13 types incl. ML).</p></div>
-    <div class="card pad"><b style="color:var(--text-dim)">Investigate</b><p class="dim-cap" style="margin:6px 0 0">RCA agent report, AI assistant chat with tool calls + inline charts, SQL workbench.</p></div>
-    <div class="card pad"><b style="color:var(--text-dim)">Understand</b><p class="dim-cap" style="margin:6px 0 0">Table-level lineage with check-health overlay and downstream impact.</p></div>
+    <div class="card pad"><b style="color:var(--text-dim)">Monitor</b><p class="dim-cap" style="margin:6px 0 0">Inverted-pyramid overview (health ring, dimension scorecard, coverage/MTTR/SLA, 90-day heatmap), <b>Incidents</b> (grouping + severity + owner + timeline), exceptions inbox, My work.</p></div>
+    <div class="card pad"><b style="color:var(--text-dim)">Build</b><p class="dim-cap" style="margin:6px 0 0">Connections (9 engines), datasets, profiling, <b>AI check-generation</b> with the exploration-agent SQL trace + checks-as-code, and <b>Data Contracts</b> (editor + breaking-change diff + CI gate).</p></div>
+    <div class="card pad"><b style="color:var(--text-dim)">Investigate</b><p class="dim-cap" style="margin:6px 0 0"><b>RCA</b> (what-happened/analysis/next-steps + live steps + attribution), assistant that <i>acts</i>, workbench, <b>Alerts &amp; routing</b> with interactive Slack.</p></div>
+    <div class="card pad"><b style="color:var(--text-dim)">Understand</b><p class="dim-cap" style="margin:6px 0 0"><b>Lineage</b> neighborhood/hop view with health propagation + ranked downstream impact, and a read-only <b>data status page</b>.</p></div>
   </div>
+  <div class="note info" style="margin-top:16px">See <code>COMPETITIVE-ANALYSIS.md</code> (market scan + where the white space is) and <code>DESIGN-NOTES.md</code> (what's good/bad and what we deliberately left out) for the thinking behind v2.</div>
 </div>
 <script src="assets/app.js"></script>
 </body>
