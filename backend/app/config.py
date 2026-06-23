@@ -40,6 +40,15 @@ class Settings(BaseSettings):
     # App metadata database (SQLite for dev, PostgreSQL for prod)
     database_url: str = f"sqlite:///{(BACKEND_DIR / 'dqsentinel.db').as_posix()}"
 
+    # App-DB engine timeouts (#158). A degraded app DB must fail fast, not hang
+    # every API thread + the worker indefinitely. Applied to the PostgreSQL engine
+    # via connect_args + pool_timeout; SQLite uses WAL + busy_timeout instead. Set
+    # a *_ms value to 0 to disable that particular server-side timeout.
+    db_statement_timeout_ms: int = 30_000
+    db_idle_in_tx_timeout_ms: int = 60_000
+    db_connect_timeout_seconds: int = 10
+    db_pool_timeout_seconds: int = 30
+
     # Deployment environment: `dev` (default) keeps local/test flows frictionless;
     # `prod` turns on the fail-fast security validation below (#155). Set DQ_ENV=prod
     # for any non-local deployment.
