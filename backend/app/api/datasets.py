@@ -14,7 +14,13 @@ from app.core.monitors import ensure_monitor_pack, reconcile_monitor_pack
 from app.core.profiler import jsonable, profile_dataset
 from app.db import get_db
 from app.models import utcnow
-from app.security import get_current_user, require_role
+from app.security import (
+    assert_connection_role,
+    assert_dataset_visible,
+    get_current_user,
+    require_role,
+    visible_connection_ids,
+)
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 log = logging.getLogger(__name__)
@@ -25,9 +31,12 @@ def list_datasets(
     connection_id: int | None = None,
     q: str | None = None,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
     query = db.query(models.Dataset)
+    vis = visible_connection_ids(db, user)
+    if vis is not None:  # restrict to granted connections (admin / zero-grant -> all) (#159)
+        query = query.filter(models.Dataset.connection_id.in_(vis))
     if connection_id is not None:
         query = query.filter(models.Dataset.connection_id == connection_id)
     if q:
@@ -43,11 +52,10 @@ def list_datasets(
 def register_datasets(
     body: schemas.DatasetRegisterIn,
     db: Session = Depends(get_db),
-    _: models.User = Depends(require_role("editor")),
+    user: models.User = Depends(get_current_user),
 ):
-    conn = db.get(models.Connection, body.connection_id)
-    if conn is None:
-        raise HTTPException(404, "Connection not found")
+    # Editor on the target connection: 404 if not visible, 403 if viewer-only (#159).
+    conn = assert_connection_role(db, user, body.connection_id, "editor")
     created: list[models.Dataset] = []
     for t in body.tables:
         exists = (
@@ -86,25 +94,23 @@ def register_datasets(
     return [dataset_out(db, by_id[i]) for i in created_ids if i in by_id]
 
 
-def _get_dataset(db: Session, dataset_id: int) -> models.Dataset:
-    ds = db.get(models.Dataset, dataset_id)
-    if ds is None:
-        raise HTTPException(404, "Dataset not found")
-    return ds
+def _get_dataset(db: Session, dataset_id: int, user: models.User) -> models.Dataset:
+    # Visible-or-404: the dataset must sit on a connection the caller can see (#159).
+    return assert_dataset_visible(db, user, dataset_id)
 
 
 @router.get("/{dataset_id}", response_model=schemas.DatasetOut)
 def get_dataset(
-    dataset_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_user)
+    dataset_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)
 ):
-    return dataset_out(db, _get_dataset(db, dataset_id))
+    return dataset_out(db, _get_dataset(db, dataset_id, user))
 
 
 @router.get("/{dataset_id}/columns", response_model=list[schemas.ColumnInfo])
 def get_columns(
-    dataset_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_user)
+    dataset_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)
 ):
-    ds = _get_dataset(db, dataset_id)
+    ds = _get_dataset(db, dataset_id, user)
     connector = connector_for(ds.connection)
     return connector.get_columns(ds.table_name, ds.schema_name)
 
@@ -114,9 +120,9 @@ def preview(
     dataset_id: int,
     limit: int = 50,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
-    ds = _get_dataset(db, dataset_id)
+    ds = _get_dataset(db, dataset_id, user)
     connector = connector_for(ds.connection)
     ref = connector.table_ref(ds.table_name, ds.schema_name)
     res = connector.run_select(f"SELECT * FROM {ref}", limit=min(limit, 200))
@@ -128,9 +134,10 @@ def preview(
 def run_profile(
     dataset_id: int,
     db: Session = Depends(get_db),
-    user: models.User = Depends(require_role("editor")),
+    user: models.User = Depends(get_current_user),
 ):
-    ds = _get_dataset(db, dataset_id)
+    ds = _get_dataset(db, dataset_id, user)
+    assert_connection_role(db, user, ds.connection_id, "editor")  # editor on this connection (#159)
     settings = get_settings()
     connector = connector_for(ds.connection)
     try:
@@ -177,8 +184,9 @@ def _profile_out(profile: models.Profile) -> schemas.ProfileOut:
 
 @router.get("/{dataset_id}/profile", response_model=schemas.ProfileOut)
 def latest_profile(
-    dataset_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_user)
+    dataset_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)
 ):
+    _get_dataset(db, dataset_id, user)  # visible-or-404 (#159)
     profile = (
         db.query(models.Profile)
         .filter(models.Profile.dataset_id == dataset_id)
@@ -195,10 +203,10 @@ def schema_history(
     dataset_id: int,
     limit: int = 50,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
     """Deduped schema snapshots (newest first) with a change summary vs the prior one (#101)."""
-    _get_dataset(db, dataset_id)
+    _get_dataset(db, dataset_id, user)
     snaps = (
         db.query(models.SchemaSnapshot)
         .filter(models.SchemaSnapshot.dataset_id == dataset_id)
@@ -235,10 +243,11 @@ def schema_history(
 def pin_schema_baseline(
     dataset_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(require_role("editor")),
+    user: models.User = Depends(get_current_user),
 ):
     """Pin the dataset's CURRENT schema as the baseline for ``baseline=pinned`` checks (#101)."""
-    ds = _get_dataset(db, dataset_id)
+    ds = _get_dataset(db, dataset_id, user)
+    assert_connection_role(db, user, ds.connection_id, "editor")  # editor on this connection (#159)
     connector = connector_for(ds.connection)
     try:
         cols = schema_monitor.introspect_columns(connector, ds.table_name, ds.schema_name)
@@ -260,9 +269,9 @@ def pin_schema_baseline(
 
 @router.get("/{dataset_id}/exploration")
 def get_exploration(
-    dataset_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_user)
+    dataset_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)
 ):
-    ds = _get_dataset(db, dataset_id)
+    ds = _get_dataset(db, dataset_id, user)
     return ds.exploration or {"insights": [], "queries_run": 0}
 
 
@@ -270,9 +279,9 @@ def get_exploration(
 def delete_dataset(
     dataset_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(require_role("admin")),
+    user: models.User = Depends(require_role("admin")),
 ):
-    ds = _get_dataset(db, dataset_id)
+    ds = _get_dataset(db, dataset_id, user)
     cleanup_dataset_dependents(db, dataset_id)
     db.delete(ds)
     db.commit()

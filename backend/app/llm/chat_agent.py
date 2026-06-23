@@ -32,8 +32,10 @@ from app.models import (
     Dataset,
     ExceptionRecord,
     Profile,
+    User,
     utcnow,
 )
+from app.security import connection_role, visible_connection_ids, visible_dataset_ids
 
 log = logging.getLogger(__name__)
 
@@ -208,8 +210,15 @@ def _pii_for_connection(db, connection_id: int) -> list[str]:
     return sorted(out)
 
 
-def _system_prompt(db) -> str:
-    datasets = db.query(Dataset).order_by(Dataset.id).limit(60).all()
+def _system_prompt(db, user: User) -> str:
+    # Scope the platform-state the model sees to the user's grants (#159): a granted
+    # user's assistant must not be told about datasets/runs on other connections.
+    vis = visible_connection_ids(db, user)  # None -> unrestricted (admin / zero-grant)
+    visible_ds = visible_dataset_ids(db, user)
+    ds_q = db.query(Dataset)
+    if vis is not None:
+        ds_q = ds_q.filter(Dataset.connection_id.in_(vis))
+    datasets = ds_q.order_by(Dataset.id).limit(60).all()
     ds_rows = [
         {
             "id": d.id,
@@ -220,17 +229,15 @@ def _system_prompt(db) -> str:
         }
         for d in datasets
     ]
-    open_exceptions = (
-        db.query(ExceptionRecord).filter(ExceptionRecord.status == "open").count()
-    )
+    open_exc_q = db.query(ExceptionRecord).filter(ExceptionRecord.status == "open")
+    if visible_ds is not None:
+        open_exc_q = open_exc_q.filter(ExceptionRecord.dataset_id.in_(visible_ds))
+    open_exceptions = open_exc_q.count()
     failures = []
-    runs = (
-        db.query(CheckRun)
-        .filter(CheckRun.status.in_(["fail", "error"]))
-        .order_by(CheckRun.id.desc())
-        .limit(5)
-        .all()
-    )
+    runs_q = db.query(CheckRun).filter(CheckRun.status.in_(["fail", "error"]))
+    if visible_ds is not None:
+        runs_q = runs_q.filter(CheckRun.dataset_id.in_(visible_ds))
+    runs = runs_q.order_by(CheckRun.id.desc()).limit(5).all()
     for r in runs:
         check = db.get(Check, r.check_id)
         ds = db.get(Dataset, r.dataset_id)
@@ -241,10 +248,12 @@ def _system_prompt(db) -> str:
     return prompts.CHAT_SYSTEM + "\n" + prompts.chat_context_block(ds_rows, failures, open_exceptions)
 
 
-def _dataset_overview(db, inp: dict[str, Any]) -> str:
+def _dataset_overview(db, inp: dict[str, Any], user: User) -> str:
     ds = db.get(Dataset, int(inp.get("dataset_id", 0)))
     if ds is None:
         raise ValueError(f"Dataset {inp.get('dataset_id')} not found")
+    if connection_role(db, user, ds.connection_id) is None:  # grant scope (#159)
+        raise ValueError(f"Access denied: dataset {ds.id} is on a connection you can't access")
     connector = connector_for(ds.connection)
     ref = connector.table_ref(ds.table_name, ds.schema_name)
     knowledge = ds.knowledge
@@ -323,14 +332,12 @@ def _dataset_overview(db, inp: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def _recent_failures(db, _inp: dict[str, Any]) -> str:
-    runs = (
-        db.query(CheckRun)
-        .filter(CheckRun.status.in_(["fail", "error"]))
-        .order_by(CheckRun.id.desc())
-        .limit(15)
-        .all()
-    )
+def _recent_failures(db, _inp: dict[str, Any], user: User) -> str:
+    visible_ds = visible_dataset_ids(db, user)  # None -> unrestricted (#159)
+    runs_q = db.query(CheckRun).filter(CheckRun.status.in_(["fail", "error"]))
+    if visible_ds is not None:
+        runs_q = runs_q.filter(CheckRun.dataset_id.in_(visible_ds))
+    runs = runs_q.order_by(CheckRun.id.desc()).limit(15).all()
     parts = ["## Recent failed/erroring runs"]
     for r in runs:
         check = db.get(Check, r.check_id)
@@ -348,11 +355,10 @@ def _recent_failures(db, _inp: dict[str, Any]) -> str:
 
     parts.append("")
     parts.append("## Open exceptions by dataset")
-    rows = (
-        db.query(ExceptionRecord.dataset_id)
-        .filter(ExceptionRecord.status == "open")
-        .all()
-    )
+    open_q = db.query(ExceptionRecord.dataset_id).filter(ExceptionRecord.status == "open")
+    if visible_ds is not None:
+        open_q = open_q.filter(ExceptionRecord.dataset_id.in_(visible_ds))
+    rows = open_q.all()
     counts: dict[int, int] = {}
     for (dataset_id,) in rows:
         counts[dataset_id] = counts.get(dataset_id, 0) + 1
@@ -408,6 +414,10 @@ def _run_turn_locked(
         if session is None:
             emit({"type": "error", "detail": "Chat session no longer exists"})
             return
+        user = db.get(User, user_id)
+        if user is None or not user.is_active:
+            emit({"type": "error", "detail": "Session user no longer exists or is inactive"})
+            return
 
         user_msg = ChatMessage(session_id=session_id, role="user", content=content, steps=[])
         if not session.title:
@@ -421,7 +431,7 @@ def _run_turn_locked(
         steps: list[dict[str, Any]] = []
         final_text = ""
         try:
-            final_text = _run_loop(db, session_id, content, steps, emit, cancel, settings)
+            final_text = _run_loop(db, session_id, content, steps, emit, cancel, settings, user)
         except Exception as exc:  # noqa: BLE001 - persist + surface, never crash the socket
             log.exception("Chat turn failed (session %s)", session_id)
             # The in-memory history may end mid-tool-call; rebuild it from
@@ -464,6 +474,7 @@ def _run_loop(
     emit: Emit,
     cancel: threading.Event,
     settings,
+    user: User,
 ) -> str:
     provider = llm_client.get_provider()
     if provider is None:
@@ -476,19 +487,27 @@ def _run_loop(
         steps.append(payload)
         emit({"type": "step", "step": payload})
 
+    def conn_for(connection_id) -> Connector:
+        # The model can name any connection_id; authorize against the session
+        # user's grants before connecting (#159). Raising surfaces a tool error to
+        # the model (so it can recover) rather than an HTTP 404.
+        if connection_role(db, user, int(connection_id or 0)) is None:
+            raise ValueError(f"Access denied: you do not have access to connection {connection_id}.")
+        return _connector(db, connection_id)
+
     def run_sql(inp: dict[str, Any]) -> str:
-        connector = _connector(db, inp.get("connection_id", 0))
+        connector = conn_for(inp.get("connection_id", 0))
         pii = _pii_for_connection(db, inp.get("connection_id", 0))
         res = connector.run_select(str(inp.get("sql", "")), limit=settings.agent_query_row_limit)
         return format_rows(res.columns, redact_rows(res.columns, res.rows, pii))
 
     def get_code(inp: dict[str, Any]) -> str:
-        connector = _connector(db, inp.get("connection_id", 0))
+        connector = conn_for(inp.get("connection_id", 0))
         ddl, source = connector.get_ddl(str(inp.get("table", "")))
         return f"-- definition source: {source}\n{ddl}"
 
     def render_chart(inp: dict[str, Any]) -> str:
-        connector = _connector(db, inp.get("connection_id", 0))
+        connector = conn_for(inp.get("connection_id", 0))
         viz_type = inp.get("chart_type") if inp.get("chart_type") in VIZ_TYPES else "table"
         panel = {
             "title": str(inp.get("title") or "Chart")[:300],
@@ -496,7 +515,8 @@ def _run_loop(
             "sql": str(inp.get("sql", "")),
             "viz": {"type": viz_type, "x": inp.get("x"), "y": inp.get("y")},
         }
-        result = execute_panels(connector, [panel])[0]
+        # Same row cap as run_sql (200), not the 500-row dashboard cap (#159 / LLM-3).
+        result = execute_panels(connector, [panel], limit=settings.agent_query_row_limit)[0]
         if result["error"]:
             raise ValueError(f"Chart query failed: {result['error']}")
         pii = _pii_for_connection(db, inp.get("connection_id", 0))
@@ -521,12 +541,12 @@ def _run_loop(
     handlers = {
         "run_sql": run_sql,
         "get_table_code": get_code,
-        "get_dataset_overview": lambda inp: _dataset_overview(db, inp),
-        "get_recent_failures": lambda inp: _recent_failures(db, inp),
+        "get_dataset_overview": lambda inp: _dataset_overview(db, inp, user),
+        "get_recent_failures": lambda inp: _recent_failures(db, inp, user),
         "render_chart": render_chart,
     }
 
-    system = _system_prompt(db)
+    system = _system_prompt(db, user)
     history = _history_for(db, session_id)
     history.append({"role": "user", "text": content})
 

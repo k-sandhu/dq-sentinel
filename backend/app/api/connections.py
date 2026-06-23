@@ -11,15 +11,24 @@ from app.connectors.sa import Connector, SqlNotAllowed, connector_for, dispose_c
 from app.core.audit import audit
 from app.core.deletion import cleanup_dataset_dependents
 from app.db import get_db
-from app.security import get_current_user, require_role
+from app.security import (
+    assert_connection_visible,
+    get_current_user,
+    require_role,
+    visible_connection_ids,
+)
 
 router = APIRouter(prefix="/connections", tags=["connections"])
 
 
 @router.get("/health", response_model=list[schemas.ConnectionHealth])
-def fleet_health(db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+def fleet_health(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     """Test every source concurrently — one glance across the whole fleet."""
-    conns = db.query(models.Connection).order_by(models.Connection.name).all()
+    q = db.query(models.Connection)
+    vis = visible_connection_ids(db, user)
+    if vis is not None:  # only granted connections (admin / zero-grant -> all) (#159)
+        q = q.filter(models.Connection.id.in_(vis))
+    conns = q.order_by(models.Connection.name).all()
 
     def probe(conn: models.Connection) -> schemas.ConnectionHealth:
         start = time.perf_counter()
@@ -42,9 +51,13 @@ def fleet_health(db: Session = Depends(get_db), _: models.User = Depends(get_cur
 
 
 @router.get("", response_model=list[schemas.ConnectionOut])
-def list_connections(db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+def list_connections(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     out = []
-    for conn in db.query(models.Connection).order_by(models.Connection.name).all():
+    q = db.query(models.Connection)
+    vis = visible_connection_ids(db, user)
+    if vis is not None:  # only granted connections (#159)
+        q = q.filter(models.Connection.id.in_(vis))
+    for conn in q.order_by(models.Connection.name).all():
         count = db.query(models.Dataset).filter(models.Dataset.connection_id == conn.id).count()
         out.append(connection_out(conn, count))
     return out
@@ -110,11 +123,9 @@ def list_engines(_: models.User = Depends(get_current_user)):
 def test_connection(
     connection_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
-    conn = db.get(models.Connection, connection_id)
-    if conn is None:
-        raise HTTPException(404, "Connection not found")
+    conn = assert_connection_visible(db, user, connection_id)  # 404 if not granted (#159)
     try:
         ok, message, table_count = connector_for(conn).test()
     except DriverNotInstalled as exc:
@@ -126,11 +137,9 @@ def test_connection(
 def list_tables(
     connection_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
-    conn = db.get(models.Connection, connection_id)
-    if conn is None:
-        raise HTTPException(404, "Connection not found")
+    conn = assert_connection_visible(db, user, connection_id)  # 404 if not granted (#159)
     try:
         tables = connector_for(conn).list_tables()
     except Exception as exc:  # noqa: BLE001 - surface driver errors

@@ -15,7 +15,7 @@ from app.core import suggest as heuristics
 from app.core.profiler import jsonable, summarize_profile_for_llm
 from app.db import get_db
 from app.llm.client import llm_enabled
-from app.security import get_current_user, require_role
+from app.security import assert_connection_role, assert_connection_visible, get_current_user
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["workbench"])
@@ -56,8 +56,12 @@ def execute_select(connector: Connector, sql: str, limit: int) -> schemas.QueryR
 def run_query(
     body: schemas.QueryRunIn,
     db: Session = Depends(get_db),
-    _: models.User = Depends(require_role("editor")),
+    user: models.User = Depends(get_current_user),
 ):
+    # Editor ON THIS connection: 404 if the connection isn't visible to the user,
+    # 403 if visible but only granted viewer. Replaces the global editor gate so a
+    # user can't run SQL against a connection they were never granted (#159).
+    assert_connection_role(db, user, body.connection_id, "editor")
     _, connector = _connector(db, body.connection_id)
     return execute_select(connector, body.sql, body.limit)
 
@@ -66,8 +70,9 @@ def run_query(
 def get_schema(
     connection_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
+    assert_connection_visible(db, user, connection_id)
     _, connector = _connector(db, connection_id)
     try:
         return connector.schema_tree()
@@ -81,8 +86,9 @@ def get_ddl(
     table: str,
     schema: str | None = None,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
+    assert_connection_visible(db, user, connection_id)
     _, connector = _connector(db, connection_id)
     known = {t["table_name"] for t in connector.list_tables()}
     if table not in known:
@@ -91,7 +97,7 @@ def get_ddl(
     return schemas.DdlOut(table_name=table, ddl=ddl, source=source)
 
 
-def _build_suggest_context(db: Session, body: schemas.SuggestIn):
+def _build_suggest_context(db: Session, body: schemas.SuggestIn, user: models.User):
     """Resolve connection/dataset/check/run/exception from whatever ids were given."""
     exception = check = run = dataset = None
     if body.exception_id:
@@ -126,6 +132,10 @@ def _build_suggest_context(db: Session, body: schemas.SuggestIn):
     else:
         raise HTTPException(422, "Provide one of connection_id / dataset_id / check_id / run_id / exception_id")
 
+    # Whatever id was supplied, the resolved connection must be visible to the
+    # caller — otherwise this leaks suggestions/profile for ungranted sources (#159).
+    assert_connection_visible(db, user, connection.id)
+
     profile = None
     if dataset is not None:
         p = (
@@ -148,9 +158,9 @@ def _build_suggest_context(db: Session, body: schemas.SuggestIn):
 def suggest_queries(
     body: schemas.SuggestIn,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
-    connection, dataset, check, run, exception, profile = _build_suggest_context(db, body)
+    connection, dataset, check, run, exception, profile = _build_suggest_context(db, body, user)
     connector = connector_for(connection)
     ref = (
         connector.table_ref(dataset.table_name, dataset.schema_name)

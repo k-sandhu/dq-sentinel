@@ -29,7 +29,7 @@ from app import models, schemas
 from app.api.exceptions_api import _common_filters, _filtered
 from app.db import get_db
 from app.models import utcnow
-from app.security import get_current_user
+from app.security import get_current_user, visible_connection_ids
 
 router = APIRouter(prefix="/insights", tags=["insights"])
 
@@ -50,15 +50,15 @@ def check_matrix(
     check_ids: list[int] = Query(default_factory=list),
     days: int = 14,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
     """Checks x UTC-days status grid. Each cell is the worst run status that day
     (precedence ``error > fail > warn > pass``); ``None`` = no run. Unknown or
-    archived check ids are skipped silently so a dashboard survives a deleted
-    check. Any authenticated user (same class of data the runs page shows).
+    archived check ids are skipped silently so a dashboard survives a deleted check.
 
-    TODO(#72): when per-connection grants land, filter ``check_ids`` to the
-    caller's granted connections here before resolving rows.
+    Connection-grant scoping (#159): checks on connections the caller can't see are
+    dropped from the result (same path as an unknown id), so a granted user's matrix
+    never reveals other tenants' checks. Admin / zero-grant users see all.
     """
     if len(check_ids) > schemas.MAX_MATRIX_CHECKS:
         raise HTTPException(422, f"max {schemas.MAX_MATRIX_CHECKS} checks per matrix")
@@ -73,7 +73,8 @@ def check_matrix(
 
     # Resolve names for EXISTING checks in one joined query (no N+1). Missing ids
     # simply don't appear in this map and are skipped below.
-    meta_rows = (
+    vis = visible_connection_ids(db, user)  # None -> unrestricted (admin / zero-grant) (#159)
+    meta_q = (
         db.query(
             models.Check.id,
             models.Check.name,
@@ -87,8 +88,10 @@ def check_matrix(
         .join(models.Dataset, models.Dataset.id == models.Check.dataset_id)
         .join(models.Connection, models.Connection.id == models.Dataset.connection_id)
         .filter(models.Check.id.in_(ordered_ids))
-        .all()
     )
+    if vis is not None:
+        meta_q = meta_q.filter(models.Dataset.connection_id.in_(vis))
+    meta_rows = meta_q.all()
     meta = {r[0]: r for r in meta_rows}
 
     # Bucket runs by (check, UTC day): worst status + run count. One indexed query.

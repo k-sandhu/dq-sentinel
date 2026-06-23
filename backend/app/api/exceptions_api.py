@@ -15,7 +15,13 @@ from app.core.audit import audit
 from app.core.events import record_event
 from app.db import get_db
 from app.models import utcnow
-from app.security import get_current_user, require_role
+from app.security import (
+    assert_connection_role,
+    assert_dataset_visible,
+    get_current_user,
+    require_role,
+    visible_dataset_ids,
+)
 
 router = APIRouter(prefix="/exceptions", tags=["exceptions"])
 
@@ -89,6 +95,12 @@ def _filtered(
             | func.lower(models.ExceptionRecord.note).like(needle)
             | func.lower(models.Check.name).like(needle)
         )
+    # Connection-grant scoping (#159): restrict to exceptions on datasets whose
+    # connection the caller may see. None -> unrestricted (admin / zero-grant).
+    if current_user is not None:
+        visible_ds = visible_dataset_ids(db, current_user)
+        if visible_ds is not None:
+            query = query.filter(models.ExceptionRecord.dataset_id.in_(visible_ds))
     return query
 
 
@@ -299,6 +311,22 @@ def export_csv(
     )
 
 
+def _assert_editor_on_exception_connections(db: Session, user: models.User, excs: list) -> None:
+    """Require editor on the connection behind every exception being mutated (#159):
+    global editor + visibility is not enough — a viewer-grant holder must not change
+    triage state. Raises 403 (visible, under-role), consistent with the other
+    mutation surfaces (``/query/run``, register, profile)."""
+    ds_ids = {e.dataset_id for e in excs}
+    conn_ids = {
+        cid
+        for (cid,) in db.query(models.Dataset.connection_id)
+        .filter(models.Dataset.id.in_(ds_ids))
+        .all()
+    }
+    for cid in conn_ids:
+        assert_connection_role(db, user, cid, "editor")
+
+
 @router.post("/triage", response_model=list[schemas.ExceptionOut])
 def triage(
     body: schemas.TriageIn,
@@ -322,14 +350,14 @@ def triage(
     # Lock the rows so the optimistic-concurrency check is atomic (#156). FOR
     # UPDATE is a no-op on SQLite (which serializes writers anyway); on Postgres
     # a concurrent triager blocks until we commit, then sees the bumped version.
-    excs = (
-        db.query(models.ExceptionRecord)
-        .filter(models.ExceptionRecord.id.in_(body.ids))
-        .with_for_update()
-        .all()
-    )
+    exc_q = db.query(models.ExceptionRecord).filter(models.ExceptionRecord.id.in_(body.ids))
+    visible_ds = visible_dataset_ids(db, user)
+    if visible_ds is not None:  # only triage exceptions on granted connections (#159)
+        exc_q = exc_q.filter(models.ExceptionRecord.dataset_id.in_(visible_ds))
+    excs = exc_q.with_for_update().all()
     if not excs:
         raise HTTPException(404, "No matching exceptions found")
+    _assert_editor_on_exception_connections(db, user, excs)  # editor-on-connection (#159)
 
     # Optimistic concurrency: when the client sends the versions it last read,
     # reject the whole batch if any listed row changed underneath it (HTTP 409)
@@ -406,10 +434,12 @@ def _display_name_for(db: Session, user_id: int) -> str:
 def list_events(
     exc_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),  # any authenticated user (viewers included)
+    user: models.User = Depends(get_current_user),  # any authenticated user (viewers included)
 ):
-    if db.get(models.ExceptionRecord, exc_id) is None:
+    exc = db.get(models.ExceptionRecord, exc_id)
+    if exc is None:
         raise HTTPException(404, "Exception not found")
+    assert_dataset_visible(db, user, exc.dataset_id)  # exception on a visible connection (#159)
     events = (
         db.query(models.ExceptionEvent)
         .filter(models.ExceptionEvent.exception_id == exc_id)
@@ -429,14 +459,15 @@ def add_comment(
     # Lock + optimistic concurrency: a standalone comment mutates `note` — the
     # same field triage edits — so it must bump `version` (and may check an
     # expected version) or a concurrent triager would clobber the latest note (#156).
-    exc = (
-        db.query(models.ExceptionRecord)
-        .filter(models.ExceptionRecord.id == exc_id)
-        .with_for_update()
-        .one_or_none()
-    )
+    exc_q = db.query(models.ExceptionRecord).filter(models.ExceptionRecord.id == exc_id)
+    visible_ds = visible_dataset_ids(db, user)
+    if visible_ds is not None:  # 404 for an exception on a connection the user can't see (#159)
+        exc_q = exc_q.filter(models.ExceptionRecord.dataset_id.in_(visible_ds))
+    exc = exc_q.with_for_update().one_or_none()
     if exc is None:
         raise HTTPException(404, "Exception not found")
+    # Editor on this exception's connection (a viewer-grant can read but not comment) (#159).
+    assert_connection_role(db, user, db.get(models.Dataset, exc.dataset_id).connection_id, "editor")
     if body.expected_version is not None and body.expected_version != exc.version:
         raise HTTPException(
             409,

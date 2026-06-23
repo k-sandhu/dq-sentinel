@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import Connection, ConnectionGrant, User
+from app.models import Connection, ConnectionGrant, Dataset, User
 
 ROLE_RANK = {"viewer": 0, "editor": 1, "admin": 2}
 
@@ -118,3 +118,40 @@ def assert_connection_visible(db: Session, user: User, connection_id: int) -> Co
     if conn is None or connection_role(db, user, connection_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
     return conn
+
+
+def assert_connection_role(
+    db: Session, user: User, connection_id: int, min_role: str
+) -> Connection:
+    """The connection must be visible AND the user's effective role on it at least
+    ``min_role``. 404 for missing/invisible (don't leak existence); 403 for a
+    visible connection the user can see but lacks the role to mutate (#159)."""
+    conn = db.get(Connection, connection_id)
+    role = connection_role(db, user, connection_id)
+    if conn is None or role is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    if ROLE_RANK.get(role, -1) < ROLE_RANK[min_role]:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, f"Requires {min_role} on this connection")
+    return conn
+
+
+def assert_dataset_visible(db: Session, user: User, dataset_id: int) -> Dataset:
+    """Return the Dataset if its connection is visible to the user, else 404 — the
+    SAME status for a missing dataset and one on an invisible connection (#159)."""
+    ds = db.get(Dataset, dataset_id)
+    if ds is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    vis = visible_connection_ids(db, user)
+    if vis is not None and ds.connection_id not in vis:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    return ds
+
+
+def visible_dataset_ids(db: Session, user: User):
+    """Subquery of dataset ids on connections the user may see, or ``None`` when
+    unrestricted (admin / zero-grant legacy). Use to scope dataset_id-keyed tables
+    (``check_runs``, ``exception_records``) with ``.in_(...)`` — no extra join."""
+    vis = visible_connection_ids(db, user)
+    if vis is None:
+        return None
+    return db.query(Dataset.id).filter(Dataset.connection_id.in_(vis))

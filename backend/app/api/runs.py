@@ -7,7 +7,7 @@ from app import models, schemas
 from app.api.serialize import exception_out, run_out
 from app.db import get_db
 from app.models import utcnow
-from app.security import get_current_user
+from app.security import assert_dataset_visible, get_current_user, visible_dataset_ids
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
@@ -38,9 +38,12 @@ def list_runs(
     limit: int = 50,
     offset: int = 0,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
     q = db.query(models.CheckRun)
+    visible_ds = visible_dataset_ids(db, user)
+    if visible_ds is not None:  # restrict to runs on granted connections (#159)
+        q = q.filter(models.CheckRun.dataset_id.in_(visible_ds))
     if run_id is not None:
         q = q.filter(models.CheckRun.id == run_id)
     if dataset_id is not None:
@@ -63,10 +66,11 @@ def list_runs(
 
 
 @router.get("/{run_id}", response_model=schemas.RunOut)
-def get_run(run_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+def get_run(run_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     run = db.get(models.CheckRun, run_id)
     if run is None:
         raise HTTPException(404, "Run not found")
+    assert_dataset_visible(db, user, run.dataset_id)  # run on a visible connection (#159)
     return run_out(db, run)
 
 
@@ -74,8 +78,12 @@ def get_run(run_id: int, db: Session = Depends(get_db), _: models.User = Depends
 def run_exceptions(
     run_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
+    run = db.get(models.CheckRun, run_id)
+    if run is None:
+        raise HTTPException(404, "Run not found")
+    assert_dataset_visible(db, user, run.dataset_id)  # run on a visible connection (#159)
     excs = (
         db.query(models.ExceptionRecord)
         .filter(models.ExceptionRecord.run_id == run_id)
