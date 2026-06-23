@@ -164,6 +164,12 @@ def delete_connection(
     dataset_ids = [d.id for d in conn.datasets]
     for dataset_id in dataset_ids:
         cleanup_dataset_dependents(db, dataset_id)
+    # Per-connection grants reference the connection directly (not via dataset),
+    # so remove them explicitly — this works on SQLite too (FK enforcement off)
+    # and matches the FK's ondelete=CASCADE on Postgres (#159).
+    db.query(models.ConnectionGrant).filter(
+        models.ConnectionGrant.connection_id == connection_id
+    ).delete(synchronize_session=False)
     db.delete(conn)  # cascades to datasets/checks/profiles/knowledge via ORM relationships
     db.commit()
     dispose_connection(connection_id)

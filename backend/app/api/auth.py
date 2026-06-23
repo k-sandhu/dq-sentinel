@@ -102,3 +102,88 @@ def update_user(
     db.commit()
     db.refresh(user)
     return user
+
+
+# ---- per-connection grants (#26 PR2 / #159) — admin-managed ----
+
+
+def _grant_out(db: Session, g: models.ConnectionGrant) -> schemas.GrantOut:
+    out = schemas.GrantOut.model_validate(g)
+    conn = db.get(models.Connection, g.connection_id)
+    out.connection_name = conn.name if conn else ""
+    return out
+
+
+@router.get("/users/{user_id}/grants", response_model=list[schemas.GrantOut])
+def list_grants(
+    user_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_role("admin")),
+):
+    if db.get(models.User, user_id) is None:
+        raise HTTPException(404, "User not found")
+    grants = (
+        db.query(models.ConnectionGrant)
+        .filter(models.ConnectionGrant.user_id == user_id)
+        .order_by(models.ConnectionGrant.connection_id)
+        .all()
+    )
+    return [_grant_out(db, g) for g in grants]
+
+
+@router.post("/users/{user_id}/grants", response_model=schemas.GrantOut, status_code=201)
+def set_grant(
+    user_id: int,
+    body: schemas.GrantIn,
+    db: Session = Depends(get_db),
+    admin: models.User = Depends(require_role("admin")),
+):
+    """Grant (or update the role of) a user's access to one connection. Upsert on
+    (user, connection). Note the #26 semantics: the user's FIRST grant flips them
+    from legacy global-role visibility to grant-only visibility."""
+    if db.get(models.User, user_id) is None:
+        raise HTTPException(404, "User not found")
+    if db.get(models.Connection, body.connection_id) is None:
+        raise HTTPException(404, "Connection not found")
+    g = (
+        db.query(models.ConnectionGrant)
+        .filter(
+            models.ConnectionGrant.user_id == user_id,
+            models.ConnectionGrant.connection_id == body.connection_id,
+        )
+        .first()
+    )
+    if g is None:
+        g = models.ConnectionGrant(
+            user_id=user_id, connection_id=body.connection_id, role=body.role
+        )
+        db.add(g)
+    else:
+        g.role = body.role
+    db.flush()
+    audit(db, admin, "grant.set", "user", user_id, connection_id=body.connection_id, role=body.role)
+    db.commit()
+    db.refresh(g)
+    return _grant_out(db, g)
+
+
+@router.delete("/users/{user_id}/grants/{connection_id}", status_code=204)
+def revoke_grant(
+    user_id: int,
+    connection_id: int,
+    db: Session = Depends(get_db),
+    admin: models.User = Depends(require_role("admin")),
+):
+    g = (
+        db.query(models.ConnectionGrant)
+        .filter(
+            models.ConnectionGrant.user_id == user_id,
+            models.ConnectionGrant.connection_id == connection_id,
+        )
+        .first()
+    )
+    if g is None:
+        raise HTTPException(404, "Grant not found")
+    db.delete(g)
+    audit(db, admin, "grant.revoke", "user", user_id, connection_id=connection_id)
+    db.commit()

@@ -55,6 +55,26 @@ class Connection(Base):
     datasets: Mapped[list["Dataset"]] = relationship(back_populates="connection", cascade="all, delete-orphan")
 
 
+class ConnectionGrant(Base):
+    """Per-connection access grant (#26 PR2 / #159).
+
+    Backward-compatible semantics (enforced in ``security.visible_connection_ids``):
+    a global ``admin`` bypasses grants; a user with >=1 grant sees ONLY granted
+    connections; a user with zero grants keeps today's global-role behavior.
+    """
+
+    __tablename__ = "connection_grants"
+    __table_args__ = (UniqueConstraint("user_id", "connection_id", name="uq_grant_user_conn"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    connection_id: Mapped[int] = mapped_column(
+        ForeignKey("connections.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(20), default="viewer")  # viewer | editor
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class Dataset(Base):
     __tablename__ = "datasets"
     __table_args__ = (UniqueConstraint("connection_id", "schema_name", "table_name", name="uq_dataset_table"),)

@@ -66,6 +66,24 @@ class UserUpdate(BaseModel):
     is_active: bool | None = None
 
 
+# ---- per-connection grants (#26 PR2 / #159) ----
+GrantRole = Literal["viewer", "editor"]
+
+
+class GrantIn(BaseModel):
+    connection_id: int
+    role: GrantRole = "viewer"
+
+
+class GrantOut(ORMModel):
+    id: int
+    user_id: int
+    connection_id: int
+    connection_name: str = ""
+    role: GrantRole
+    created_at: datetime
+
+
 # ---- connections ----
 class ConnectionIn(BaseModel):
     name: str = Field(min_length=1, max_length=255)

@@ -23,6 +23,18 @@ export interface TokenOut {
   user: User;
 }
 
+// per-connection grant (#26 PR2 / #159): admin-managed access scoping
+export type GrantRole = "viewer" | "editor";
+
+export interface Grant {
+  id: number;
+  user_id: number;
+  connection_id: number;
+  connection_name: string;
+  role: GrantRole;
+  created_at: string;
+}
+
 export interface Connection {
   id: number;
   name: string;
