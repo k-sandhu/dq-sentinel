@@ -724,6 +724,7 @@ class ExceptionEventOut(ORMModel):
 
 class CommentIn(BaseModel):
     comment: str = Field(min_length=1)
+    expected_version: int | None = None  # optimistic concurrency (#156): 409 if stale
 
 
 # ---- exceptions API v2 (#57) ----

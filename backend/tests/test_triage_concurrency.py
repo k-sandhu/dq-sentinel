@@ -3,11 +3,15 @@ last read, a stale client / concurrent triager is rejected with HTTP 409 instead
 of silently clobbering analyst state.
 """
 
+import uuid
+
 
 def _setup(client, admin_headers, source_db) -> tuple[dict, int]:
     h = admin_headers
     conn = client.post(
-        "/api/v1/connections", json={"name": "triage-cc", "dsn": source_db}, headers=h
+        "/api/v1/connections",
+        json={"name": f"triage-cc-{uuid.uuid4().hex[:8]}", "dsn": source_db},
+        headers=h,
     ).json()
     ds = client.post(
         "/api/v1/datasets/register",
@@ -74,3 +78,55 @@ def test_triage_optimistic_concurrency(client, admin_headers, source_db):
     )
     assert r4.status_code == 200, r4.text
     assert all(x["status"] == "acknowledged" for x in r4.json())
+
+
+def test_triage_partial_expected_versions_rejected(client, admin_headers, source_db):
+    """A present-but-incomplete expected_versions map is a fail-open shape — it
+    must be rejected (422) rather than silently leaving the omitted row unguarded.
+    """
+    h, check_id = _setup(client, admin_headers, source_db)
+    items = client.get(f"/api/v1/exceptions?check_id={check_id}&limit=2", headers=h).json()["items"]
+    ids = [it["id"] for it in items]
+    r = client.post(
+        "/api/v1/exceptions/triage",
+        json={
+            "ids": ids,
+            "status": "acknowledged",
+            "expected_versions": {ids[0]: items[0]["version"]},  # ids[1] omitted
+        },
+        headers=h,
+    )
+    assert r.status_code == 422, r.text
+    assert ids[1] in r.json()["detail"]["missing_ids"]
+
+
+def test_comment_bumps_version_and_blocks_stale_triage(client, admin_headers, source_db):
+    """A standalone comment mutates note, so it must bump version and (optionally)
+    enforce its own optimistic-concurrency check — otherwise a stale triager
+    clobbers the latest note.
+    """
+    h, check_id = _setup(client, admin_headers, source_db)
+    item = client.get(f"/api/v1/exceptions?check_id={check_id}&limit=1", headers=h).json()["items"][0]
+    eid, v = item["id"], item["version"]
+
+    rc = client.post(f"/api/v1/exceptions/{eid}/comments", json={"comment": "looking into it"}, headers=h)
+    assert rc.status_code == 201, rc.text
+    after = client.get(f"/api/v1/exceptions?check_id={check_id}&limit=1", headers=h).json()["items"][0]
+    assert after["version"] == v + 1  # comment bumped the version
+    assert after["note"] == "looking into it"
+
+    # A triage holding the pre-comment version is now stale -> 409.
+    r = client.post(
+        "/api/v1/exceptions/triage",
+        json={"ids": [eid], "status": "resolved", "expected_versions": {eid: v}},
+        headers=h,
+    )
+    assert r.status_code == 409, r.text
+
+    # The comment endpoint itself enforces optimistic concurrency when asked.
+    rc2 = client.post(
+        f"/api/v1/exceptions/{eid}/comments",
+        json={"comment": "stale", "expected_version": v},
+        headers=h,
+    )
+    assert rc2.status_code == 409, rc2.text

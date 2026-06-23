@@ -335,8 +335,20 @@ def triage(
     # reject the whole batch if any listed row changed underneath it (HTTP 409)
     # so a stale UI / concurrent triager can't silently clobber analyst state.
     if body.expected_versions:
+        # Fail closed: once the client opts into version checking it must cover
+        # every row it's mutating — a partial map would leave the omitted rows
+        # unguarded. (Omitting expected_versions entirely stays backward-compatible.)
+        missing = sorted(e.id for e in excs if e.id not in body.expected_versions)
+        if missing:
+            raise HTTPException(
+                422,
+                {
+                    "message": "expected_versions must include every id being triaged",
+                    "missing_ids": missing,
+                },
+            )
         conflicts = sorted(
-            e.id for e in excs if body.expected_versions.get(e.id, e.version) != e.version
+            e.id for e in excs if body.expected_versions[e.id] != e.version
         )
         if conflicts:
             raise HTTPException(
@@ -414,11 +426,26 @@ def add_comment(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role("editor")),
 ):
-    exc = db.get(models.ExceptionRecord, exc_id)
+    # Lock + optimistic concurrency: a standalone comment mutates `note` — the
+    # same field triage edits — so it must bump `version` (and may check an
+    # expected version) or a concurrent triager would clobber the latest note (#156).
+    exc = (
+        db.query(models.ExceptionRecord)
+        .filter(models.ExceptionRecord.id == exc_id)
+        .with_for_update()
+        .one_or_none()
+    )
     if exc is None:
         raise HTTPException(404, "Exception not found")
+    if body.expected_version is not None and body.expected_version != exc.version:
+        raise HTTPException(
+            409,
+            {"message": "Exception changed since you loaded it; refresh and retry",
+             "conflict_ids": [exc.id]},
+        )
     ev = record_event(db, exc, "comment", user_id=user.id, comment=body.comment)
     exc.note = body.comment  # latest-note convenience
+    exc.version = (exc.version or 1) + 1  # note changed -> optimistic-concurrency bump (#156)
     db.commit()
     db.refresh(ev)
     return exception_event_out(db, ev)
