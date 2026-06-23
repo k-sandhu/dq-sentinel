@@ -399,6 +399,7 @@ export interface ExceptionRecord {
   last_seen_at: string | null;
   last_run_id: number | null;
   occurrence_count: number;
+  version: number; // optimistic-concurrency token for triage (#156)
   // triage workflow (#56)
   assigned_to_id: number | null;
   assigned_to: string | null;

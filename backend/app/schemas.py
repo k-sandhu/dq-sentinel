@@ -693,6 +693,7 @@ class ExceptionOut(ORMModel):
     last_seen_at: datetime | None = None
     last_run_id: int | None = None
     occurrence_count: int = 1
+    version: int = 1  # optimistic-concurrency token for triage (#156)
     # --- triage workflow (#56) ---
     assigned_to_id: int | None = None
     assigned_to: str | None = None  # resolved display name ("(inactive)" suffix when deactivated)
@@ -705,6 +706,9 @@ class TriageIn(BaseModel):
     note: str = ""
     assigned_to_id: int | None = None
     clear_assignee: bool = False
+    # Optimistic concurrency (#156): id -> version the client last read. When
+    # present, triage 409s if any listed row changed underneath the client.
+    expected_versions: dict[int, int] | None = None
 
 
 class ExceptionEventOut(ORMModel):
@@ -720,6 +724,7 @@ class ExceptionEventOut(ORMModel):
 
 class CommentIn(BaseModel):
     comment: str = Field(min_length=1)
+    expected_version: int | None = None  # optimistic concurrency (#156): 409 if stale
 
 
 # ---- exceptions API v2 (#57) ----

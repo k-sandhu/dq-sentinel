@@ -401,6 +401,15 @@ class ExceptionRecord(Base):
     # "(inactive)" suffix); only NEW assignments to inactive users are blocked.
     assigned_to_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
 
+    # Optimistic-concurrency token for triage (#156): bumped on every triage-
+    # meaningful change (status / note / assignee — by humans or the machine
+    # auto-resolve/reopen paths) so a stale client or a concurrent triager is
+    # caught (HTTP 409) instead of silently clobbering analyst state. Deliberately
+    # NOT a SQLAlchemy version_id_col, which would also version the worker's
+    # reconcile UPDATEs and raise StaleDataError mid-run; only the triage path
+    # checks it, under SELECT ... FOR UPDATE.
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1", nullable=False)
+
     run: Mapped[CheckRun] = relationship(
         back_populates="exceptions", foreign_keys=[run_id]
     )

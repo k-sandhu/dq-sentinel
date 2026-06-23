@@ -125,6 +125,7 @@ def _reconcile_exceptions(
             # resolution context is exactly what the analyst needs).
             old = match.status
             match.status = "open"
+            match.version = (match.version or 1) + 1  # status change -> optimistic bump (#156)
             regressed += 1
             record_event(
                 db, match, "system", from_status=old, to_status="open",
@@ -143,10 +144,10 @@ def _auto_resolve_passing(db: Session, check: Check, run: CheckRun) -> None:
 
     Single set-based UPDATE (not a Python loop) — `exception_records` is the
     millions-row table. Only `open` is touched; acknowledged/expected/muted are
-    deliberate analyst states and must survive. Always leaves a
-    machine-attributable note so a human can tell "I resolved this" from "the
-    system did". The `rows_evaluated` guard keeps errored/empty runs from
-    resolving anything.
+    deliberate analyst states and must survive. The machine reason is recorded as
+    a system ExceptionEvent; the record's note/marked_by are left untouched so an
+    analyst's note on an open record survives auto-resolve (#156). The
+    `rows_evaluated` guard keeps errored/empty runs from resolving anything.
     """
     open_ids = [
         r.id
@@ -156,15 +157,15 @@ def _auto_resolve_passing(db: Session, check: Check, run: CheckRun) -> None:
     ]
     if not open_ids:
         return
-    now = utcnow()
     db.query(ExceptionRecord).filter(
         ExceptionRecord.check_id == check.id, ExceptionRecord.status == "open"
     ).update(
         {
             ExceptionRecord.status: "resolved",
-            ExceptionRecord.note: "auto-resolved: check passing",
-            ExceptionRecord.marked_by_id: None,
-            ExceptionRecord.marked_at: now,
+            # Do NOT touch note/marked_by_id/marked_at: a human may have left a
+            # note on an open record (#156). The machine reason is the system
+            # ExceptionEvent below; bump version so a concurrent triager is caught.
+            ExceptionRecord.version: ExceptionRecord.version + 1,
         },
         synchronize_session=False,
     )
