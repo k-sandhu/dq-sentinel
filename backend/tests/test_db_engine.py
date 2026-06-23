@@ -61,3 +61,67 @@ def test_postgres_engine_wires_pool_and_connect_timeouts():
         assert engine.pool._timeout == 17  # pool_timeout wired through to QueuePool
     finally:
         engine.dispose()
+
+
+# --- migration advisory lock must not be bounded by the #158 timeouts ----------
+
+
+class _FakeConn:
+    def __init__(self, log: list[str]):
+        self.log = log
+
+    def execute(self, stmt, params=None):
+        self.log.append(str(stmt))
+
+    def begin(self):
+        class _Tx:
+            def __enter__(self_inner):
+                return None
+
+            def __exit__(self_inner, *exc):
+                return False
+
+        return _Tx()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class _FakeEngine:
+    def __init__(self):
+        self.log: list[str] = []
+
+    def connect(self):
+        return _FakeConn(self.log)
+
+
+def test_pg_migration_lock_disables_timeouts_before_blocking_lock():
+    from app.db import _with_pg_migration_lock
+
+    eng = _FakeEngine()
+    ran = []
+    _with_pg_migration_lock(eng, lambda: ran.append("migrated"))
+
+    assert ran == ["migrated"]
+    sql = eng.log
+    lock_i = next(i for i, s in enumerate(sql) if "pg_advisory_lock" in s)
+    # Both per-connection timeouts are disabled BEFORE the blocking advisory lock,
+    # so a sibling holding the lock past statement_timeout can't crash startup.
+    assert sql.index("SET LOCAL statement_timeout = 0") < lock_i
+    assert sql.index("SET LOCAL idle_in_transaction_session_timeout = 0") < lock_i
+    assert any("pg_advisory_unlock" in s for s in sql)
+
+
+def test_pg_migration_lock_unlocks_on_error():
+    from app.db import _with_pg_migration_lock
+
+    def _boom():
+        raise RuntimeError("migration failed")
+
+    eng = _FakeEngine()
+    with pytest.raises(RuntimeError):
+        _with_pg_migration_lock(eng, _boom)
+    assert any("pg_advisory_unlock" in s for s in eng.log)  # released even on failure

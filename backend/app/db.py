@@ -1,7 +1,7 @@
 """App-metadata database: lazy engine, session factory, init + bootstrap."""
 
 import logging
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 
 from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Engine
@@ -91,6 +91,28 @@ def get_db() -> Generator[Session, None, None]:
 _MIGRATION_LOCK_KEY = 0x6451_5343  # "dQSC"
 
 
+def _with_pg_migration_lock(engine: Engine, run: Callable[[], None]) -> None:
+    """Run ``run()`` while holding the Postgres migration advisory lock (#158).
+
+    ``pg_advisory_lock`` is a *blocking* wait and runs on the application engine —
+    whose connections carry the #158 ``statement_timeout`` and
+    ``idle_in_transaction_session_timeout``. A sibling booting concurrently can
+    hold the lock (or the DDL can run) longer than those timeouts, which would
+    cancel the waiter / terminate the lock holder and crash startup. Disable both
+    timeouts on this connection for the lock transaction (``SET LOCAL`` auto-resets
+    at transaction end) so migration startup is never bounded by request-path
+    timeouts. The lock is always released, even if ``run()`` raises.
+    """
+    with engine.connect() as conn, conn.begin():
+        conn.execute(text("SET LOCAL statement_timeout = 0"))
+        conn.execute(text("SET LOCAL idle_in_transaction_session_timeout = 0"))
+        conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": _MIGRATION_LOCK_KEY})
+        try:
+            run()
+        finally:
+            conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _MIGRATION_LOCK_KEY})
+
+
 def _run_migrations(engine: Engine) -> None:
     """Bring the app DB schema to head via Alembic (issue #23; see backend/migrations/).
 
@@ -116,12 +138,7 @@ def _run_migrations(engine: Engine) -> None:
     # On Postgres, hold a session advisory lock so only one runs DDL at a time;
     # the other then sees `head` and no-ops. SQLite (dev/test) is single-writer.
     if engine.dialect.name == "postgresql":
-        with engine.connect() as conn:
-            conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": _MIGRATION_LOCK_KEY})
-            try:
-                _migrate()
-            finally:
-                conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _MIGRATION_LOCK_KEY})
+        _with_pg_migration_lock(engine, _migrate)
     else:
         _migrate()
 
