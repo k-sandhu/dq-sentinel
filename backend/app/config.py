@@ -18,6 +18,11 @@ INSECURE_SECRET_KEYS = frozenset(
 INSECURE_ADMIN_PASSWORDS = frozenset({"admin123"})
 MIN_SECRET_KEY_LENGTH = 32
 
+# Recognized deployment modes. Unknown values are rejected (not treated as dev),
+# so a typo in DQ_ENV cannot silently disable the production security checks.
+PROD_ENVS = frozenset({"prod", "production"})
+ALLOWED_ENVS = frozenset({"dev"}) | PROD_ENVS
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -164,7 +169,7 @@ class Settings(BaseSettings):
 
     @property
     def is_production(self) -> bool:
-        return self.env.strip().lower() in ("prod", "production")
+        return self.env.strip().lower() in PROD_ENVS
 
     @model_validator(mode="after")
     def _enforce_secure_production(self) -> "Settings":
@@ -175,7 +180,14 @@ class Settings(BaseSettings):
         rather than run silently wide-open. `dev` stays permissive so local and
         test flows are unaffected.
         """
-        if not self.is_production:
+        mode = self.env.strip().lower()
+        if mode not in ALLOWED_ENVS:
+            raise ValueError(
+                f"DQ_ENV must be one of {sorted(ALLOWED_ENVS)} (case-insensitive); "
+                f"got {self.env!r}. Unknown values are rejected so a typo cannot "
+                "silently disable the production security checks."
+            )
+        if mode not in PROD_ENVS:
             return self
         problems: list[str] = []
         if self.secret_key in INSECURE_SECRET_KEYS or len(self.secret_key) < MIN_SECRET_KEY_LENGTH:

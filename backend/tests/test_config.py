@@ -93,3 +93,26 @@ def test_default_secret_enables_admin_token_forgery():
     forged = jwt.encode({"sub": "1", "role": "admin"}, s.secret_key, algorithm="HS256")
     decoded = jwt.decode(forged, s.secret_key, algorithms=["HS256"])
     assert decoded["role"] == "admin"  # forgery works -> prod must reject this secret
+
+
+@pytest.mark.parametrize("bad_env", ["prd", "productionn", "staging", "qa", "dev!", "prod-eu"])
+def test_unknown_env_value_is_rejected(bad_env):
+    # An unrecognized DQ_ENV must fail fast, not silently fall back to dev and
+    # skip the production guard (PR #161 review).
+    with pytest.raises(ValidationError) as exc:
+        Settings(env=bad_env, secret_key="dev-only-secret-change-me", _env_file=None)
+    assert "DQ_ENV" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    "good_env", ["dev", "DEV", " dev ", "prod", "Prod", "production", " PRODUCTION "]
+)
+def test_known_env_values_accepted_case_insensitively(good_env):
+    s = Settings(
+        env=good_env,
+        secret_key=STRONG_SECRET,
+        bootstrap_admin_password="a-strong-bootstrap-pw",
+        _env_file=None,
+    )
+    assert s.env == good_env  # stored verbatim; normalized only for comparisons
+    assert s.is_production == (good_env.strip().lower() in ("prod", "production"))
