@@ -68,7 +68,7 @@ frequent broad scans across many wide tables on small hardware without the chang
 
 ## Master tracking index
 
-Counts: **P0 ×9 · P1 ×35 · P2 ×34 · P3 ×13** (plus 2 positive findings). Tier-0 items are filed as issues; the rest are tracked here.
+Counts: **P0 ×9 · P1 ×35 · P2 ×34 · P3 ×13** (plus 2 positive findings). Tier-0 blockers are filed as #155–#159; the broader effort is umbrellaed by epic #160; everything else is tracked here.
 
 ### Tier 0 — production blockers (filed as issues)
 
