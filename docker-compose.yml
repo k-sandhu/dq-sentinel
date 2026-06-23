@@ -24,8 +24,15 @@ services:
     build: ./backend
     restart: unless-stopped
     environment: &backend_env
+      # Deployment posture (#155): prod (default) makes the API/worker refuse to
+      # boot on insecure defaults. For a throwaway LOCAL demo set DQ_ENV=dev.
+      DQ_ENV: ${DQ_ENV:-prod}
       DQ_DATABASE_URL: postgresql+psycopg://dq:dq@postgres:5432/dqsentinel
-      DQ_SECRET_KEY: ${DQ_SECRET_KEY:-change-me-in-prod-0123456789abcdef}
+      # REQUIRED in prod — no insecure fallback is shipped. Generate one with:
+      #   python -c "import secrets; print(secrets.token_urlsafe(48))"
+      DQ_SECRET_KEY: ${DQ_SECRET_KEY:-}
+      # REQUIRED in prod — a strong password for the seeded first admin.
+      DQ_BOOTSTRAP_ADMIN_PASSWORD: ${DQ_BOOTSTRAP_ADMIN_PASSWORD:-}
       DQ_CORS_ORIGINS: http://localhost:3000,http://localhost:5173
       DQ_LOG_FORMAT: json
       # LLM (provider-agnostic): set ANTHROPIC_API_KEY for native Anthropic, or

@@ -3,11 +3,20 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 REPO_DIR = BACKEND_DIR.parent
+
+# Known-insecure defaults that must never run in production (#155). The
+# docker-compose fallback "change-me-in-prod-0123456789abcdef" is >= 32 chars,
+# so a length check alone would not catch it — it must be denylisted explicitly.
+INSECURE_SECRET_KEYS = frozenset(
+    {"dev-only-secret-change-me", "change-me-in-prod-0123456789abcdef"}
+)
+INSECURE_ADMIN_PASSWORDS = frozenset({"admin123"})
+MIN_SECRET_KEY_LENGTH = 32
 
 
 class Settings(BaseSettings):
@@ -25,6 +34,11 @@ class Settings(BaseSettings):
 
     # App metadata database (SQLite for dev, PostgreSQL for prod)
     database_url: str = f"sqlite:///{(BACKEND_DIR / 'dqsentinel.db').as_posix()}"
+
+    # Deployment environment: `dev` (default) keeps local/test flows frictionless;
+    # `prod` turns on the fail-fast security validation below (#155). Set DQ_ENV=prod
+    # for any non-local deployment.
+    env: str = "dev"  # dev | prod
 
     # Auth
     secret_key: str = "dev-only-secret-change-me"
@@ -147,6 +161,40 @@ class Settings(BaseSettings):
     def docs_path(self) -> Path:
         """Directory the in-app docs browser reads markdown from."""
         return Path(self.docs_dir) if self.docs_dir else (REPO_DIR / "docs")
+
+    @property
+    def is_production(self) -> bool:
+        return self.env.strip().lower() in ("prod", "production")
+
+    @model_validator(mode="after")
+    def _enforce_secure_production(self) -> "Settings":
+        """Fail fast on insecure defaults when DQ_ENV=prod (#155).
+
+        A deploy that forgets DQ_SECRET_KEY would otherwise sign JWTs with the
+        public repo default, letting anyone forge an admin token. Refuse to boot
+        rather than run silently wide-open. `dev` stays permissive so local and
+        test flows are unaffected.
+        """
+        if not self.is_production:
+            return self
+        problems: list[str] = []
+        if self.secret_key in INSECURE_SECRET_KEYS or len(self.secret_key) < MIN_SECRET_KEY_LENGTH:
+            problems.append(
+                "DQ_SECRET_KEY is a known default or shorter than "
+                f"{MIN_SECRET_KEY_LENGTH} chars — set a strong random value, e.g. "
+                '`python -c "import secrets; print(secrets.token_urlsafe(48))"`.'
+            )
+        if self.bootstrap_admin_password in INSECURE_ADMIN_PASSWORDS:
+            problems.append(
+                "DQ_BOOTSTRAP_ADMIN_PASSWORD is the insecure default — set a strong "
+                "bootstrap admin password."
+            )
+        if problems:
+            raise ValueError(
+                "Refusing to start with DQ_ENV=prod and insecure configuration:\n  - "
+                + "\n  - ".join(problems)
+            )
+        return self
 
 
 @lru_cache
