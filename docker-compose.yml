@@ -23,6 +23,8 @@ services:
   api:
     build: ./backend
     restart: unless-stopped
+    init: true  # PID 1 signal forwarding + zombie reaping for graceful stop (#157)
+    stop_grace_period: 30s
     environment: &backend_env
       # Deployment posture (#155): prod (default) makes the API/worker refuse to
       # boot on insecure defaults. For a throwaway LOCAL demo set DQ_ENV=dev.
@@ -55,6 +57,8 @@ services:
   worker:
     build: ./backend
     restart: unless-stopped
+    init: true  # PID 1 signal forwarding so SIGTERM reaches the worker (#157)
+    stop_grace_period: 30s  # bound the in-flight-check drain before a forced SIGKILL
     command: python -m app.worker
     environment: *backend_env
     volumes:
