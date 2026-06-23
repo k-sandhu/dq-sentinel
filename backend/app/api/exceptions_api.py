@@ -319,9 +319,33 @@ def triage(
         if target is None or not target.is_active:
             raise HTTPException(422, "Assignee must be an active user")
 
-    excs = db.query(models.ExceptionRecord).filter(models.ExceptionRecord.id.in_(body.ids)).all()
+    # Lock the rows so the optimistic-concurrency check is atomic (#156). FOR
+    # UPDATE is a no-op on SQLite (which serializes writers anyway); on Postgres
+    # a concurrent triager blocks until we commit, then sees the bumped version.
+    excs = (
+        db.query(models.ExceptionRecord)
+        .filter(models.ExceptionRecord.id.in_(body.ids))
+        .with_for_update()
+        .all()
+    )
     if not excs:
         raise HTTPException(404, "No matching exceptions found")
+
+    # Optimistic concurrency: when the client sends the versions it last read,
+    # reject the whole batch if any listed row changed underneath it (HTTP 409)
+    # so a stale UI / concurrent triager can't silently clobber analyst state.
+    if body.expected_versions:
+        conflicts = sorted(
+            e.id for e in excs if body.expected_versions.get(e.id, e.version) != e.version
+        )
+        if conflicts:
+            raise HTTPException(
+                409,
+                {
+                    "message": "Some exceptions changed since you loaded them; refresh and retry",
+                    "conflict_ids": conflicts,
+                },
+            )
 
     now = utcnow()
     for e in excs:
@@ -354,6 +378,7 @@ def triage(
         if touched or body.note:
             e.marked_by_id = user.id
             e.marked_at = now
+            e.version = (e.version or 1) + 1  # optimistic-concurrency bump (#156)
     # One audit row per batch (#30); ExceptionEvent has the per-row record (#56).
     audit(db, user, "exception.triage", "exception", None, count=len(excs), status=body.status)
     db.commit()

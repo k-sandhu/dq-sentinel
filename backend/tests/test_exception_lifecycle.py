@@ -15,6 +15,7 @@ from app.models import (
     ExceptionEvent,
     ExceptionRecord,
     Profile,
+    User,
 )
 
 
@@ -163,7 +164,13 @@ def test_passing_run_auto_resolves_only_open(source_db):
         recs[0].status = "acknowledged"
         recs[1].status = "expected"
         recs[2].status = "muted"
-        # recs[3], recs[4] stay open
+        # recs[3], recs[4] stay open. An analyst leaves a note + attribution on an
+        # OPEN record — it must survive auto-resolve (#156).
+        admin = db.query(User).filter(User.email == "admin@example.com").first()
+        recs[3].note = "investigating with upstream owner"
+        recs[3].marked_by_id = admin.id
+        open_with_note_id = recs[3].id
+        open_with_note_ver = recs[3].version
         db.commit()
 
     # Now flip the check to a column with no nulls (id) so the run passes.
@@ -184,14 +191,13 @@ def test_passing_run_auto_resolves_only_open(source_db):
         assert by_status.get("acknowledged") == 1
         assert by_status.get("expected") == 1
         assert by_status.get("muted") == 1
-        # Auto-resolve left its machine note + system event.
+        # Auto-resolve records a machine system event but must NOT clobber the
+        # analyst's note/attribution on the previously-open record (#156).
         resolved = [
             r
             for r in db.query(ExceptionRecord).filter(ExceptionRecord.check_id == check_id).all()
             if r.status == "resolved"
         ]
-        assert all(r.note == "auto-resolved: check passing" for r in resolved)
-        assert all(r.marked_by_id is None for r in resolved)
         for r in resolved:
             assert (
                 db.query(ExceptionEvent)
@@ -202,6 +208,11 @@ def test_passing_run_auto_resolves_only_open(source_db):
                 .count()
                 == 1
             )
+        kept = db.get(ExceptionRecord, open_with_note_id)
+        assert kept.status == "resolved"
+        assert kept.note == "investigating with upstream owner"  # analyst note survived
+        assert kept.marked_by_id is not None  # attribution survived
+        assert kept.version == open_with_note_ver + 1  # version bumped by auto-resolve
 
 
 def test_fingerprint_used_with_profile_pk(source_db):
