@@ -63,3 +63,47 @@ def test_worker_claims_and_runs_due_check(source_db):
     with factory() as db:
         runs = db.query(CheckRun).filter(CheckRun.check_id == check_id).count()
     assert runs == 1, f"check ran again unexpectedly (claimed={again})"
+
+
+def test_request_stop_sets_stop_event():
+    from app.core import scheduler
+
+    scheduler._STOP.clear()
+    try:
+        assert not scheduler._STOP.is_set()
+        scheduler.request_stop()
+        assert scheduler._STOP.is_set()
+    finally:
+        scheduler._STOP.clear()
+
+
+def test_run_forever_drains_and_exits_on_stop(monkeypatch):
+    """run_forever exits promptly once stop is requested, after at least one pass.
+
+    Drives _STOP directly: signal handlers can't be installed off the main thread,
+    which is exactly the ValueError branch the loop tolerates.
+    """
+    import threading
+    import time
+
+    from app.core import scheduler
+
+    scheduler._STOP.clear()
+    passes: list[int] = []
+    monkeypatch.setattr(scheduler, "poll_once", lambda _ex: (passes.append(1), 0)[1])
+
+    t = threading.Thread(target=scheduler.run_forever, daemon=True)
+    t.start()
+    try:
+        for _ in range(100):  # wait up to ~2s for the first poll
+            if passes:
+                break
+            time.sleep(0.02)
+        scheduler.request_stop()
+        t.join(timeout=5)
+        assert not t.is_alive(), "run_forever did not exit after stop was requested"
+        assert passes, "run_forever never polled"
+    finally:
+        scheduler.request_stop()  # ensure the thread can't outlive the test
+        t.join(timeout=5)
+        scheduler._STOP.clear()

@@ -6,7 +6,8 @@ run a single worker against SQLite). See issue #25 for the queue-based design.
 """
 
 import logging
-import time
+import signal
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 
@@ -26,6 +27,24 @@ log = logging.getLogger(__name__)
 _last_audit_purge: datetime | None = None
 _last_sla_eval: datetime | None = None
 _last_scorecard_snapshot: date | None = None
+
+# Cooperative shutdown (#157). SIGTERM/SIGINT set this event; run_forever then
+# breaks its loop and drains in-flight checks (the ThreadPoolExecutor __exit__
+# waits for submitted runs) instead of the process being killed mid-run.
+_STOP = threading.Event()
+
+
+def request_stop(_signum: int | None = None, _frame: object | None = None) -> None:
+    """Signal the worker loop to stop after the current pass and drain."""
+    _STOP.set()
+
+
+def _install_signal_handlers() -> None:
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, request_stop)
+        except ValueError:  # not the main thread (e.g. tests) — caller drives _STOP
+            log.debug("Could not install handler for %s (not main thread)", sig)
 
 
 def maybe_evaluate_slas(now: datetime | None = None) -> int:
@@ -154,8 +173,9 @@ def poll_once(executor: ThreadPoolExecutor) -> int:
     return claimed
 
 
-def run_forever() -> None:  # pragma: no cover - long-running entrypoint
+def run_forever() -> None:
     settings = get_settings()
+    _install_signal_handlers()
     log.info(
         "DQ Sentinel worker started (poll every %ss, concurrency %s)",
         settings.worker_poll_seconds, settings.worker_concurrency,
@@ -163,13 +183,20 @@ def run_forever() -> None:  # pragma: no cover - long-running entrypoint
     WORKER_UP.set(1)
     try:
         with ThreadPoolExecutor(max_workers=settings.worker_concurrency) as executor:
-            while True:
+            while not _STOP.is_set():
                 try:
                     n = poll_once(executor)
                     if n:
                         log.info("Claimed %s due check(s)", n)
                 except Exception:  # noqa: BLE001 - the loop must survive transient DB errors
                     log.exception("Scheduler pass failed; continuing")
-                time.sleep(settings.worker_poll_seconds)
+                # Interruptible sleep: a stop signal wakes us immediately rather
+                # than waiting out a full poll interval.
+                _STOP.wait(settings.worker_poll_seconds)
+            log.info("Stop requested; draining in-flight checks before exit")
+        # Exiting the `with` runs executor.shutdown(wait=True): submitted checks
+        # finish (and write their CheckRun rows) instead of being abandoned. The
+        # container stop_grace_period bounds the drain before a forced SIGKILL.
+        log.info("Worker drained and stopped cleanly")
     finally:
         WORKER_UP.set(0)
