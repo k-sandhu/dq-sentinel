@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import ConnectionGrant, User
+from app.models import Connection, ConnectionGrant, User
 
 ROLE_RANK = {"viewer": 0, "editor": 1, "admin": 2}
 
@@ -91,11 +91,14 @@ def visible_connection_ids(db: Session, user: User) -> set[int] | None:
 
 
 def connection_role(db: Session, user: User, connection_id: int) -> str | None:
-    """Effective role on one connection, or ``None`` if the user can't see it.
+    """Effective role on one connection, or ``None`` if it doesn't exist or the
+    user can't see it.
 
     ``admin`` -> ``"admin"``; a zero-grant user -> their global role (legacy); a
     granted user -> the grant's role on that connection (``None`` if ungranted).
     """
+    if db.get(Connection, connection_id) is None:
+        return None  # nonexistent connection -> no role (keeps the by-id gate 404-consistent)
     if user.role == "admin":
         return "admin"
     grants = dict(
@@ -108,7 +111,10 @@ def connection_role(db: Session, user: User, connection_id: int) -> str | None:
     return grants.get(connection_id)  # None -> ungranted -> no access
 
 
-def assert_connection_visible(db: Session, user: User, connection_id: int) -> None:
-    """404 (not 403) when a connection isn't visible — don't leak existence (#72)."""
-    if connection_role(db, user, connection_id) is None:
+def assert_connection_visible(db: Session, user: User, connection_id: int) -> Connection:
+    """Return the Connection if the user may see it, else 404 — the SAME status for
+    a missing and an invisible connection so existence isn't leaked (#72)."""
+    conn = db.get(Connection, connection_id)  # cached in the identity map for connection_role
+    if conn is None or connection_role(db, user, connection_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    return conn

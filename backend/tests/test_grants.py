@@ -3,9 +3,12 @@ the admin grants CRUD. The surface-scoping sweep that USES these helpers is #72
 (separate PR); here we prove the model + semantics + management API in isolation.
 """
 
+import pytest
+from fastapi import HTTPException
+
 from app.db import init_db, session_factory
 from app.models import Connection, ConnectionGrant, User
-from app.security import connection_role, visible_connection_ids
+from app.security import assert_connection_visible, connection_role, visible_connection_ids
 
 
 def _user(db, email, role="editor"):
@@ -45,7 +48,42 @@ def test_visibility_semantics():
         assert connection_role(db, scoped, a.id) == "editor"  # the grant's role
         assert connection_role(db, scoped, b.id) is None  # ungranted -> no access
 
+        # A nonexistent connection has no role for anyone, and the by-id gate 404s
+        # for missing OR invisible (don't leak existence) (#167 review).
+        assert connection_role(db, admin, 999999) is None
+        assert connection_role(db, zero, 999999) is None
+        assert connection_role(db, scoped, 999999) is None
+        with pytest.raises(HTTPException):
+            assert_connection_visible(db, admin, 999999)  # missing -> 404
+        with pytest.raises(HTTPException):
+            assert_connection_visible(db, scoped, b.id)  # invisible -> 404
+        assert assert_connection_visible(db, scoped, a.id).id == a.id  # visible -> returns it
+
         db.rollback()  # uncommitted: don't pollute the shared session DB
+
+
+def test_deleting_granted_connection_removes_grants(client, admin_headers, source_db):
+    """A granted connection must still be deletable — grants are cleaned up
+    (explicit delete + FK ondelete=CASCADE) rather than blocking it (#167 review).
+    """
+    h = admin_headers
+    u = client.post(
+        "/api/v1/auth/users",
+        json={"email": "del-grantee@x.com", "name": "D", "password": "password1", "role": "editor"},
+        headers=h,
+    ).json()
+    conn = client.post(
+        "/api/v1/connections", json={"name": "grant-del-src", "dsn": source_db}, headers=h
+    ).json()
+    g = client.post(
+        f"/api/v1/auth/users/{u['id']}/grants",
+        json={"connection_id": conn["id"], "role": "viewer"},
+        headers=h,
+    )
+    assert g.status_code == 201
+    d = client.delete(f"/api/v1/connections/{conn['id']}", headers=h)
+    assert d.status_code == 204, d.text
+    assert client.get(f"/api/v1/auth/users/{u['id']}/grants", headers=h).json() == []
 
 
 def test_grants_crud_admin_only(client, admin_headers, source_db):

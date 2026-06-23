@@ -67,8 +67,10 @@ class ConnectionGrant(Base):
     __table_args__ = (UniqueConstraint("user_id", "connection_id", name="uq_grant_user_conn"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    connection_id: Mapped[int] = mapped_column(ForeignKey("connections.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    connection_id: Mapped[int] = mapped_column(
+        ForeignKey("connections.id", ondelete="CASCADE"), index=True
+    )
     role: Mapped[str] = mapped_column(String(20), default="viewer")  # viewer | editor
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
