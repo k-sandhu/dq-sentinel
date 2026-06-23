@@ -7,7 +7,7 @@ from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.config import BACKEND_DIR, get_settings
+from app.config import BACKEND_DIR, Settings, get_settings
 
 log = logging.getLogger(__name__)
 
@@ -15,23 +15,58 @@ _engine: Engine | None = None
 _session_factory: sessionmaker[Session] | None = None
 
 
+def _set_sqlite_pragma(dbapi_conn, _record):  # pragma: no cover - driver hook
+    # WAL + busy_timeout make SQLite tolerate concurrent app/worker access
+    # (and OneDrive's file-handle grabbing) far better.
+    cur = dbapi_conn.cursor()
+    cur.execute("PRAGMA journal_mode=WAL")
+    cur.execute("PRAGMA busy_timeout=5000")
+    cur.close()
+
+
+def _pg_connect_args(settings: Settings) -> dict[str, object]:
+    """libpq connect args for the PostgreSQL app-DB engine (#158).
+
+    Bounds a degraded app DB: ``connect_timeout`` caps the TCP/auth wait, and the
+    server-side ``statement_timeout`` / ``idle_in_transaction_session_timeout``
+    abort a hung query/transaction instead of parking an API thread or the worker
+    poll loop forever. These apply only to the application engine; Alembic builds
+    its own engine (``migrations/env.py``), so legitimate startup DDL is never
+    bounded. Set a ``*_ms`` value to 0 to disable that server-side timeout.
+    """
+    opts: list[str] = []
+    if settings.db_statement_timeout_ms > 0:
+        opts.append(f"-c statement_timeout={settings.db_statement_timeout_ms}")
+    if settings.db_idle_in_tx_timeout_ms > 0:
+        opts.append(f"-c idle_in_transaction_session_timeout={settings.db_idle_in_tx_timeout_ms}")
+    args: dict[str, object] = {"connect_timeout": settings.db_connect_timeout_seconds}
+    if opts:
+        args["options"] = " ".join(opts)
+    return args
+
+
+def _build_engine(url: str, settings: Settings) -> Engine:
+    """Create the app-DB engine for ``url``. SQLite (dev/test) gets WAL + busy
+    timeout; PostgreSQL (prod) gets connect/statement/idle/pool timeouts (#158)."""
+    if url.startswith("sqlite"):
+        engine = create_engine(url, connect_args={"check_same_thread": False}, pool_pre_ping=True)
+        event.listen(engine, "connect", _set_sqlite_pragma)
+        return engine
+    return create_engine(
+        url,
+        pool_pre_ping=True,
+        pool_size=10,
+        max_overflow=20,
+        pool_timeout=settings.db_pool_timeout_seconds,
+        connect_args=_pg_connect_args(settings),
+    )
+
+
 def get_engine() -> Engine:
     global _engine, _session_factory
     if _engine is None:
-        url = get_settings().database_url
-        if url.startswith("sqlite"):
-            _engine = create_engine(url, connect_args={"check_same_thread": False}, pool_pre_ping=True)
-
-            @event.listens_for(_engine, "connect")
-            def _set_sqlite_pragma(dbapi_conn, _record):  # pragma: no cover - driver hook
-                # WAL + busy_timeout make SQLite tolerate concurrent app/worker access
-                # (and OneDrive's file-handle grabbing) far better.
-                cur = dbapi_conn.cursor()
-                cur.execute("PRAGMA journal_mode=WAL")
-                cur.execute("PRAGMA busy_timeout=5000")
-                cur.close()
-        else:
-            _engine = create_engine(url, pool_pre_ping=True, pool_size=10, max_overflow=20)
+        settings = get_settings()
+        _engine = _build_engine(settings.database_url, settings)
         _session_factory = sessionmaker(bind=_engine, expire_on_commit=False)
     return _engine
 
