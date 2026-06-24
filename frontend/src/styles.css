@@ -33,7 +33,38 @@
   --shadow: 0 1px 3px rgba(46, 53, 59, 0.06), 0 2px 8px rgba(46, 53, 59, 0.04);
   --shadow-pop: 0 10px 30px rgba(46, 53, 59, 0.16);
   --radius: 8px;
+  --radius-sm: 6px;
   --mono: ui-monospace, "Cascadia Code", "Segoe UI Mono", Menlo, monospace;
+
+  /* v2 design-language axes (#171): --brand drives the accent; ghost/ring derive
+     from it so the accent picker re-tints focus states for free. */
+  --brand-ghost: color-mix(in srgb, var(--brand) 18%, transparent);
+  --ring: 0 0 0 3px var(--brand-ghost);
+  --font: "Segoe UI", -apple-system, "Helvetica Neue", Lato, Arial, sans-serif;
+  --fs: 14px;
+}
+
+/* ── v2 theme personalities (data-dir): brand + shape + font + LIGHT surfaces.
+   Aurora == :root defaults; only Graphite/Editorial restate. (#171) ── */
+html[data-dir="graphite"] {
+  --brand: #2fb6a3; --brand-dark: #1f8475; --brand-light: #cdeee9;
+  --radius: 6px; --radius-sm: 4px;
+  --font: "SF Mono", "Cascadia Code", ui-monospace, "Segoe UI", system-ui, sans-serif;
+  --bg: #f5f6f7; --card: #ffffff; --card2: #fafbfb;
+  --border: #e0e3e6; --border-light: #eceef0;
+  --text: #444b54; --text-dark: #20262c; --text-light: #828a93;
+  --input-bg: #ffffff; --hover: #eef1f3; --hover-soft: #f3f5f6;
+  --topbar-bg: rgba(245, 246, 247, 0.94); --inverse-bg: #20262c;
+}
+html[data-dir="editorial"] {
+  --brand: #5b5bd6; --brand-dark: #4444c0; --brand-light: #e0e0fb;
+  --radius: 10px; --radius-sm: 7px;
+  --font: "Inter", "Segoe UI", -apple-system, system-ui, sans-serif;
+  --bg: #faf9f7; --card: #ffffff; --card2: #fcfbf9;
+  --border: #e9e6e1; --border-light: #f0eeea;
+  --text: #4a4a55; --text-dark: #28282f; --text-light: #918d99;
+  --input-bg: #ffffff; --hover: #f6f4ff; --hover-soft: #faf9ff;
+  --topbar-bg: rgba(250, 249, 247, 0.94); --inverse-bg: #28282f;
 }
 
 html[data-theme="dark"] {
@@ -57,6 +88,37 @@ html[data-theme="dark"] {
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.3);
   --shadow-pop: 0 10px 30px rgba(0, 0, 0, 0.5);
 }
+
+/* Per-theme dark surfaces — higher specificity than the generic aurora-dark above. (#171) */
+html[data-dir="graphite"][data-theme="dark"] {
+  --brand: #3fd0bb; --brand-dark: #2bb6a3; --brand-light: #143b35;
+  --bg: #0b0e11; --card: #14181d; --card2: #0f1318;
+  --border: #222831; --border-light: #191e25;
+  --text: #a6b0ba; --text-dark: #e9edf2; --text-light: #6a7480;
+  --input-bg: #0d1014; --hover: #181d24; --hover-soft: #14181d;
+  --topbar-bg: rgba(11, 14, 17, 0.92); --inverse-bg: #e9edf2;
+}
+html[data-dir="editorial"][data-theme="dark"] {
+  --brand: #8585ec; --brand-dark: #6c6cf0; --brand-light: #2c2a55;
+  --bg: #14131a; --card: #1c1b24; --card2: #17161e;
+  --border: #2c2a37; --border-light: #211f2a;
+  --text: #b0acbd; --text-dark: #ecebf3; --text-light: #756f82;
+  --input-bg: #161520; --hover: #221f2e; --hover-soft: #1c1b24;
+  --topbar-bg: rgba(20, 19, 26, 0.92); --inverse-bg: #ecebf3;
+}
+
+/* Density axis (data-density): token-based base sizing — the component-level
+   compact rules further down still apply additively. "comfortable" is the legacy
+   DEFAULT (14px, no attribute): the pre-v2 toggle persisted it to mean default, so
+   the bootstrap never sets it and there is no rule for it here. A distinct looser
+   level arrives with the #172/#173 storage migration. (#171, #180 review) */
+html[data-density="compact"] { --fs: 13px; }
+html[data-density="cozy"]    { --fs: 14px; }
+
+/* Interface-font axis (data-font): overrides the theme font. (#171) */
+html[data-font="inter"]   { --font: "Inter", "Segoe UI", -apple-system, system-ui, sans-serif; }
+html[data-font="system"]  { --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+html[data-font="rounded"] { --font: "SF Pro Rounded", "Nunito", "Quicksand", ui-rounded, "Segoe UI", system-ui, sans-serif; }
 
 /* Dark-theme component overrides — pastel light backgrounds become tinted glass. */
 /* Semantic status tones, dark (issue #58). rgba tints composite over --card
@@ -90,8 +152,8 @@ html[data-theme="dark"] .timeline-item.warn .timeline-dot { box-shadow: 0 0 0 1p
 html, body, #root { height: 100%; }
 body {
   margin: 0;
-  font-family: "Segoe UI", -apple-system, "Helvetica Neue", Lato, Arial, sans-serif;
-  font-size: 14px;
+  font-family: var(--font);
+  font-size: var(--fs);
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
