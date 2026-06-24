@@ -4,7 +4,7 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { api } from "../api/client";
 import type { ConnectionHealth, Dataset, SearchHit, SearchOut } from "../api/types";
 import { useAuth } from "../auth";
-import { applyMode, getAxis } from "../lib/appearance";
+import { applyAppearance, applyMode, getAxis } from "../lib/appearance";
 import { FAVORITES_SIDEBAR_CAP, getFavorites, getRecents, pruneStalePrefs, subscribePrefs } from "../lib/prefs";
 import { AppearanceButton } from "./AppearanceDrawer";
 import DocsLauncher from "./DocsLauncher";
@@ -353,6 +353,16 @@ export default function Layout() {
     };
     mq.addEventListener?.("change", sync);
     return () => mq.removeEventListener?.("change", sync);
+  }, []);
+  // Cross-tab live sync (#181 review): the `storage` event fires in OTHER tabs when
+  // an appearance key changes, so re-apply every axis here — an already-open tab
+  // updates without a reload. (Same-tab changes apply directly in setAxis.)
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === null || e.key.startsWith("dq-")) applyAppearance();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
   return (
     <div className="app">

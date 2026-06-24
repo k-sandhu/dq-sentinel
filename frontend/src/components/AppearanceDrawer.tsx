@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { AXES, accentSwatch, getAxis, setAccent, setAxis, type AxisName } from "../lib/appearance";
+import { subscribePrefs } from "../lib/prefs";
 import { Icon, Modal } from "./ui";
 
 // Axes shown in the drawer. `nav` is intentionally omitted until its icons-only /
@@ -16,6 +17,16 @@ function AppearanceControls() {
   // this bump just re-renders the controls to reflect the new current values.
   const [, bump] = useState(0);
   const rerender = () => bump((n) => n + 1);
+  // Reflect changes made elsewhere — another tab (via `storage`) or any prefs write
+  // (`dq:prefs`) — so an open drawer never shows stale selections (#181 review).
+  useEffect(() => {
+    const unsub = subscribePrefs(rerender);
+    window.addEventListener("storage", rerender);
+    return () => {
+      unsub();
+      window.removeEventListener("storage", rerender);
+    };
+  }, []);
 
   return (
     <div className="appearance-grid">

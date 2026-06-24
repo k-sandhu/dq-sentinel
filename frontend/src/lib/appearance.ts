@@ -40,7 +40,7 @@ export function resolveAppearance(
   prefersDarkNow: boolean,
   isColor: (value: string) => boolean = () => true,
 ): ResolvedAppearance {
-  let mode = get("dq-theme") || "light"; // light | dark | system
+  let mode = get("dq-theme") || "system"; // light | dark | system — system is the default
   if (mode === "system") mode = prefersDarkNow ? "dark" : "light";
 
   const accent = get("dq-accent");
@@ -85,7 +85,7 @@ export const AXES: Record<AxisName, AxisSpec> = {
   mode: {
     key: "dq-theme",
     attr: "theme",
-    def: "light",
+    def: "system", // default follows the OS (#172 / #181 review)
     label: "Mode",
     options: [
       { value: "light", label: "Light" },
@@ -176,6 +176,7 @@ export function setAxis(name: AxisName, value: string): void {
 
 // ── accent ───────────────────────────────────────────────────────────────────────
 const DEFAULT_ACCENT = "#509ee3";
+const HEX = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
 
 /** The user's accent override, or `null` when none is set (theme brand applies). */
 export function getAccent(): string | null {
@@ -185,25 +186,46 @@ export function getAccent(): string | null {
 /** Colour to show in the accent picker: the override, else the live `--brand`. */
 export function accentSwatch(): string {
   const override = getAccent();
-  if (override && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(override)) return override;
+  if (override && HEX.test(override)) return override;
   try {
     const v = getComputedStyle(document.documentElement).getPropertyValue("--brand").trim();
-    return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(v) ? v : DEFAULT_ACCENT;
+    return HEX.test(v) ? v : DEFAULT_ACCENT;
   } catch {
     return DEFAULT_ACCENT;
   }
 }
 
-/** Set (or, with `null`, clear) the accent override — validated and applied live.
- *  The rest of the palette derives from `--brand` via `color-mix` in the CSS. */
-export function setAccent(value: string | null): void {
+/** Apply (or, with `null`, clear) the accent on `<html>`. A custom accent also
+ *  RE-DERIVES the related brand tokens so hover/active (`--brand-dark`) and tinted
+ *  surfaces (`--brand-light`) follow it instead of staying on the old theme brand
+ *  (#181 review). The derivations mix toward `--text-dark` / `--card`, which both
+ *  flip per light/dark mode, so the single formula stays correct in both modes.
+ *  (`--brand-ghost` / `--ring` already derive from `--brand` in the CSS.) */
+function applyAccent(value: string | null): void {
   const d = document.documentElement;
   const ok = !!value && typeof CSS !== "undefined" && CSS.supports("color", value);
   if (ok) {
     d.style.setProperty("--brand", value as string);
-    setRawPref("dq-accent", value);
+    d.style.setProperty("--brand-dark", "color-mix(in srgb, var(--brand) 75%, var(--text-dark))");
+    d.style.setProperty("--brand-light", "color-mix(in srgb, var(--brand) 16%, var(--card))");
   } else {
     d.style.removeProperty("--brand");
-    setRawPref("dq-accent", null);
+    d.style.removeProperty("--brand-dark");
+    d.style.removeProperty("--brand-light");
   }
+}
+
+/** Set (or, with `null`, clear) the accent override — validated, applied, persisted. */
+export function setAccent(value: string | null): void {
+  const ok = !!value && typeof CSS !== "undefined" && CSS.supports("color", value);
+  applyAccent(ok ? value : null);
+  setRawPref("dq-accent", ok ? value : null);
+}
+
+/** Re-apply every persisted axis (+ accent) to `<html>` from current storage.
+ *  Mirrors the pre-paint bootstrap; used to live-sync another tab's changes via the
+ *  `storage` event so an already-open tab updates without a reload (#181 review). */
+export function applyAppearance(): void {
+  (Object.keys(AXES) as AxisName[]).forEach((name) => applyAxis(name, getAxis(name)));
+  applyAccent(getAccent());
 }
