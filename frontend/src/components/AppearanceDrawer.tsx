@@ -4,10 +4,9 @@ import { AXES, accentSwatch, getAxis, setAccent, setAxis, type AxisName } from "
 import { subscribePrefs } from "../lib/prefs";
 import { Icon, Modal } from "./ui";
 
-// Axes shown in the drawer. `nav` is intentionally omitted until its icons-only /
-// centered CSS variants land with the sidebar reskin (#173) — shipping the control
-// before the styling would be a no-op the user can see do nothing.
-const ORDER: AxisName[] = ["dir", "mode", "density", "font"];
+// Axes shown in the drawer. All six now have live visual effect (nav-layout's
+// icons / centered variants land in this same change, #173).
+const ORDER: AxisName[] = ["dir", "mode", "density", "font", "nav"];
 
 /** The appearance controls (theme · mode · density · font · accent). Each change is
  *  applied to `<html>` immediately and persisted through the prefs.ts chokepoint, so

@@ -53,7 +53,7 @@ describe("resolveAppearance — pre-paint bootstrap contract (#171)", () => {
     expect(resolveAppearance(getter({ "dq-font": "inter" }), false).font).toBe("inter");
     expect(resolveAppearance(getter({ "dq-font": "theme" }), false).font).toBeNull();
     expect(resolveAppearance(getter({ "dq-font": "bogus" }), false).font).toBeNull();
-    expect(resolveAppearance(getter({ "dq-nav": "icons-only" }), false).navLayout).toBe("icons-only");
+    expect(resolveAppearance(getter({ "dq-nav": "icons" }), false).navLayout).toBe("icons");
     expect(resolveAppearance(getter({ "dq-nav": "full" }), false).navLayout).toBeNull();
     expect(resolveAppearance(getter({ "dq-nav": "bogus" }), false).navLayout).toBeNull();
   });
@@ -71,7 +71,7 @@ describe("resolveAppearance — pre-paint bootstrap contract (#171)", () => {
           "dq-dir": "graphite",
           "dq-theme": "dark",
           "dq-font": "inter",
-          "dq-nav": "icons-only",
+          "dq-nav": "icons",
         }),
         false,
       ),
@@ -80,7 +80,7 @@ describe("resolveAppearance — pre-paint bootstrap contract (#171)", () => {
       theme: "dark",
       density: null,
       font: "inter",
-      navLayout: "icons-only",
+      navLayout: "icons",
       accent: null,
     });
   });
