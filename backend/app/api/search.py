@@ -115,26 +115,36 @@ def search(
         )
 
     # saved queries (issue #41): the table may not exist yet — skip silently.
-    hits.extend(_saved_query_hits(db, like, limit))
+    hits.extend(_saved_query_hits(db, like, limit, vis))
 
     hits.sort(key=lambda h: _rank(h, needle))
     return schemas.SearchOut(hits=hits)
 
 
-def _saved_query_hits(db: Session, like: str, limit: int) -> list[schemas.SearchHit]:
+def _saved_query_hits(
+    db: Session, like: str, limit: int, vis: set[int] | None
+) -> list[schemas.SearchHit]:
     """Saved-query hits from issue #41's `saved_queries` table.
 
     Feature-detected at runtime: the table won't exist in worktrees built before
     #41 lands, so a missing-table error is caught and the section skipped.
+
+    Connection-grant scoped (#159): saved queries are connection-bound, so a granted
+    user must not discover their names/ids (or the workbench deep-link) for
+    connections they can't access. ``vis is None`` -> unrestricted (admin / zero-grant).
     """
+    sql = "SELECT id, name FROM saved_queries WHERE lower(name) LIKE :like"
+    params: dict = {"like": like, "limit": limit}
+    if vis is not None:
+        if not vis:
+            return []
+        placeholders = ", ".join(f":c{i}" for i in range(len(vis)))
+        sql += f" AND connection_id IN ({placeholders})"
+        for i, cid in enumerate(vis):
+            params[f"c{i}"] = cid
+    sql += " ORDER BY name LIMIT :limit"
     try:
-        rows = db.execute(
-            text(
-                "SELECT id, name FROM saved_queries "
-                "WHERE lower(name) LIKE :like ORDER BY name LIMIT :limit"
-            ),
-            {"like": like, "limit": limit},
-        ).all()
+        rows = db.execute(text(sql), params).all()
     except SQLAlchemyError:
         db.rollback()  # clear the failed transaction so later queries still work
         return []

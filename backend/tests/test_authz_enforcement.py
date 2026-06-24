@@ -190,6 +190,40 @@ def test_exception_mutation_requires_editor_on_connection(client, admin_headers,
     assert client.delete(f"{QH}/connections/{b['id']}", headers=h).status_code == 204
 
 
+def test_saved_query_search_scoped_to_grants(client, admin_headers, source_db):
+    """Saved queries are connection-bound, so global search must not surface a saved
+    query (name/id + workbench deep-link) on a connection the caller can't see (#159,
+    PR #168 review)."""
+    h = admin_headers
+    sfx = uuid4().hex[:8]
+    a = _conn(client, h, f"authz-sq-A-{sfx}", source_db)
+    b = _conn(client, h, f"authz-sq-B-{sfx}", source_db)
+    name = f"authz-sq-name-{sfx}"
+    sq = client.post(
+        f"{QH}/queries",
+        json={"connection_id": b["id"], "name": name, "sql": "SELECT 1"},
+        headers=h,
+    )
+    assert sq.status_code == 201, sq.text
+    sq_id = sq.json()["id"]
+
+    alice = _mk_user(client, h, f"authz-sq-alice-{sfx}@x.com")
+    _grant(client, h, alice["id"], a["id"], "editor")  # granted A only
+    ah = _login(client, f"authz-sq-alice-{sfx}@x.com")
+
+    def titles(headers):
+        hits = client.get(f"{QH}/search", params={"q": name}, headers=headers).json()["hits"]
+        return {hit["title"] for hit in hits}
+
+    assert name not in titles(ah)  # B's saved query is invisible to alice
+    assert name in titles(h)  # admin sees it
+
+    # Clean up the saved query first (its connection FK has no ondelete), then conns.
+    assert client.delete(f"{QH}/queries/{sq_id}", headers=h).status_code == 204
+    for cid in (a["id"], b["id"]):
+        assert client.delete(f"{QH}/connections/{cid}", headers=h).status_code == 204
+
+
 def test_dashboard_scoped_to_grants(client, admin_headers, source_db):
     """The home dashboard/console aggregates are restricted to the caller's grants
     (#159): a user granted only an empty connection sees zero datasets, while admin
