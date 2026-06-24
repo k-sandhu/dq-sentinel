@@ -1,9 +1,9 @@
-import { Navigate, Route, Routes, useLocation } from "react-router";
+import { lazy, Suspense } from "react";
+import { Navigate, Outlet, Route, Routes, useLocation } from "react-router";
 import { useAuth } from "./auth";
 import Layout from "./components/Layout";
 import { Spinner } from "./components/ui";
 import { getLanding } from "./lib/prefs";
-import AssistantPage from "./pages/AssistantPage";
 import CheckDetailPage from "./pages/CheckDetailPage";
 import ChecksPage from "./pages/ChecksPage";
 import ConnectionBrowsePage from "./pages/ConnectionBrowsePage";
@@ -18,14 +18,19 @@ import ExceptionsPage from "./pages/ExceptionsPage";
 import FeaturesPage from "./pages/FeaturesPage";
 import HomePage from "./pages/HomePage";
 import IncidentsPage from "./pages/IncidentsPage";
-import LineagePage from "./pages/LineagePage";
 import LoginPage from "./pages/LoginPage";
 import MyWorkPage from "./pages/MyWorkPage";
 import ReliabilityPage from "./pages/ReliabilityPage";
 import RunDetailPage from "./pages/RunDetailPage";
 import RunsPage from "./pages/RunsPage";
 import SettingsPage from "./pages/SettingsPage";
-import WorkbenchPage from "./pages/WorkbenchPage";
+
+// Route-level code-splitting (FE-1): the heavy editor/graph pages load on demand
+// behind a single Suspense boundary inside the Layout outlet, so their bundles
+// don't weigh down first paint of the shell or the lighter routes.
+const AssistantPage = lazy(() => import("./pages/AssistantPage"));
+const LineagePage = lazy(() => import("./pages/LineagePage"));
+const WorkbenchPage = lazy(() => import("./pages/WorkbenchPage"));
 
 const SESSION_LANDED_KEY = "dq_landed";
 
@@ -108,9 +113,19 @@ export default function App() {
         <Route path="/exceptions" element={<ExceptionsPage />} />
         <Route path="/incidents" element={<IncidentsPage />} />
         <Route path="/reliability" element={<ReliabilityPage />} />
-        <Route path="/workbench" element={<WorkbenchPage />} />
-        <Route path="/lineage" element={<LineagePage />} />
-        <Route path="/assistant" element={<AssistantPage />} />
+        {/* One Suspense boundary for the lazy-loaded heavy routes (FE-1). The
+            pathless route shares a single Spinner fallback across all three. */}
+        <Route
+          element={
+            <Suspense fallback={<Spinner label="Loading…" />}>
+              <Outlet />
+            </Suspense>
+          }
+        >
+          <Route path="/workbench" element={<WorkbenchPage />} />
+          <Route path="/lineage" element={<LineagePage />} />
+          <Route path="/assistant" element={<AssistantPage />} />
+        </Route>
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

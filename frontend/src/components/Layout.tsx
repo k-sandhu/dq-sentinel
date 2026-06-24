@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { api } from "../api/client";
+import { qk } from "../api/queryKeys";
 import type { ConnectionHealth, Dataset, SearchHit, SearchOut } from "../api/types";
 import { useAuth } from "../auth";
 import { applyAppearance, applyMode, getAxis } from "../lib/appearance";
@@ -55,7 +56,7 @@ const NAV_GROUPS: {
 function FleetHealthPill() {
   const navigate = useNavigate();
   const { data } = useQuery({
-    queryKey: ["fleet-health"],
+    queryKey: qk.fleetHealth.list(),
     queryFn: () => api.get<ConnectionHealth[]>("/connections/health"),
     refetchInterval: 60_000,
   });
@@ -108,7 +109,7 @@ function useRecentDatasets(enabled: boolean): SearchHit[] {
   useEffect(() => subscribePrefs(() => setRecentEntries(getRecents())), []);
 
   const { data: datasets } = useQuery({
-    queryKey: ["datasets"],
+    queryKey: qk.datasets.list(),
     queryFn: () => api.get<Dataset[]>("/datasets"),
     enabled: enabled && recentEntries.length > 0,
   });
@@ -152,7 +153,7 @@ function GlobalSearch() {
   }, [term]);
 
   const { data } = useQuery({
-    queryKey: ["global-search", debounced],
+    queryKey: qk.globalSearch.detail(debounced),
     queryFn: () => api.get<SearchOut>(`/search?q=${encodeURIComponent(debounced)}`),
     enabled: debounced.length > 0,
     staleTime: 30_000,
@@ -296,7 +297,7 @@ function FavoritesNav() {
   // Reuse the shared cache; don't trigger a fetch from the sidebar — if the list
   // isn't loaded yet we simply render nothing until a page populates it.
   const { data: datasets } = useQuery({
-    queryKey: ["datasets"],
+    queryKey: qk.datasets.list(),
     queryFn: () => api.get<Dataset[]>("/datasets"),
     enabled: favIds.length > 0,
   });
