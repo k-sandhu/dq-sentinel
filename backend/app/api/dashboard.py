@@ -227,6 +227,19 @@ def console(db: Session = Depends(get_db), user: models.User = Depends(get_curre
         for i in top_ids
     ]
 
+    # Open incidents + 90-day daily activity, grant-scoped (#175 review): the Overview
+    # consumes these aggregates so it never receives raw/unscoped incident records, and
+    # the counts are server-side complete (not a clamped first page of /incidents).
+    inc = models.Incident
+    open_incidents = by_ds(db.query(inc).filter(inc.status != "resolved"), inc.dataset_id).count()
+    ninety_ago = now - timedelta(days=90)
+    incident_activity: dict[str, int] = {}
+    for (seen,) in by_ds(
+        db.query(inc.first_seen_at).filter(inc.first_seen_at >= ninety_ago), inc.dataset_id
+    ).all():
+        key = seen.strftime("%Y-%m-%d")
+        incident_activity[key] = incident_activity.get(key, 0) + 1
+
     return schemas.DashboardConsoleOut(
         new_exceptions_24h=new_exceptions_24h,
         resolved_24h=resolved_24h,
@@ -235,4 +248,6 @@ def console(db: Session = Depends(get_db), user: models.User = Depends(get_curre
         open_total=open_total,
         failing_now=failing_now,
         movers=movers,
+        open_incidents=open_incidents,
+        incident_activity=incident_activity,
     )

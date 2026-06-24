@@ -144,6 +144,13 @@ def test_grants_scope_runs_and_exceptions(client, admin_headers, source_db):
     alice_exc = client.get(f"{QH}/exceptions", params={"dataset_id": dsb["id"]}, headers=ah).json()
     assert alice_exc["total"] == 0
 
+    # /scorecards/summary is grant-scoped (#183 review): B's dataset must not appear in
+    # a granted-A viewer's worklist, and admin's dataset total is >= the scoped viewer's.
+    a_sum = client.get(f"{QH}/scorecards/summary", headers=ah).json()
+    admin_sum = client.get(f"{QH}/scorecards/summary", headers=h).json()
+    assert dsb["id"] not in {d["dataset_id"] for d in a_sum["top_failing_datasets"]}
+    assert admin_sum["total_datasets"] >= a_sum["total_datasets"]
+
     # Clean up the failing check/run/exceptions so they don't skew global console counts.
     for cid in (a["id"], b["id"]):
         assert client.delete(f"{QH}/connections/{cid}", headers=h).status_code == 204

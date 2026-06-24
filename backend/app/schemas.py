@@ -1081,6 +1081,8 @@ class DashboardConsoleOut(BaseModel):
     open_total: int
     failing_now: list[CheckOut]
     movers: list[DatasetMover]
+    open_incidents: int = 0
+    incident_activity: dict[str, int] = {}  # UTC date -> incident count, last 90 days (#175)
 
 
 # --- DDL & lineage (issue #51) ---

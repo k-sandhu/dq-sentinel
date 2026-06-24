@@ -170,6 +170,49 @@ html[data-nav-layout="centered"] .topnav .nav-item svg { display: none; }
 html[data-nav-layout="centered"] .topnav .topnav-signout { margin-left: 8px; }
 html[data-nav-layout="centered"] .page { max-width: 1120px; margin-inline: auto; }
 
+/* Overview operating console (#175) — token-driven inverted-pyramid primitives,
+   ported from the wireframe. Status tints use color-mix so they re-skin per
+   theme/mode (the app has no dedicated --*-bg tokens). */
+.ov-status { display: grid; grid-template-columns: auto repeat(4, 1fr); gap: 14px; align-items: stretch; }
+.ov-ring-card { display: flex; align-items: center; gap: 16px; }
+.ring {
+  --p: 96; --col: var(--ok); width: 88px; height: 88px; border-radius: 99px; flex: none;
+  background: conic-gradient(var(--col) calc(var(--p) * 1%), var(--bg) 0); display: grid; place-items: center;
+}
+.ring::before { content: ""; grid-area: 1 / 1; width: 66px; height: 66px; border-radius: 99px; background: var(--card); }
+.ring > strong { grid-area: 1 / 1; font-weight: 800; font-size: 20px; color: var(--text-dark); font-variant-numeric: tabular-nums; }
+.ring.warn { --col: var(--warn-strong); }
+.ring.danger { --col: var(--danger); }
+.kpi { padding: 14px 16px; display: block; text-align: left; color: inherit; }
+.kpi .label { font-size: 11px; font-weight: 700; color: var(--text-light); text-transform: uppercase; letter-spacing: 0.5px; }
+.kpi .value { font-size: 25px; font-weight: 800; color: var(--text-dark); margin-top: 6px; font-variant-numeric: tabular-nums; line-height: 1.05; }
+.kpi .value.ok { color: var(--ok); }
+.kpi .value.danger { color: var(--danger); }
+.kpi .value.warn { color: var(--warn-strong); }
+.kpi .foot { font-size: 12px; color: var(--text-light); margin-top: 8px; }
+a.kpi { transition: border-color 0.12s, transform 0.12s; }
+a.kpi:hover { border-color: var(--brand); transform: translateY(-2px); text-decoration: none; }
+.delta { font-weight: 700; font-size: 12px; }
+.delta.up { color: var(--ok); }
+.delta.down { color: var(--danger); }
+.dim-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 10px; }
+.dim-tile { padding: 12px 14px; }
+.dim-tile .dn { font-size: 11px; font-weight: 700; color: var(--text-light); text-transform: uppercase; letter-spacing: 0.4px; }
+.dim-tile .dv { font-size: 20px; font-weight: 800; color: var(--text-dark); margin: 6px 0 8px; font-variant-numeric: tabular-nums; }
+.meter { height: 8px; border-radius: 99px; background: var(--bg); overflow: hidden; }
+.meter > span { display: block; height: 100%; border-radius: 99px; background: var(--brand); }
+.meter.ok > span { background: var(--ok); }
+.meter.warn > span { background: var(--warn-strong); }
+.meter.danger > span { background: var(--danger); }
+.cal { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 12px); gap: 3px; }
+.cal i { width: 12px; height: 12px; border-radius: 2px; background: var(--border-light); }
+.cal i.q1 { background: color-mix(in srgb, var(--warn-strong) 22%, var(--card)); }
+.cal i.q2 { background: color-mix(in srgb, var(--warn-strong) 48%, var(--card)); }
+.cal i.q3 { background: color-mix(in srgb, var(--danger) 55%, var(--card)); }
+.cal i.q4 { background: var(--danger); }
+.needs-rail { display: flex; flex-direction: column; gap: 8px; }
+@media (prefers-reduced-motion: reduce) { a.kpi:hover { transform: none; } }
+
 /* Dark-theme component overrides — pastel light backgrounds become tinted glass. */
 /* Semantic status tones, dark (issue #58). rgba tints composite over --card
    (#1c2229); the brighter foregrounds keep WCAG-AA contrast on that composite. */

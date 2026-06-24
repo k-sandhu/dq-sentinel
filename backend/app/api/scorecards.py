@@ -9,13 +9,22 @@ from app import models, schemas
 from app.core import scorecards
 from app.db import get_db
 from app.models import utcnow
-from app.security import get_current_user
+from app.security import get_current_user, visible_dataset_ids
 
 router = APIRouter(prefix="/scorecards", tags=["scorecards"])
 
 
-def _scores(db: Session) -> list[scorecards.DatasetScore]:
-    return scorecards.load_dataset_scores(db)
+def _scores(db: Session, user: models.User) -> list[scorecards.DatasetScore]:
+    """Per-dataset scores, grant-scoped (#159 / #175 review): a limited-grant viewer
+    only sees datasets on connections they're granted, so neither the aggregate score
+    nor the per-dataset lists (top_failing, rollups) leak ungranted datasets. None ->
+    unrestricted (admin / zero-grant legacy)."""
+    scores = scorecards.load_dataset_scores(db)
+    vis = visible_dataset_ids(db, user)
+    if vis is None:
+        return scores
+    allowed = {row[0] for row in vis.all()}
+    return [s for s in scores if s.dataset_id in allowed]
 
 
 def _dataset_out(row: scorecards.DatasetScore) -> schemas.ScorecardDatasetOut:
@@ -63,8 +72,8 @@ def _matches_filter(value: str, expected: str | None) -> bool:
 
 
 @router.get("/summary", response_model=schemas.ScorecardSummaryOut)
-def summary(db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
-    dataset_scores = _scores(db)
+def summary(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    dataset_scores = _scores(db, user)
     global_score = scorecards.aggregate_scores(dataset_scores)
 
     rollups: list[scorecards.RollupScore] = []
@@ -86,9 +95,9 @@ def summary(db: Session = Depends(get_db), _: models.User = Depends(get_current_
 def rollups(
     dimension: schemas.ScorecardDimension = Query("domain"),
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
-    return [_rollup_out(r) for r in scorecards.rollup_scores(_scores(db), dimension)]
+    return [_rollup_out(r) for r in scorecards.rollup_scores(_scores(db, user), dimension)]
 
 
 @router.get("/datasets", response_model=schemas.ScorecardDatasetPageOut)
@@ -98,11 +107,11 @@ def datasets(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
     rows = [
         row
-        for row in _scores(db)
+        for row in _scores(db, user)
         if _matches_filter(row.domain, domain) and _matches_filter(row.team, team)
     ]
     rows = scorecards.sort_datasets_for_attention(rows)
