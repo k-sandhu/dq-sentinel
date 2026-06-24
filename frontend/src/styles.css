@@ -167,6 +167,7 @@ html[data-nav-layout="centered"] .topnav {
 }
 html[data-nav-layout="centered"] .topnav .nav-item { margin: 0; padding: 6px 11px; font-size: 13px; }
 html[data-nav-layout="centered"] .topnav .nav-item svg { display: none; }
+html[data-nav-layout="centered"] .topnav .topnav-signout { margin-left: 8px; }
 html[data-nav-layout="centered"] .page { max-width: 1120px; margin-inline: auto; }
 
 /* Dark-theme component overrides — pastel light backgrounds become tinted glass. */

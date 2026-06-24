@@ -437,6 +437,19 @@ export default function Layout() {
               <span className="nav-label">{n.label}</span>
             </NavLink>
           ))}
+          {/* Centered hides the sidebar, so the sidebar-only account controls must
+              live here too or they vanish entirely — Settings + Sign out (#182 review). */}
+          <NavLink
+            to="/settings"
+            className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
+            title="Settings"
+          >
+            <Icon name="settings" />
+            <span className="nav-label">Settings</span>
+          </NavLink>
+          <button type="button" className="small ghost topnav-signout" onClick={logout} title="Sign out">
+            Sign out
+          </button>
         </nav>
         {/* keyed by path so a crashed page resets when the user navigates away */}
         <ErrorBoundary key={location.pathname}>
