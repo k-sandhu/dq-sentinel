@@ -5,16 +5,16 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import models, schemas
-from app.api.serialize import check_out, run_out
+from app.api.serialize import check_out, check_version_out, run_out
 from app.connectors.sa import connector_for
+from app.core import check_authoring
 from app.core.audit import audit
-from app.core.check_types import CHECK_TYPES, validate_check
+from app.core.check_types import CHECK_TYPES
 from app.core.generator import heuristic_proposals
 from app.core.profiler import summarize_profile_for_llm
 from app.core.runner import run_check
 from app.db import get_db
 from app.llm.client import llm_enabled
-from app.models import utcnow
 from app.security import get_current_user, require_role
 
 log = logging.getLogger(__name__)
@@ -67,31 +67,20 @@ def create_check(
     if ds is None:
         raise HTTPException(404, "Dataset not found")
     try:
-        params = validate_check(body.check_type, body.column_name, body.params)
+        check = check_authoring.create_check(
+            db, user, ds,
+            name=body.name,
+            check_type=body.check_type,
+            column_name=body.column_name,
+            params=body.params,
+            severity=body.severity,
+            rationale=body.rationale,
+            schedule_kind=body.schedule_kind,
+            schedule_expr=body.schedule_expr,
+            status=body.status,
+        )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    check = models.Check(
-        dataset_id=ds.id,
-        name=body.name or f"{ds.table_name}: {body.check_type}"
-        + (f" on {body.column_name}" if body.column_name else ""),
-        check_type=body.check_type,
-        column_name=body.column_name,
-        params=params,
-        severity=body.severity,
-        rationale=body.rationale,
-        schedule_kind=body.schedule_kind,
-        schedule_expr=body.schedule_expr,
-        status=body.status,
-        origin="manual",
-        created_by_id=user.id,
-        next_run_at=utcnow() if body.status == "active" else None,
-    )
-    db.add(check)
-    db.flush()  # assign check.id for the audit row
-    audit(
-        db, user, "check.create", "check", check.id,
-        check_type=check.check_type, column=check.column_name, status=check.status,
-    )
     db.commit()
     db.refresh(check)
     return check_out(check)
@@ -107,36 +96,10 @@ def update_check(
     check = db.get(models.Check, check_id)
     if check is None:
         raise HTTPException(404, "Check not found")
-
-    old_params = dict(check.params or {})
-    old_status = check.status
-    data = body.model_dump(exclude_unset=True)
-    new_type_params = (
-        ("params" in data and data["params"] is not None)
-        or ("column_name" in data and data["column_name"] != check.column_name)
-    )
-    if "column_name" in data:
-        check.column_name = data["column_name"]
-    if "params" in data and data["params"] is not None:
-        check.params = data["params"]
-    if new_type_params:
-        try:
-            check.params = validate_check(check.check_type, check.column_name, check.params)
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
-    for field in ("name", "severity", "rationale", "schedule_kind", "schedule_expr"):
-        if field in data and data[field] is not None:
-            setattr(check, field, data[field])
-    if "status" in data and data["status"] is not None and data["status"] != check.status:
-        check.status = data["status"]
-        check.next_run_at = utcnow() if check.status == "active" else None
-    detail: dict = {"fields": [f for f in data if data[f] is not None]}
-    if check.params != old_params:
-        detail["params_before"] = old_params
-        detail["params_after"] = dict(check.params or {})
-    if check.status != old_status:
-        detail["status"] = {"before": old_status, "after": check.status}
-    audit(db, user, "check.update", "check", check.id, **detail)
+    try:
+        check_authoring.apply_update(db, user, check, body.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     db.commit()
     db.refresh(check)
     return check_out(check)
@@ -154,6 +117,46 @@ def run_now(
     audit(db, user, "check.run_manual", "check", check.id, check_type=check.check_type)
     run = run_check(db, check, triggered_by="manual")  # commits the audit row in the same tx
     return run_out(db, run)
+
+
+@router.get("/{check_id}/versions", response_model=list[schemas.CheckVersionOut])
+def list_check_versions(
+    check_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    check = db.get(models.Check, check_id)
+    if check is None:
+        raise HTTPException(404, "Check not found")
+    versions = (
+        db.query(models.CheckVersion)
+        .filter(models.CheckVersion.check_id == check_id)
+        .order_by(models.CheckVersion.version.desc())
+        .all()
+    )
+    current = versions[0].version if versions else None
+    return [check_version_out(db, v, is_current=v.version == current) for v in versions]
+
+
+@router.post("/{check_id}/restore", response_model=schemas.CheckOut)
+def restore_check_version(
+    check_id: int,
+    body: schemas.CheckRestoreIn,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_role("editor")),
+):
+    check = db.get(models.Check, check_id)
+    if check is None:
+        raise HTTPException(404, "Check not found")
+    try:
+        check_authoring.restore_version(db, user, check, body.version)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:  # a restored definition that no longer validates
+        raise HTTPException(422, str(exc)) from exc
+    db.commit()
+    db.refresh(check)
+    return check_out(check)
 
 
 @router.delete("/{check_id}", status_code=204)
@@ -294,6 +297,7 @@ def generate_checks(
             created_by_id=user.id,
         )
         db.add(check)
+        check_authoring.snapshot_version(db, check, user, "generated")
         created.append(check)
     db.commit()
     for c in created:

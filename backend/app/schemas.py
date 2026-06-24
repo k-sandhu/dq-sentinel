@@ -480,6 +480,28 @@ class CheckOut(ORMModel):
     created_at: datetime
 
 
+class CheckVersionOut(ORMModel):
+    id: int
+    check_id: int
+    version: int
+    name: str
+    check_type: str
+    column_name: str | None
+    params: dict[str, Any]
+    severity: Severity
+    rationale: str
+    schedule_kind: str | None
+    schedule_expr: str | None
+    change_note: str
+    created_by: str | None = None  # display name, joined
+    created_at: datetime
+    is_current: bool = False  # highest version == the live check definition
+
+
+class CheckRestoreIn(BaseModel):
+    version: int
+
+
 # ---- monitor packs (issue #115) ----
 MonitorKind = Literal["freshness", "volume", "schema", "drift"]
 
