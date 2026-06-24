@@ -1,9 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { type CSSProperties } from "react";
-import { Link, useNavigate } from "react-router";
+import { type CSSProperties, type ReactNode, useState } from "react";
+import { Link } from "react-router";
 import {
-  Bar,
-  BarChart,
   CartesianGrid,
   Line,
   LineChart,
@@ -15,10 +13,11 @@ import {
 import { api } from "../api/client";
 import type {
   Dashboard,
-  Dataset,
+  DashboardConsole,
+  IncidentRecord,
+  Reliability,
   ScorecardHistory,
   ScorecardHistoryPoint,
-  ScorecardRollup,
   ScorecardSloStatus,
   ScorecardSummary,
 } from "../api/types";
@@ -33,28 +32,22 @@ const TOOLTIP_STYLE = {
   background: "var(--card)",
   color: "var(--text-dark)",
 };
-
 const AXIS = { fontSize: 11, fill: "var(--text-light)" };
 
-function clampScore(score: number | null | undefined): number {
-  if (score == null || Number.isNaN(score)) return 0;
-  return Math.max(0, Math.min(100, score));
-}
+const QUALITY_DIMENSIONS = [
+  "Completeness",
+  "Validity",
+  "Freshness",
+  "Uniqueness",
+  "Consistency",
+  "Accuracy",
+] as const;
+
+type Tone = "ok" | "warn" | "danger" | "neutral";
 
 function fmtScore(score: number | null | undefined): string {
-  if (score == null) return "-";
+  if (score == null) return "—";
   return Number.isInteger(score) ? score.toFixed(0) : score.toFixed(1);
-}
-
-function fmtPoints(points: number | null | undefined): string {
-  if (points == null) return "-";
-  return `${Math.abs(points).toFixed(1)} pts`;
-}
-
-function fmtDelta(delta: number | null | undefined): string {
-  if (delta == null) return "-";
-  if (delta === 0) return "0.0 pts";
-  return `${delta > 0 ? "+" : ""}${delta.toFixed(1)} pts`;
 }
 
 function sloLabel(status: ScorecardSloStatus | null | undefined): string {
@@ -62,179 +55,165 @@ function sloLabel(status: ScorecardSloStatus | null | undefined): string {
   return status === "at_risk" ? "at risk" : status;
 }
 
-function sloTone(status: ScorecardSloStatus | null | undefined): "ok" | "warn" | "danger" | "neutral" {
+function sloTone(status: ScorecardSloStatus | null | undefined): Tone {
   if (status === "met") return "ok";
   if (status === "at_risk") return "warn";
   if (status === "breached") return "danger";
   return "neutral";
 }
 
-function scoreTone(status: ScorecardSloStatus | null | undefined, score: number | null | undefined): string {
-  if (status === "unknown" || status === "disabled" || score == null) return "unknown";
-  if (status === "breached") return "breached";
-  if (status === "at_risk") return "at-risk";
-  if (score != null && score < 80) return "at-risk";
-  return "met";
+function panelError(error: unknown, label: string) {
+  return error ? (
+    <ErrorBox error={error instanceof Error ? new Error(`${label}: ${error.message}`) : error} />
+  ) : null;
 }
 
-function scoreStyle(score: number | null | undefined): CSSProperties {
-  return { "--score": clampScore(score) } as CSSProperties;
-}
-
-function trendDelta(history: ScorecardHistoryPoint[]) {
+/** Week-over-week quality-score delta from the 90-day history (display-only). */
+function wowDelta(history: ScorecardHistoryPoint[]): number | null {
   const scored = history.filter((p) => p.score != null);
-  if (scored.length >= 2) {
-    const first = scored[0];
-    const last = scored[scored.length - 1];
-    const spanDays = Math.max(
-      1,
-      Math.round((Date.parse(last.snapshot_date) - Date.parse(first.snapshot_date)) / 86_400_000),
-    );
-    return {
-      label: `${spanDays}-day delta`,
-      value: (last.score ?? 0) - (first.score ?? 0),
-    };
+  if (scored.length < 2) return null;
+  const last = scored[scored.length - 1];
+  const lastDate = Date.parse(last.snapshot_date);
+  // nearest point ~7 days before the latest
+  let prev = scored[0];
+  for (const p of scored) {
+    if (Date.parse(p.snapshot_date) <= lastDate - 7 * 86_400_000) prev = p;
   }
-  return { label: "Score delta", value: null };
+  return (last.score ?? 0) - (prev.score ?? 0);
 }
 
-function datasetDriverLink(datasetId: number | null | undefined): string | null {
-  return datasetId != null ? `/datasets/${datasetId}/exceptions` : null;
-}
+// ── Tier 1: status ────────────────────────────────────────────────────────────────
 
-function rollupDatasetPath(row: Pick<ScorecardRollup, "dimension" | "key" | "label">): string {
-  const params = new URLSearchParams();
-  if (row.dimension === "domain" || row.dimension === "team") {
-    params.set(row.dimension, row.key);
-  } else {
-    params.set("q", row.label || row.key);
-  }
-  return `/datasets?${params.toString()}`;
-}
-
-function SloPill({ status }: { status: ScorecardSloStatus | null | undefined }) {
-  return <span className={`pill tone-${sloTone(status)}`}>{sloLabel(status)}</span>;
-}
-
-function ScoreRing({
-  score,
-  status,
-}: {
-  score: number | null | undefined;
-  status: ScorecardSloStatus | null | undefined;
-}) {
+function HealthRing({ pct, tone }: { pct: number | null; tone: Tone }) {
+  const cls = tone === "danger" ? "ring danger" : tone === "warn" ? "ring warn" : "ring";
   return (
-    <div className={`score-ring scorecard-ring ${scoreTone(status, score)}`} style={scoreStyle(score)}>
-      <strong>{fmtScore(score)}</strong>
+    <div
+      className={cls}
+      style={{ "--p": pct == null ? 0 : Math.round(pct) } as CSSProperties}
+      role="img"
+      aria-label={pct == null ? "Checks passing: no data" : `Checks passing: ${pct.toFixed(0)}%`}
+    >
+      <strong>{pct == null ? "—" : `${pct.toFixed(0)}%`}</strong>
     </div>
   );
 }
 
-function ScoreMetric({
+function Kpi({
   label,
   value,
-  hint,
   tone,
+  foot,
   to,
 }: {
   label: string;
   value: string;
-  hint?: string;
-  tone?: "ok" | "warn" | "danger";
+  tone?: Tone;
+  foot?: ReactNode;
   to?: string;
 }) {
   const body = (
     <>
-      <div className="scorecard-metric-label">{label}</div>
-      <div className="scorecard-metric-value">{value}</div>
-      {hint && <div className="scorecard-metric-hint">{hint}</div>}
+      <div className="label">{label}</div>
+      <div className={`value${tone && tone !== "neutral" ? ` ${tone}` : ""}`}>{value}</div>
+      {foot && <div className="foot">{foot}</div>}
     </>
   );
-  if (to) {
-    return (
-      <Link to={to} className={`scorecard-metric ${tone ?? ""}`}>
-        {body}
-      </Link>
-    );
-  }
-  return <div className={`scorecard-metric ${tone ?? ""}`}>{body}</div>;
-}
-
-function ScoreCell({ score }: { score: number | null | undefined }) {
-  const clamped = clampScore(score);
-  return (
-    <div className="scorecell">
-      <span>{fmtScore(score)}</span>
-      <div className="scorecell-bar" aria-hidden="true">
-        <div style={{ width: `${clamped}%` }} />
-      </div>
-    </div>
+  return to ? (
+    <Link to={to} className="card kpi link">
+      {body}
+    </Link>
+  ) : (
+    <div className="card kpi">{body}</div>
   );
 }
 
-function panelError(error: unknown, label: string) {
-  return error ? <ErrorBox error={error instanceof Error ? new Error(`${label}: ${error.message}`) : error} /> : null;
-}
-
-function ScorecardTopBand({
+function StatusTier({
   summary,
   dashboard,
   history,
-  loading,
-  error,
+  openIncidents,
+  reliability,
 }: {
   summary: ScorecardSummary | undefined;
   dashboard: Dashboard | undefined;
   history: ScorecardHistoryPoint[];
-  loading: boolean;
-  error: unknown;
+  openIncidents: number | null;
+  reliability: Reliability | undefined;
 }) {
-  const delta = trendDelta(history);
-  const activeChecks = summary?.active_checks ?? dashboard?.active_checks;
-  const openExceptions = summary?.open_exceptions ?? dashboard?.open_exceptions;
-  const datasetCount = summary?.total_datasets ?? dashboard?.datasets;
+  const passingPct =
+    summary && summary.active_checks > 0
+      ? (summary.passing_checks / summary.active_checks) * 100
+      : dashboard?.pass_rate_7d != null
+        ? dashboard.pass_rate_7d * 100
+        : null;
+  const ringTone: Tone =
+    passingPct == null ? "neutral" : passingPct >= 95 ? "ok" : passingPct >= 85 ? "warn" : "danger";
+  const coverage =
+    summary && summary.total_datasets > 0
+      ? (summary.scored_datasets / summary.total_datasets) * 100
+      : null;
+  const delta = wowDelta(history);
+  const openExc = summary?.open_exceptions ?? dashboard?.open_exceptions;
 
   return (
-    <div className="scorecard-top">
-      <div className="card card-pad scorecard-summary-card">
-        <div className="scorecard-summary-main">
-          <ScoreRing score={summary?.score} status={summary?.slo_status} />
-          <div className="scorecard-summary-copy">
-            <div className="scorecard-eyebrow">Global quality score</div>
-            <div className="scorecard-score-line">
-              <span>{fmtScore(summary?.score)}</span>
-              <SloPill status={summary?.slo_status ?? "unknown"} />
-            </div>
-            <div className="scorecard-summary-meta">
-              Target {fmtScore(summary?.slo_target)}
-              {summary?.score_gap != null ? `, gap ${fmtPoints(summary.score_gap)}` : ""}
-            </div>
+    <div className="ov-status">
+      <div className="card card-pad ov-ring-card">
+        <HealthRing pct={passingPct} tone={ringTone} />
+        <div>
+          <div className="label" style={{ fontSize: 11, fontWeight: 700, color: "var(--text-light)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+            Checks passing
           </div>
+          <div style={{ marginTop: 6, fontSize: 13, color: "var(--text)" }}>
+            Quality score <strong>{fmtScore(summary?.score)}</strong>{" "}
+            <span className={`pill tone-${sloTone(summary?.slo_status)}`}>{sloLabel(summary?.slo_status)}</span>
+          </div>
+          {delta != null && (
+            <div className="foot" style={{ marginTop: 6 }}>
+              <span className={`delta ${delta < 0 ? "down" : "up"}`}>
+                {delta > 0 ? "+" : ""}
+                {delta.toFixed(1)} pts
+              </span>{" "}
+              WoW
+            </div>
+          )}
         </div>
-        {loading && !summary && <div className="scorecard-soft-note">Loading scorecard summary...</div>}
-        {error && !summary ? panelError(error, "Scorecard summary") : null}
       </div>
-
-      <div className="scorecard-metric-grid">
-        <ScoreMetric label="SLO met" value={fmtNum(summary?.slo_met)} tone="ok" hint={`${fmtNum(datasetCount)} datasets`} />
-        <ScoreMetric label="At risk" value={fmtNum(summary?.slo_at_risk)} tone="warn" />
-        <ScoreMetric label="Breached" value={fmtNum(summary?.slo_breached)} tone="danger" />
-        <ScoreMetric
-          label={delta.label}
-          value={fmtDelta(delta.value)}
-          tone={delta.value == null ? undefined : delta.value < 0 ? "danger" : "ok"}
-        />
-        <ScoreMetric label="Active checks" value={fmtNum(activeChecks)} to="/checks?status=active" />
-        <ScoreMetric
-          label="Open exceptions"
-          value={fmtNum(openExceptions)}
-          tone={openExceptions ? "danger" : "ok"}
-          to="/exceptions"
-        />
-      </div>
+      <Kpi
+        label="Open incidents"
+        value={openIncidents == null ? "—" : fmtNum(openIncidents)}
+        tone={openIncidents ? "danger" : "ok"}
+        to="/incidents"
+      />
+      <Kpi
+        label="Open exceptions"
+        value={fmtNum(openExc)}
+        tone={openExc ? "danger" : "ok"}
+        to="/exceptions"
+      />
+      <Kpi
+        label="MTTD / MTTR"
+        value="—"
+        foot={
+          <Link to="/reliability">
+            {reliability ? `${reliability.breached}/${reliability.total} SLAs breached · per-SLA →` : "per-SLA · Reliability →"}
+          </Link>
+        }
+      />
+      <Kpi
+        label="Coverage"
+        value={coverage == null ? "—" : fmtPct(coverage / 100)}
+        foot={
+          coverage == null
+            ? "pending (#116)"
+            : `${fmtNum(summary?.scored_datasets)} / ${fmtNum(summary?.total_datasets)} datasets scored`
+        }
+        to="/datasets"
+      />
     </div>
   );
 }
+
+// ── Tier 2: trend + attention ───────────────────────────────────────────────────
 
 function ScoreTrendPanel({
   points,
@@ -245,15 +224,11 @@ function ScoreTrendPanel({
   isLoading: boolean;
   error: unknown;
 }) {
-  const trend = points.map((p) => ({
-    ...p,
-    day: p.snapshot_date.slice(5),
-  }));
+  const trend = points.map((p) => ({ ...p, day: p.snapshot_date.slice(5) }));
   const hasSnapshots = trend.some((p) => p.score != null);
   const hasTarget = trend.some((p) => p.slo_target != null);
-
   return (
-    <div className="card card-pad scorecard-panel">
+    <div className="card card-pad">
       <div className="section-title compact">
         <h2>Quality score trend</h2>
         <span className="badge">90 days</span>
@@ -261,222 +236,224 @@ function ScoreTrendPanel({
       {error ? (
         panelError(error, "Scorecard history")
       ) : isLoading ? (
-        <Spinner label="Loading score history..." />
+        <Spinner label="Loading score history…" />
       ) : !hasSnapshots ? (
-        <EmptyState title="No score snapshots yet" hint="Current scorecards still render while the worker starts collecting daily history." />
+        <EmptyState title="No score snapshots yet" hint="Daily history accrues once the worker runs." />
       ) : (
-        <>
-          <ResponsiveContainer width="100%" height={240}>
-            <LineChart data={trend} margin={{ top: 8, right: 10, left: -8, bottom: 0 }}>
-              <CartesianGrid stroke="var(--border-light)" vertical={false} />
-              <XAxis dataKey="day" tick={AXIS} tickLine={false} axisLine={{ stroke: "var(--border)" }} />
-              <YAxis
-                domain={[0, 100]}
-                tick={AXIS}
-                tickLine={false}
-                axisLine={false}
-                width={38}
-              />
-              <Tooltip contentStyle={TOOLTIP_STYLE} />
-              {hasTarget && (
-                <Line
-                  type="monotone"
-                  dataKey="slo_target"
-                  name="SLO target"
-                  stroke="var(--warn-strong)"
-                  strokeDasharray="4 4"
-                  strokeWidth={1.5}
-                  dot={false}
-                  connectNulls
-                />
-              )}
-              <Line
-                type="monotone"
-                dataKey="score"
-                name="Quality score"
-                stroke="var(--brand)"
-                strokeWidth={2.5}
-                dot={false}
-                connectNulls
-              />
-            </LineChart>
-          </ResponsiveContainer>
-          <div className="legend-row">
-            <span><span className="swatch" style={{ background: "var(--brand)" }} />quality score</span>
-            {hasTarget && <span><span className="swatch" style={{ background: "var(--warn-strong)" }} />SLO target</span>}
-          </div>
-        </>
+        <ResponsiveContainer width="100%" height={210}>
+          <LineChart data={trend} margin={{ top: 8, right: 10, left: -8, bottom: 0 }}>
+            <CartesianGrid stroke="var(--border-light)" vertical={false} />
+            <XAxis dataKey="day" tick={AXIS} tickLine={false} axisLine={{ stroke: "var(--border)" }} />
+            <YAxis domain={[0, 100]} tick={AXIS} tickLine={false} axisLine={false} width={34} />
+            <Tooltip contentStyle={TOOLTIP_STYLE} />
+            {hasTarget && (
+              <Line type="monotone" dataKey="slo_target" name="SLO target" stroke="var(--warn-strong)" strokeDasharray="4 4" strokeWidth={1.5} dot={false} connectNulls />
+            )}
+            <Line type="monotone" dataKey="score" name="Quality score" stroke="var(--brand)" strokeWidth={2.5} dot={false} connectNulls />
+          </LineChart>
+        </ResponsiveContainer>
       )}
     </div>
   );
 }
 
-type DriverItem = {
-  key: string;
-  title: string;
-  meta: string;
-  to: string | null;
-  score: number | null;
-  loss: number | null;
-  exceptions: number | null;
-  status: ScorecardSloStatus | null;
-};
-
-function buildDriverItems(summary: ScorecardSummary | undefined, dashboard: Dashboard | undefined) {
-  if (summary) {
-    const datasetDrivers: DriverItem[] = summary.top_failing_datasets.slice(0, 4).map((dataset) => ({
-      key: `dataset-${dataset.dataset_id}`,
-      title: dataset.display_name || `${dataset.schema_name ? `${dataset.schema_name}.` : ""}${dataset.table_name}`,
-      meta: [dataset.domain, dataset.team, dataset.owner].filter(Boolean).join(" / ") || dataset.importance,
-      to: datasetDriverLink(dataset.dataset_id),
-      score: dataset.score,
-      loss: dataset.score_gap,
-      exceptions: dataset.open_exceptions,
-      status: dataset.slo_status,
-    }));
-
-    const rollupDrivers: DriverItem[] = summary.worst_rollups.slice(0, 3).map((rollup) => ({
-      key: `rollup-${rollup.dimension}-${rollup.key}`,
-      title: rollup.label || "Unassigned",
-      meta: `${rollup.dimension} / ${fmtNum(rollup.total_datasets)} datasets`,
-      to: rollupDatasetPath(rollup),
-      score: rollup.score,
-      loss: rollup.score_gap,
-      exceptions: rollup.open_exceptions,
-      status: rollup.slo_status,
-    }));
-
-    return [...datasetDrivers, ...rollupDrivers].slice(0, 6);
+/** 90-day incident heatmap (calendar). Buckets incidents by first_seen_at day. */
+function IncidentHeatmap({ incidents }: { incidents: IncidentRecord[] | undefined }) {
+  const days = 91; // 13 weeks
+  const counts = new Map<string, number>();
+  for (const inc of incidents ?? []) {
+    const day = inc.first_seen_at.slice(0, 10);
+    counts.set(day, (counts.get(day) ?? 0) + 1);
   }
-
-  return (dashboard?.worst_datasets ?? []).slice(0, 6).map((dataset: Dataset) => ({
-    key: `dataset-${dataset.id}`,
-    title: `${dataset.schema_name ? `${dataset.schema_name}.` : ""}${dataset.table_name}`,
-    meta: dataset.connection_name,
-    to: `/datasets/${dataset.id}/exceptions`,
-    score: null as number | null,
-    loss: null as number | null,
-    exceptions: dataset.open_exceptions,
-    status: null as ScorecardSloStatus | null,
-  }));
+  const now = Date.now();
+  const cells = Array.from({ length: days }, (_, i) => {
+    const d = new Date(now - (days - 1 - i) * 86_400_000);
+    const key = d.toISOString().slice(0, 10);
+    const n = counts.get(key) ?? 0;
+    const q = n === 0 ? 0 : n === 1 ? 1 : n === 2 ? 2 : n <= 4 ? 3 : 4;
+    return { key, n, q };
+  });
+  return (
+    <div className="card card-pad">
+      <div className="section-title compact">
+        <h2>Incident activity</h2>
+        <span className="badge">90 days (UTC)</span>
+      </div>
+      {!incidents ? (
+        <Spinner label="Loading incidents…" />
+      ) : (
+        <div className="cal" role="img" aria-label={`Incident activity over the last ${days} days`}>
+          {cells.map((c) => (
+            <i
+              key={c.key}
+              className={c.q ? `q${c.q}` : ""}
+              title={`${c.key}: ${c.n} incident${c.n === 1 ? "" : "s"}`}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
-function ScoreDriversPanel({
+/** Quality-by-dimension scorecard. No per-quality-dimension backend score exists yet
+ *  (rollups are domain/team) — render an explicit empty state, tracked on #116. */
+function DimensionScorecard() {
+  return (
+    <div className="card card-pad">
+      <div className="section-title compact">
+        <h2>Quality by dimension</h2>
+        <span className="badge">pending #116</span>
+      </div>
+      <div className="dim-grid" aria-hidden="true">
+        {QUALITY_DIMENSIONS.map((d) => (
+          <div key={d} className="card dim-tile">
+            <div className="dn">{d}</div>
+            <div className="dv">—</div>
+            <div className="meter">
+              <span style={{ width: "0%" }} />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="sub" style={{ marginTop: 10 }}>
+        Per-dimension quality scores aren&rsquo;t exposed by the scorecard API yet — tracked on #116.
+      </div>
+    </div>
+  );
+}
+
+function NeedsAttention({ console: c, summary }: { console: DashboardConsole | undefined; summary: ScorecardSummary | undefined }) {
+  const items: { key: string; title: string; meta: string; to: string }[] = [];
+  for (const chk of (c?.failing_now ?? []).slice(0, 4)) {
+    items.push({
+      key: `chk-${chk.id}`,
+      title: chk.name,
+      meta: `failing · ${chk.severity}`,
+      to: `/datasets/${chk.dataset_id}/exceptions`,
+    });
+  }
+  for (const ds of (summary?.top_failing_datasets ?? []).slice(0, 3)) {
+    items.push({
+      key: `ds-${ds.dataset_id}`,
+      title: ds.display_name || `${ds.schema_name ? `${ds.schema_name}.` : ""}${ds.table_name}`,
+      meta: `${fmtNum(ds.open_exceptions)} open exceptions`,
+      to: `/datasets/${ds.dataset_id}/exceptions`,
+    });
+  }
+  return (
+    <div className="card card-pad">
+      <div className="section-title compact">
+        <h2>Needs attention</h2>
+        <Link to="/my-work" className="btn small">My work</Link>
+      </div>
+      {items.length === 0 ? (
+        <EmptyState title="Nothing needs attention" hint="No failing checks or high-exception datasets right now." />
+      ) : (
+        <div className="needs-rail">
+          {items.map((it) => (
+            <Link key={it.key} to={it.to} className="dense-item clickable">
+              <div className="row-title-link">{it.title}</div>
+              <div className="sub">{it.meta}</div>
+            </Link>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Tier 3: datasets-by-risk worklist ─────────────────────────────────────────────
+
+type RiskFilter = "all" | "failing" | "exceptions";
+
+function DatasetsByRisk({
   summary,
   dashboard,
-  isLoading,
-  error,
 }: {
   summary: ScorecardSummary | undefined;
   dashboard: Dashboard | undefined;
-  isLoading: boolean;
-  error: unknown;
 }) {
-  const drivers = buildDriverItems(summary, dashboard);
-
-  return (
-    <div className="card card-pad scorecard-panel">
-      <div className="section-title compact">
-        <h2>Score drivers</h2>
-        <Link to="/datasets" className="btn small">Datasets</Link>
-      </div>
-      {error && !summary && !dashboard ? (
-        panelError(error, "Score drivers")
-      ) : isLoading && !summary && !dashboard ? (
-        <Spinner label="Loading drivers..." />
-      ) : drivers.length === 0 ? (
-        <EmptyState title="No active score drivers" hint="No failing datasets or exception pressure are currently contributing to score loss." />
-      ) : (
-        <div className="scorecard-driver-list">
-          {drivers.map((driver) => {
-            const body = (
-              <>
-                <div className="scorecard-driver-main">
-                  <div className="scorecard-driver-title">{driver.title}</div>
-                  <div className="scorecard-driver-meta">{driver.meta}</div>
-                </div>
-                <div className="scorecard-driver-stats">
-                  {driver.status && <SloPill status={driver.status} />}
-                  {driver.score != null && <span className="badge">score {fmtScore(driver.score)}</span>}
-                  {driver.loss != null && <span className="badge">gap {fmtPoints(driver.loss)}</span>}
-                  {driver.exceptions != null && (
-                    <span className={`badge ${driver.exceptions ? "scorecard-badge-danger" : ""}`}>
-                      {fmtNum(driver.exceptions)} exceptions
-                    </span>
-                  )}
-                </div>
-              </>
-            );
-            return driver.to ? (
-              <Link key={driver.key} to={driver.to} className="scorecard-driver-row">
-                {body}
-              </Link>
-            ) : (
-              <div key={driver.key} className="scorecard-driver-row">
-                {body}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
+  const [filter, setFilter] = useState<RiskFilter>("all");
+  const rows = summary
+    ? summary.top_failing_datasets.map((d) => ({
+        id: d.dataset_id,
+        name: d.display_name || `${d.schema_name ? `${d.schema_name}.` : ""}${d.table_name}`,
+        score: d.score,
+        status: d.slo_status,
+        exceptions: d.open_exceptions,
+        owner: [d.domain, d.team, d.owner].filter(Boolean).join(" / "),
+      }))
+    : (dashboard?.worst_datasets ?? []).map((d) => ({
+        id: d.id,
+        name: `${d.schema_name ? `${d.schema_name}.` : ""}${d.table_name}`,
+        score: null as number | null,
+        status: null as ScorecardSloStatus | null,
+        exceptions: d.open_exceptions,
+        owner: d.connection_name,
+      }));
+  const shown = rows.filter((r) =>
+    filter === "all"
+      ? true
+      : filter === "failing"
+        ? r.status === "breached" || r.status === "at_risk"
+        : (r.exceptions ?? 0) > 0,
   );
-}
+  const CHIPS: { id: RiskFilter; label: string }[] = [
+    { id: "all", label: "All" },
+    { id: "failing", label: "Failing SLO" },
+    { id: "exceptions", label: "With exceptions" },
+  ];
 
-function RollupTable({
-  title,
-  rows,
-  isLoading,
-  error,
-}: {
-  title: string;
-  rows: ScorecardRollup[];
-  isLoading: boolean;
-  error: unknown;
-}) {
   return (
-    <div className="card scorecard-rollup-card">
-      <div className="card-pad scorecard-rollup-head">
-        <div>
-          <h2>{title}</h2>
-          <div className="sub">Score, SLO posture, and exception pressure</div>
+    <div className="card">
+      <div className="card-pad section-title" style={{ marginBottom: 0 }}>
+        <h2 style={{ fontSize: 14 }}>Datasets by risk</h2>
+        <div className="seg" role="tablist" aria-label="Filter datasets by risk">
+          {CHIPS.map((chip) => (
+            <button
+              key={chip.id}
+              type="button"
+              role="tab"
+              aria-selected={filter === chip.id}
+              className={filter === chip.id ? "on" : ""}
+              onClick={() => setFilter(chip.id)}
+            >
+              {chip.label}
+            </button>
+          ))}
         </div>
       </div>
-      {error ? (
-        <div className="card-pad">{panelError(error, title)}</div>
-      ) : isLoading ? (
-        <div className="card-pad"><Spinner label={`Loading ${title.toLowerCase()}...`} /></div>
-      ) : rows.length === 0 ? (
-        <EmptyState title="No rollups yet" hint="Rollups appear once datasets have domain or team metadata." />
+      {shown.length === 0 ? (
+        <EmptyState title="No datasets match" hint="Nothing in this risk bucket right now." />
       ) : (
         <div className="table-wrap">
-          <table className="data scorecard-rollup-table">
+          <table className="data">
             <thead>
               <tr>
-                <th>{title.replace(" rollups", "")}</th>
+                <th>Dataset</th>
                 <th>Score</th>
                 <th>SLO</th>
-                <th className="num">Datasets</th>
-                <th className="num">Breached</th>
                 <th className="num">Open exceptions</th>
+                <th>Owner</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
-                <tr key={`${row.dimension}-${row.key}`}>
+              {shown.map((r) => (
+                <tr key={r.id}>
                   <td>
-                    <Link to={rollupDatasetPath(row)} className="row-title-link">{row.label || "Unassigned"}</Link>
-                    <div className="scorecard-row-sub">{row.key || "unassigned"}</div>
+                    <Link to={`/datasets/${r.id}`} className="row-title-link">{r.name}</Link>
                   </td>
-                  <td><ScoreCell score={row.score} /></td>
-                  <td><SloPill status={row.slo_status} /></td>
-                  <td className="num">{fmtNum(row.total_datasets)}</td>
-                  <td className="num" style={{ color: row.slo_breached ? "var(--danger-dark)" : undefined, fontWeight: row.slo_breached ? 700 : 400 }}>
-                    {fmtNum(row.slo_breached)}
+                  <td>{fmtScore(r.score)}</td>
+                  <td>{r.status ? <span className={`pill tone-${sloTone(r.status)}`}>{sloLabel(r.status)}</span> : "—"}</td>
+                  <td className="num">
+                    {(r.exceptions ?? 0) > 0 ? (
+                      <Link to={`/datasets/${r.id}/exceptions`} className="pill tone-danger">{fmtNum(r.exceptions)}</Link>
+                    ) : (
+                      fmtNum(r.exceptions)
+                    )}
                   </td>
-                  <td className="num" style={{ color: row.open_exceptions ? "var(--danger-dark)" : undefined, fontWeight: row.open_exceptions ? 700 : 400 }}>
-                    {fmtNum(row.open_exceptions)}
-                  </td>
+                  <td>{r.owner || "—"}</td>
                 </tr>
               ))}
             </tbody>
@@ -487,235 +464,77 @@ function RollupTable({
   );
 }
 
-function RunResultsPanel({
-  dashboard,
-  isLoading,
-  error,
-}: {
-  dashboard: Dashboard | undefined;
-  isLoading: boolean;
-  error: unknown;
-}) {
-  const navigate = useNavigate();
-  const trend = (dashboard?.trend ?? []).map((t) => ({ ...t, date: t.day, day: t.day.slice(5) }));
-  const trendClick = (status: string) => (entry: unknown) => {
-    const point = (entry as { payload?: { date?: string } }).payload;
-    if (point?.date) {
-      navigate(`/runs?${new URLSearchParams({ day: point.date, status }).toString()}`);
-    }
-  };
-
-  return (
-    <div className="card card-pad">
-      <div className="section-title" style={{ margin: "0 0 12px" }}>
-        <h2>Run results - last 14 days</h2>
-        <Link to="/runs" className="btn small">
-          <Icon name="play" size={12} />
-          Runs
-        </Link>
-      </div>
-      {error ? (
-        panelError(error, "Operational dashboard")
-      ) : isLoading ? (
-        <Spinner label="Loading run results..." />
-      ) : trend.length === 0 ? (
-        <EmptyState title="No recent runs" hint="Scheduled and manual check runs will appear here." />
-      ) : (
-        <>
-          <ResponsiveContainer width="100%" height={210}>
-            <BarChart data={trend} margin={{ top: 4, right: 4, left: -22, bottom: 0 }}>
-              <XAxis
-                dataKey="day"
-                tick={AXIS}
-                tickLine={false}
-                axisLine={{ stroke: "var(--border)" }}
-              />
-              <YAxis
-                tick={AXIS}
-                tickLine={false}
-                axisLine={false}
-                allowDecimals={false}
-              />
-              <Tooltip cursor={{ fill: "var(--hover)" }} contentStyle={TOOLTIP_STYLE} />
-              <Bar dataKey="passed" stackId="a" fill="var(--ok)" onClick={trendClick("pass")} cursor="pointer" />
-              <Bar dataKey="warned" stackId="a" fill="var(--yellow)" onClick={trendClick("warn")} cursor="pointer" />
-              <Bar dataKey="failed" stackId="a" fill="var(--danger)" onClick={trendClick("fail")} cursor="pointer" />
-              <Bar dataKey="errored" stackId="a" fill="var(--danger-deep)" radius={[2, 2, 0, 0]} onClick={trendClick("error")} cursor="pointer" />
-            </BarChart>
-          </ResponsiveContainer>
-          <div className="legend-row">
-            <span><span className="swatch" style={{ background: "var(--ok)" }} />passed</span>
-            <span><span className="swatch" style={{ background: "var(--yellow)" }} />warned</span>
-            <span><span className="swatch" style={{ background: "var(--danger)" }} />failed</span>
-            <span><span className="swatch" style={{ background: "var(--danger-deep)" }} />errored</span>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function OperationalCountsPanel({
-  dashboard,
-  isLoading,
-  error,
-}: {
-  dashboard: Dashboard | undefined;
-  isLoading: boolean;
-  error: unknown;
-}) {
-  return (
-    <div className="card card-pad">
-      <div className="section-title" style={{ margin: "0 0 12px" }}>
-        <h2>Operational posture</h2>
-        <Link to="/checks" className="btn small">Checks</Link>
-      </div>
-      {error ? (
-        panelError(error, "Operational posture")
-      ) : isLoading ? (
-        <Spinner label="Loading operations..." />
-      ) : !dashboard ? (
-        <EmptyState title="No operational data" hint="Dashboard counts are unavailable." />
-      ) : (
-        <div className="scorecard-ops-grid">
-          <ScoreMetric label="Datasets monitored" value={fmtNum(dashboard.datasets)} to="/datasets" />
-          <ScoreMetric
-            label="Failing checks"
-            value={fmtNum(dashboard.failing_checks)}
-            tone={dashboard.failing_checks ? "danger" : "ok"}
-            to="/checks?status=active&last_status=fail&last_status=error"
-          />
-          <ScoreMetric label="Runs in 24h" value={fmtNum(dashboard.runs_24h)} to="/runs?since=24h" />
-          <ScoreMetric label="7-day pass rate" value={fmtPct(dashboard.pass_rate_7d)} to="/runs?since=7d" />
-        </div>
-      )}
-    </div>
-  );
-}
+// ── page ──────────────────────────────────────────────────────────────────────────
 
 export default function HomePage() {
-  const dashboardQuery = useQuery({
-    queryKey: ["dashboard"],
-    queryFn: () => api.get<Dashboard>("/dashboard"),
-    refetchInterval: 30_000,
-  });
-
-  const summaryQuery = useQuery({
-    queryKey: ["scorecards", "summary"],
-    queryFn: () => api.get<ScorecardSummary>("/scorecards/summary"),
-    refetchInterval: 60_000,
-    retry: false,
-  });
-
-  const domainRollupsQuery = useQuery({
-    queryKey: ["scorecards", "rollups", "domain"],
-    queryFn: () => api.get<ScorecardRollup[]>("/scorecards/rollups?dimension=domain"),
-    refetchInterval: 60_000,
-    retry: false,
-  });
-
-  const teamRollupsQuery = useQuery({
-    queryKey: ["scorecards", "rollups", "team"],
-    queryFn: () => api.get<ScorecardRollup[]>("/scorecards/rollups?dimension=team"),
-    refetchInterval: 60_000,
-    retry: false,
-  });
-
-  const historyQuery = useQuery({
-    queryKey: ["scorecards", "history", "global", 90],
-    queryFn: () => api.get<ScorecardHistory>("/scorecards/history?grain=global&days=90"),
-    refetchInterval: 60_000,
-    retry: false,
-  });
+  const dashboardQuery = useQuery({ queryKey: ["dashboard"], queryFn: () => api.get<Dashboard>("/dashboard"), refetchInterval: 30_000 });
+  const summaryQuery = useQuery({ queryKey: ["scorecards", "summary"], queryFn: () => api.get<ScorecardSummary>("/scorecards/summary"), refetchInterval: 60_000, retry: false });
+  const historyQuery = useQuery({ queryKey: ["scorecards", "history", "global", 90], queryFn: () => api.get<ScorecardHistory>("/scorecards/history?grain=global&days=90"), refetchInterval: 60_000, retry: false });
+  const consoleQuery = useQuery({ queryKey: ["dashboard", "console"], queryFn: () => api.get<DashboardConsole>("/dashboard/console"), refetchInterval: 60_000, retry: false });
+  const reliabilityQuery = useQuery({ queryKey: ["sla", "reliability"], queryFn: () => api.get<Reliability>("/sla/reliability"), refetchInterval: 60_000, retry: false });
+  const incidentsQuery = useQuery({ queryKey: ["incidents", "home"], queryFn: () => api.get<IncidentRecord[]>("/incidents?limit=500"), refetchInterval: 60_000, retry: false });
 
   const dashboard = dashboardQuery.data;
   const summary = summaryQuery.data;
   const history = historyQuery.data?.points ?? [];
+  const incidents = incidentsQuery.data;
+  const openIncidents = incidents ? incidents.filter((i) => i.status !== "resolved").length : null;
 
   return (
     <div className="page">
       <div className="page-header">
         <div>
-          <h1>Executive data quality scorecard</h1>
+          <h1>Overview</h1>
           <div className="sub">
             {dashboard?.llm_enabled ? (
               <span className="badge ai">AI features enabled</span>
             ) : dashboard ? (
-              <span className="badge" title="Set ANTHROPIC_API_KEY to enable LLM check generation, exploration and RCA">
-                LLM disabled - heuristic mode
-              </span>
+              <span className="badge">LLM disabled — heuristic mode</span>
             ) : (
-              <span className="badge">Loading operations</span>
+              <span className="badge">Loading…</span>
             )}{" "}
             {dashboard && (
-              <Link to="/runs?since=24h" className="badge badge-link">
-                {fmtNum(dashboard.runs_24h)} runs in 24h
-              </Link>
-            )}{" "}
-            {dashboard?.pass_rate_7d != null && (
-              <Link to="/runs?since=7d" className="badge badge-link">
-                7-day pass rate {fmtPct(dashboard.pass_rate_7d)}
-              </Link>
+              <Link to="/runs?since=24h" className="badge badge-link">{fmtNum(dashboard.runs_24h)} runs · last 24h</Link>
             )}
           </div>
         </div>
         <div className="header-actions">
-          <Link to="/connections" className="btn">
-            <Icon name="plus" size={14} />
-            Add data
-          </Link>
+          <Link to="/connections" className="btn"><Icon name="plus" size={14} />Add data</Link>
         </div>
       </div>
 
-      <ScorecardTopBand
+      {/* Tier 1 — status */}
+      <StatusTier
         summary={summary}
         dashboard={dashboard}
         history={history}
-        loading={summaryQuery.isLoading}
-        error={summaryQuery.error}
+        openIncidents={openIncidents}
+        reliability={reliabilityQuery.data}
       />
 
-      <div className="scorecard-dashboard-grid">
+      {/* Tier 2 — trend + attention */}
+      <div className="split" style={{ margin: "16px 0" }}>
         <ScoreTrendPanel points={history} isLoading={historyQuery.isLoading} error={historyQuery.error} />
-        <ScoreDriversPanel
-          summary={summary}
-          dashboard={dashboard}
-          isLoading={summaryQuery.isLoading || dashboardQuery.isLoading}
-          error={summaryQuery.error ?? dashboardQuery.error}
-        />
+        <IncidentHeatmap incidents={incidents} />
       </div>
-
-      <div className="scorecard-rollup-grid">
-        <RollupTable
-          title="Domain rollups"
-          rows={domainRollupsQuery.data ?? []}
-          isLoading={domainRollupsQuery.isLoading}
-          error={domainRollupsQuery.error}
-        />
-        <RollupTable
-          title="Team rollups"
-          rows={teamRollupsQuery.data ?? []}
-          isLoading={teamRollupsQuery.isLoading}
-          error={teamRollupsQuery.error}
-        />
-      </div>
-
       <div className="split" style={{ marginBottom: 16 }}>
-        <RunResultsPanel dashboard={dashboard} isLoading={dashboardQuery.isLoading} error={dashboardQuery.error} />
-        <OperationalCountsPanel dashboard={dashboard} isLoading={dashboardQuery.isLoading} error={dashboardQuery.error} />
+        <DimensionScorecard />
+        <NeedsAttention console={consoleQuery.data} summary={summary} />
       </div>
 
+      {/* Tier 3 — datasets-by-risk worklist + recent runs */}
+      <div style={{ marginBottom: 16 }}>
+        <DatasetsByRisk summary={summary} dashboard={dashboard} />
+      </div>
       <div className="card">
-        <div className="card-pad" style={{ paddingBottom: 0 }}>
-          <div className="section-title" style={{ margin: 0 }}>
-            <h2 style={{ fontSize: 14 }}>Recent runs</h2>
-            <Link to="/runs" className="btn small">All runs</Link>
-          </div>
+        <div className="card-pad section-title" style={{ marginBottom: 0 }}>
+          <h2 style={{ fontSize: 14 }}>Recent runs</h2>
+          <Link to="/runs" className="btn small">All runs</Link>
         </div>
         {dashboardQuery.error ? (
           <div className="card-pad">{panelError(dashboardQuery.error, "Recent runs")}</div>
         ) : dashboardQuery.isLoading ? (
-          <Spinner label="Loading recent runs..." />
+          <Spinner label="Loading recent runs…" />
         ) : dashboard ? (
           <RunsTable runs={dashboard.recent_runs} />
         ) : (
