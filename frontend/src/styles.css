@@ -108,10 +108,12 @@ html[data-dir="editorial"][data-theme="dark"] {
 }
 
 /* Density axis (data-density): token-based base sizing — the component-level
-   compact rules further down still apply additively. (#171) */
-[data-density="compact"]     { --fs: 13px; }
-[data-density="cozy"]        { --fs: 14px; }
-[data-density="comfortable"] { --fs: 15px; }
+   compact rules further down still apply additively. "comfortable" is the legacy
+   DEFAULT (14px, no attribute): the pre-v2 toggle persisted it to mean default, so
+   the bootstrap never sets it and there is no rule for it here. A distinct looser
+   level arrives with the #172/#173 storage migration. (#171, #180 review) */
+[data-density="compact"] { --fs: 13px; }
+[data-density="cozy"]    { --fs: 14px; }
 
 /* Interface-font axis (data-font): overrides the theme font. (#171) */
 [data-font="inter"]   { --font: "Inter", "Segoe UI", -apple-system, system-ui, sans-serif; }

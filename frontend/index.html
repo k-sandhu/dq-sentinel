@@ -29,8 +29,13 @@
         } else {
           delete d.dataset.theme;
         }
-        var den = get("dq-density"); // compact | cozy | comfortable
-        if (den) d.dataset.density = den;
+        // Legacy: the pre-v2 toggle persisted "comfortable" to mean the DEFAULT
+        // (14px, no attribute) — don't promote it to a density attribute on reload,
+        // or existing users get a larger app (#180 review). Mirrors
+        // src/lib/appearance.ts:resolveAppearance (kept in sync; this must stay
+        // inline to run before the bundle loads).
+        var den = get("dq-density"); // compact | cozy (comfortable = legacy default)
+        if (den && den !== "comfortable") d.dataset.density = den;
         var font = get("dq-font"); // inter | system | rounded (theme = default)
         if (font && font !== "theme") d.dataset.font = font;
         var nav = get("dq-nav"); // icons-only | centered (full = default; variants in #173)
