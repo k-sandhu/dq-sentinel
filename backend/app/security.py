@@ -94,8 +94,14 @@ def connection_role(db: Session, user: User, connection_id: int) -> str | None:
     """Effective role on one connection, or ``None`` if it doesn't exist or the
     user can't see it.
 
-    ``admin`` -> ``"admin"``; a zero-grant user -> their global role (legacy); a
-    granted user -> the grant's role on that connection (``None`` if ungranted).
+    ``admin`` -> ``"admin"``; a zero-grant user -> their global role (legacy). For a
+    granted user the grant **scopes and may downgrade access but never elevates it**:
+    the effective role is the lower-ranked of the user's global role and the grant's
+    role (``None`` if ungranted on this connection). So a global ``viewer`` with an
+    ``editor`` grant is still only a ``viewer`` there — the pre-existing global
+    read-only contract holds — while a global ``editor`` with a ``viewer`` grant is
+    restricted to read on that connection. This keeps every mutation gate consistent:
+    ``editor`` action <=> global editor AND editor grant (#159, PR #168 review).
     """
     if db.get(Connection, connection_id) is None:
         return None  # nonexistent connection -> no role (keeps the by-id gate 404-consistent)
@@ -108,7 +114,11 @@ def connection_role(db: Session, user: User, connection_id: int) -> str | None:
     )
     if not grants:
         return user.role  # zero grants -> legacy global role
-    return grants.get(connection_id)  # None -> ungranted -> no access
+    grant_role = grants.get(connection_id)
+    if grant_role is None:
+        return None  # granted user, but not on THIS connection -> no access
+    # Least privilege: cap the grant at the user's global role (never elevate).
+    return grant_role if ROLE_RANK[grant_role] <= ROLE_RANK[user.role] else user.role
 
 
 def assert_connection_visible(db: Session, user: User, connection_id: int) -> Connection:

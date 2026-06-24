@@ -190,6 +190,67 @@ def test_exception_mutation_requires_editor_on_connection(client, admin_headers,
     assert client.delete(f"{QH}/connections/{b['id']}", headers=h).status_code == 204
 
 
+def test_grant_role_is_capped_by_global_role(client, admin_headers, source_db):
+    """A grant scopes + may downgrade but NEVER elevates: effective role = the lower
+    of (global role, grant role), enforced consistently across /query/run, dataset
+    mutations, and exception mutation (#159, PR #168 review)."""
+    h = admin_headers
+    sfx = uuid4().hex[:8]
+    a = _conn(client, h, f"authz-cap-A-{sfx}", source_db)
+    dsa = _register_people(client, h, a["id"])
+    chk = client.post(
+        f"{QH}/checks",
+        json={"dataset_id": dsa["id"], "check_type": "not_null", "column_name": "email",
+              "name": f"authz-cap-chk-{sfx}"},
+        headers=h,
+    ).json()
+    assert client.post(f"{QH}/checks/{chk['id']}/run", headers=h).status_code in (200, 201)
+    exc_id = client.get(
+        f"{QH}/exceptions", params={"dataset_id": dsa["id"]}, headers=h
+    ).json()["items"][0]["id"]
+
+    def can_read_but_not_mutate(headers):
+        # read OK (visible)
+        assert client.get(f"{QH}/datasets/{dsa['id']}", headers=headers).status_code == 200
+        # every editor action on the connection is 403
+        assert client.post(
+            f"{QH}/query/run",
+            json={"connection_id": a["id"], "sql": "SELECT 1", "limit": 5},
+            headers=headers,
+        ).status_code == 403
+        assert client.post(f"{QH}/datasets/{dsa['id']}/profile", headers=headers).status_code == 403
+        assert client.post(
+            f"{QH}/datasets/register",
+            json={"connection_id": a["id"], "tables": [{"table_name": "people"}]},
+            headers=headers,
+        ).status_code == 403
+        assert client.post(
+            f"{QH}/exceptions/triage", json={"ids": [exc_id], "status": "acknowledged"},
+            headers=headers,
+        ).status_code == 403
+
+    # global VIEWER + EDITOR grant -> capped to viewer (grant must not elevate).
+    vge = _mk_user(client, h, f"authz-cap-vge-{sfx}@x.com", role="viewer")
+    _grant(client, h, vge["id"], a["id"], "editor")
+    can_read_but_not_mutate(_login(client, f"authz-cap-vge-{sfx}@x.com"))
+
+    # global EDITOR + VIEWER grant -> downgraded to viewer on this connection.
+    evg = _mk_user(client, h, f"authz-cap-evg-{sfx}@x.com", role="editor")
+    _grant(client, h, evg["id"], a["id"], "viewer")
+    can_read_but_not_mutate(_login(client, f"authz-cap-evg-{sfx}@x.com"))
+
+    # sanity: global editor + EDITOR grant CAN run SQL on the connection.
+    full = _mk_user(client, h, f"authz-cap-full-{sfx}@x.com", role="editor")
+    _grant(client, h, full["id"], a["id"], "editor")
+    assert client.post(
+        f"{QH}/query/run",
+        json={"connection_id": a["id"], "sql": "SELECT 1", "limit": 5},
+        headers=_login(client, f"authz-cap-full-{sfx}@x.com"),
+    ).status_code == 200
+
+    assert client.delete(f"{QH}/connections/{a['id']}", headers=h).status_code == 204
+
+
 def test_saved_query_search_scoped_to_grants(client, admin_headers, source_db):
     """Saved queries are connection-bound, so global search must not surface a saved
     query (name/id + workbench deep-link) on a connection the caller can't see (#159,
