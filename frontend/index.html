@@ -5,28 +5,39 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>DQ Sentinel</title>
     <script>
-      // Apply the persisted theme before first paint to avoid a light-mode flash.
-      // The in-app toggle (topbar) writes localStorage "dq-theme" and sets
-      // document.documentElement.dataset.theme; styles.css keys dark tokens off
-      // html[data-theme="dark"]. Default is light.
-      try {
-        if (localStorage.getItem("dq-theme") === "dark") {
-          document.documentElement.dataset.theme = "dark";
+      // Pre-paint appearance bootstrap (#171): apply persisted axes before first
+      // paint to avoid a flash / layout shift. Each axis is a data-* attribute on
+      // <html>; styles.css keys all theming off them. The appearance drawer /
+      // prefs.ts (#172) writes these keys; they stay backward-compatible with the
+      // older dq-theme / dq-density toggles.
+      (function () {
+        var d = document.documentElement;
+        var get = function (k) {
+          try { return localStorage.getItem(k); } catch (e) { return null; }
+        };
+        d.dataset.dir = get("dq-dir") || "aurora"; // aurora | graphite | editorial
+        var mode = get("dq-theme") || "light"; // light | dark | system
+        if (mode === "system") {
+          try {
+            mode = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+          } catch (e) {
+            mode = "light";
+          }
         }
-      } catch (e) {
-        /* storage unavailable — stay light */
-      }
-      // Apply the persisted density before first paint to avoid a layout reflow.
-      // The in-app toggle (topbar) writes localStorage "dq-density" and sets
-      // document.documentElement.dataset.density; styles.css keys compact spacing
-      // off html[data-density="compact"]. Default is comfortable.
-      try {
-        if (localStorage.getItem("dq-density") === "compact") {
-          document.documentElement.dataset.density = "compact";
+        if (mode === "dark") {
+          d.dataset.theme = "dark";
+        } else {
+          delete d.dataset.theme;
         }
-      } catch (e) {
-        /* storage unavailable — stay comfortable */
-      }
+        var den = get("dq-density"); // compact | cozy | comfortable
+        if (den) d.dataset.density = den;
+        var font = get("dq-font"); // inter | system | rounded (theme = default)
+        if (font && font !== "theme") d.dataset.font = font;
+        var nav = get("dq-nav"); // icons-only | centered (full = default; variants in #173)
+        if (nav && nav !== "full") d.dataset.navLayout = nav;
+        var accent = get("dq-accent"); // any CSS color; overrides --brand
+        if (accent) d.style.setProperty("--brand", accent);
+      })();
     </script>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23509ee3'/%3E%3Cpath d='M16 6l8 3v7c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V9l8-3z' fill='white'/%3E%3Cpath d='M12.5 15.5l2.5 2.5 5-5' stroke='%23509ee3' stroke-width='2.2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
   </head>
