@@ -14,8 +14,6 @@ import { api } from "../api/client";
 import type {
   Dashboard,
   DashboardConsole,
-  IncidentRecord,
-  Reliability,
   ScorecardHistory,
   ScorecardHistoryPoint,
   ScorecardSloStatus,
@@ -132,13 +130,11 @@ function StatusTier({
   dashboard,
   history,
   openIncidents,
-  reliability,
 }: {
   summary: ScorecardSummary | undefined;
   dashboard: Dashboard | undefined;
   history: ScorecardHistoryPoint[];
   openIncidents: number | null;
-  reliability: Reliability | undefined;
 }) {
   const passingPct =
     summary && summary.active_checks > 0
@@ -193,11 +189,7 @@ function StatusTier({
       <Kpi
         label="MTTD / MTTR"
         value="—"
-        foot={
-          <Link to="/reliability">
-            {reliability ? `${reliability.breached}/${reliability.total} SLAs breached · per-SLA →` : "per-SLA · Reliability →"}
-          </Link>
-        }
+        foot={<Link to="/reliability">per-SLA · Reliability →</Link>}
       />
       <Kpi
         label="Coverage"
@@ -257,32 +249,48 @@ function ScoreTrendPanel({
   );
 }
 
-/** 90-day incident heatmap (calendar). Buckets incidents by first_seen_at day. */
-function IncidentHeatmap({ incidents }: { incidents: IncidentRecord[] | undefined }) {
+/** 90-day incident heatmap (calendar) from the grant-scoped, server-side
+ *  `incident_activity` (UTC date -> count) on /dashboard/console. */
+function IncidentHeatmap({
+  activity,
+  loading,
+  error,
+}: {
+  activity: Record<string, number> | undefined;
+  loading: boolean;
+  error: unknown;
+}) {
   const days = 91; // 13 weeks
-  const counts = new Map<string, number>();
-  for (const inc of incidents ?? []) {
-    const day = inc.first_seen_at.slice(0, 10);
-    counts.set(day, (counts.get(day) ?? 0) + 1);
-  }
   const now = Date.now();
   const cells = Array.from({ length: days }, (_, i) => {
     const d = new Date(now - (days - 1 - i) * 86_400_000);
     const key = d.toISOString().slice(0, 10);
-    const n = counts.get(key) ?? 0;
+    const n = activity?.[key] ?? 0;
     const q = n === 0 ? 0 : n === 1 ? 1 : n === 2 ? 2 : n <= 4 ? 3 : 4;
     return { key, n, q };
   });
+  const total = cells.reduce((s, c) => s + c.n, 0);
+  const peak = cells.reduce((m, c) => (c.n > m.n ? c : m), cells[0]);
   return (
     <div className="card card-pad">
       <div className="section-title compact">
         <h2>Incident activity</h2>
         <span className="badge">90 days (UTC)</span>
       </div>
-      {!incidents ? (
-        <Spinner label="Loading incidents…" />
+      {error ? (
+        panelError(error, "Incident activity")
+      ) : loading ? (
+        <Spinner label="Loading incident activity…" />
       ) : (
-        <div className="cal" role="img" aria-label={`Incident activity over the last ${days} days`}>
+        <div
+          className="cal"
+          role="img"
+          aria-label={
+            total === 0
+              ? "No incidents opened in the last 90 days"
+              : `${total} incident${total === 1 ? "" : "s"} opened in the last 90 days; busiest day ${peak.key} with ${peak.n}`
+          }
+        >
           {cells.map((c) => (
             <i
               key={c.key}
@@ -471,14 +479,12 @@ export default function HomePage() {
   const summaryQuery = useQuery({ queryKey: ["scorecards", "summary"], queryFn: () => api.get<ScorecardSummary>("/scorecards/summary"), refetchInterval: 60_000, retry: false });
   const historyQuery = useQuery({ queryKey: ["scorecards", "history", "global", 90], queryFn: () => api.get<ScorecardHistory>("/scorecards/history?grain=global&days=90"), refetchInterval: 60_000, retry: false });
   const consoleQuery = useQuery({ queryKey: ["dashboard", "console"], queryFn: () => api.get<DashboardConsole>("/dashboard/console"), refetchInterval: 60_000, retry: false });
-  const reliabilityQuery = useQuery({ queryKey: ["sla", "reliability"], queryFn: () => api.get<Reliability>("/sla/reliability"), refetchInterval: 60_000, retry: false });
-  const incidentsQuery = useQuery({ queryKey: ["incidents", "home"], queryFn: () => api.get<IncidentRecord[]>("/incidents?limit=500"), refetchInterval: 60_000, retry: false });
 
   const dashboard = dashboardQuery.data;
   const summary = summaryQuery.data;
   const history = historyQuery.data?.points ?? [];
-  const incidents = incidentsQuery.data;
-  const openIncidents = incidents ? incidents.filter((i) => i.status !== "resolved").length : null;
+  const consoleData = consoleQuery.data;
+  const openIncidents = consoleData ? consoleData.open_incidents : null;
 
   return (
     <div className="page">
@@ -509,17 +515,20 @@ export default function HomePage() {
         dashboard={dashboard}
         history={history}
         openIncidents={openIncidents}
-        reliability={reliabilityQuery.data}
       />
 
       {/* Tier 2 — trend + attention */}
       <div className="split" style={{ margin: "16px 0" }}>
         <ScoreTrendPanel points={history} isLoading={historyQuery.isLoading} error={historyQuery.error} />
-        <IncidentHeatmap incidents={incidents} />
+        <IncidentHeatmap
+          activity={consoleData?.incident_activity}
+          loading={consoleQuery.isLoading}
+          error={consoleQuery.error}
+        />
       </div>
       <div className="split" style={{ marginBottom: 16 }}>
         <DimensionScorecard />
-        <NeedsAttention console={consoleQuery.data} summary={summary} />
+        <NeedsAttention console={consoleData} summary={summary} />
       </div>
 
       {/* Tier 3 — datasets-by-risk worklist + recent runs */}

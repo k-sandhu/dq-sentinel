@@ -556,6 +556,8 @@ export interface DashboardConsole {
   open_total: number;
   failing_now: Check[];
   movers: DatasetMover[];
+  open_incidents: number;
+  incident_activity: Record<string, number>; // UTC date -> incident count, last 90 days (#175)
 }
 
 // ---- executive scorecards (issues #118-#120) ----
