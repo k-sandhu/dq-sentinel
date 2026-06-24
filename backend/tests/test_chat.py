@@ -257,3 +257,66 @@ def test_ws_without_provider_degrades(client, admin_headers):
 
     detail = client.get(f"/api/v1/chat/sessions/{sid}", headers=admin_headers).json()
     assert [m["role"] for m in detail["messages"]] == ["user", "assistant"]
+
+
+def test_ws_tools_require_editor_on_connection(client, admin_headers, source_db, monkeypatch):
+    """A global editor with only a VIEWER grant on a connection can open the assistant
+    (the WS gate is global editor) but the SQL-executing tools (run_sql, render_chart)
+    must fail closed — no source SQL runs through the LLM surface (#159, PR #168 review)."""
+    conn_id = _setup_connection(client, admin_headers, source_db, "chat-authz-conn")
+    created = client.post(
+        "/api/v1/auth/users",
+        json={"email": "chat-vgrant@example.com", "password": "longenough1", "role": "editor"},
+        headers=admin_headers,
+    )
+    assert created.status_code == 201, created.text
+    grant = client.post(
+        f"/api/v1/auth/users/{created.json()['id']}/grants",
+        json={"connection_id": conn_id, "role": "viewer"},
+        headers=admin_headers,
+    )
+    assert grant.status_code == 201, grant.text
+    token = _login(client, "chat-vgrant@example.com", "longenough1")
+    sid = client.post(
+        "/api/v1/chat/sessions", json={}, headers={"Authorization": f"Bearer {token}"}
+    ).json()["id"]
+    drop_history(sid)
+
+    fake = FakeProvider(
+        [
+            LlmResponse(
+                text="",
+                tool_calls=[ToolCall("t1", "run_sql", {
+                    "connection_id": conn_id, "sql": "SELECT COUNT(*) FROM people", "purpose": "count",
+                })],
+                stop_reason="tool_use",
+            ),
+            LlmResponse(
+                text="",
+                tool_calls=[ToolCall("t2", "render_chart", {
+                    "connection_id": conn_id,
+                    "sql": "SELECT status, COUNT(*) AS n FROM people GROUP BY 1",
+                    "title": "by status", "chart_type": "bar", "x": "status", "y": "n",
+                })],
+                stop_reason="tool_use",
+            ),
+            LlmResponse(text="Understood — I don't have access to run that."),
+        ]
+    )
+    monkeypatch.setattr(llm_client, "get_provider", lambda: fake)
+
+    with client.websocket_connect(f"/api/v1/chat/ws/{sid}?token={token}") as ws:
+        ws.receive_json()  # session hello
+        ws.send_json({"type": "user_message", "content": "count people and chart by status"})
+        events = _collect_until_done(ws)
+
+    # Both SQL-executing tools failed closed; nothing was charted; the model saw errors.
+    result_steps = [
+        e["step"] for e in events if e["type"] == "step" and e["step"]["type"] == "result"
+    ]
+    assert result_steps, "expected error result steps from the denied tools"
+    assert all(s.get("error") for s in result_steps), result_steps
+    assert all("Access denied" in s["content"] for s in result_steps)
+    assert not [e for e in events if e["type"] == "step" and e["step"]["type"] == "chart"]
+    last_history = fake.seen[-1][1]
+    assert last_history[-1]["results"][0]["is_error"] is True

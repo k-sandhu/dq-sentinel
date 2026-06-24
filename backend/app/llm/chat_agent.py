@@ -35,7 +35,7 @@ from app.models import (
     User,
     utcnow,
 )
-from app.security import connection_role, visible_connection_ids, visible_dataset_ids
+from app.security import ROLE_RANK, connection_role, visible_connection_ids, visible_dataset_ids
 
 log = logging.getLogger(__name__)
 
@@ -487,16 +487,25 @@ def _run_loop(
         steps.append(payload)
         emit({"type": "step", "step": payload})
 
-    def conn_for(connection_id) -> Connector:
-        # The model can name any connection_id; authorize against the session
-        # user's grants before connecting (#159). Raising surfaces a tool error to
-        # the model (so it can recover) rather than an HTTP 404.
-        if connection_role(db, user, int(connection_id or 0)) is None:
+    def conn_for(connection_id, min_role: str = "viewer") -> Connector:
+        # The model can name any connection_id; authorize against the session user's
+        # effective grant role before connecting (#159). Tools that EXECUTE source SQL
+        # (run_sql, render_chart) require editor-on-connection — the same bar as
+        # POST /query/run — so a viewer-grant can't run arbitrary SQL via the
+        # assistant; DDL/overview stay visibility-only. Raising surfaces a tool error
+        # to the model (it can recover), not an HTTP 404.
+        role = connection_role(db, user, int(connection_id or 0))
+        if role is None:
             raise ValueError(f"Access denied: you do not have access to connection {connection_id}.")
+        if ROLE_RANK.get(role, -1) < ROLE_RANK[min_role]:
+            raise ValueError(
+                f"Access denied: this action on connection {connection_id} requires editor "
+                f"access; your effective role there is {role}."
+            )
         return _connector(db, connection_id)
 
     def run_sql(inp: dict[str, Any]) -> str:
-        connector = conn_for(inp.get("connection_id", 0))
+        connector = conn_for(inp.get("connection_id", 0), "editor")  # executes source SQL
         pii = _pii_for_connection(db, inp.get("connection_id", 0))
         res = connector.run_select(str(inp.get("sql", "")), limit=settings.agent_query_row_limit)
         return format_rows(res.columns, redact_rows(res.columns, res.rows, pii))
@@ -507,7 +516,7 @@ def _run_loop(
         return f"-- definition source: {source}\n{ddl}"
 
     def render_chart(inp: dict[str, Any]) -> str:
-        connector = conn_for(inp.get("connection_id", 0))
+        connector = conn_for(inp.get("connection_id", 0), "editor")  # executes source SQL
         viz_type = inp.get("chart_type") if inp.get("chart_type") in VIZ_TYPES else "table"
         panel = {
             "title": str(inp.get("title") or "Chart")[:300],
