@@ -35,7 +35,7 @@
         }
         if (mode === "dark") d.dataset.theme = "dark";
         else delete d.dataset.theme;
-        var den = pick("dq-density", ["compact", "cozy"]);
+        var den = pick("dq-density", ["compact", "cozy", "spacious"]);
         if (den) d.dataset.density = den;
         else delete d.dataset.density;
         var font = pick("dq-font", ["inter", "system", "rounded"]);

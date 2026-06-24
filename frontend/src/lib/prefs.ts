@@ -71,6 +71,37 @@ export function subscribePrefs(handler: () => void): () => void {
   return () => window.removeEventListener(PREFS_EVENT, handler);
 }
 
+// ── raw (non-JSON) prefs ────────────────────────────────────────────────────────
+// The appearance axes (#172) store plain strings under `dq-*` keys that the
+// pre-paint bootstrap in index.html reads VERBATIM, so they can't go through the
+// JSON-encoding getPref/setPref. These raw helpers keep them on the same prefs
+// chokepoint (one place to swap for a server-backed store) and fire the same
+// `dq:prefs` event so live components (the appearance drawer) stay in sync.
+
+/** Read a raw string preference, or `null` on miss / unavailable storage. */
+export function getRawPref(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+/** Write (or, with `null`, remove) a raw string preference; fires `dq:prefs`. */
+export function setRawPref(key: string, value: string | null): void {
+  try {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch {
+    /* storage unavailable — degrade silently */
+  }
+  try {
+    window.dispatchEvent(new CustomEvent(PREFS_EVENT, { detail: { key } }));
+  } catch {
+    /* no window (SSR/tests) — nothing to notify */
+  }
+}
+
 // ── saved views (exceptions workspace, #63) ────────────────────────────────────
 
 /** A persisted saved view: a name + a URL search-param string. */

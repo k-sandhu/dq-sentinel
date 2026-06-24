@@ -24,9 +24,10 @@ describe("resolveAppearance — pre-paint bootstrap contract (#171)", () => {
     expect(resolveAppearance(getter({ "dq-density": "comfortable" }), false).density).toBeNull();
   });
 
-  it("restores the valid compact / cozy densities and rejects unknown ones", () => {
+  it("restores the valid compact / cozy / spacious densities and rejects unknown ones", () => {
     expect(resolveAppearance(getter({ "dq-density": "compact" }), false).density).toBe("compact");
     expect(resolveAppearance(getter({ "dq-density": "cozy" }), false).density).toBe("cozy");
+    expect(resolveAppearance(getter({ "dq-density": "spacious" }), false).density).toBe("spacious");
     expect(resolveAppearance(getter({ "dq-density": "huge" }), false).density).toBeNull();
   });
 
