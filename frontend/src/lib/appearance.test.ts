@@ -24,12 +24,10 @@ describe("resolveAppearance — pre-paint bootstrap contract (#171)", () => {
     expect(resolveAppearance(getter({ "dq-density": "comfortable" }), false).density).toBeNull();
   });
 
-  it("still restores a stored compact density", () => {
+  it("restores the valid compact / cozy densities and rejects unknown ones", () => {
     expect(resolveAppearance(getter({ "dq-density": "compact" }), false).density).toBe("compact");
-  });
-
-  it("restores the new cozy density", () => {
     expect(resolveAppearance(getter({ "dq-density": "cozy" }), false).density).toBe("cozy");
+    expect(resolveAppearance(getter({ "dq-density": "huge" }), false).density).toBeNull();
   });
 
   it("resolves theme=system against the OS preference", () => {
@@ -37,7 +35,28 @@ describe("resolveAppearance — pre-paint bootstrap contract (#171)", () => {
     expect(resolveAppearance(getter({ "dq-theme": "system" }), false).theme).toBeNull();
   });
 
-  it("applies explicit dark + the dir / font / nav / accent axes", () => {
+  // #180 review: every axis is validated against its enum — a corrupted/tampered
+  // value falls back to the default rather than an unknown data-*.
+  it("falls back to aurora for an unknown dir", () => {
+    expect(resolveAppearance(getter({ "dq-dir": "bogus" }), false).dir).toBe("aurora");
+  });
+
+  it("validates font and nav against their enums (and the default sentinels)", () => {
+    expect(resolveAppearance(getter({ "dq-font": "inter" }), false).font).toBe("inter");
+    expect(resolveAppearance(getter({ "dq-font": "theme" }), false).font).toBeNull();
+    expect(resolveAppearance(getter({ "dq-font": "bogus" }), false).font).toBeNull();
+    expect(resolveAppearance(getter({ "dq-nav": "icons-only" }), false).navLayout).toBe("icons-only");
+    expect(resolveAppearance(getter({ "dq-nav": "full" }), false).navLayout).toBeNull();
+    expect(resolveAppearance(getter({ "dq-nav": "bogus" }), false).navLayout).toBeNull();
+  });
+
+  it("applies an accent only when it is a valid CSS color", () => {
+    const isColor = (v: string) => v === "#0a0"; // stand-in for CSS.supports("color", v)
+    expect(resolveAppearance(getter({ "dq-accent": "#0a0" }), false, isColor).accent).toBe("#0a0");
+    expect(resolveAppearance(getter({ "dq-accent": "drop-table" }), false, isColor).accent).toBeNull();
+  });
+
+  it("applies explicit dark + the dir / font / nav axes together", () => {
     expect(
       resolveAppearance(
         getter({
@@ -45,7 +64,6 @@ describe("resolveAppearance — pre-paint bootstrap contract (#171)", () => {
           "dq-theme": "dark",
           "dq-font": "inter",
           "dq-nav": "icons-only",
-          "dq-accent": "#ff0000",
         }),
         false,
       ),
@@ -55,13 +73,7 @@ describe("resolveAppearance — pre-paint bootstrap contract (#171)", () => {
       density: null,
       font: "inter",
       navLayout: "icons-only",
-      accent: "#ff0000",
+      accent: null,
     });
-  });
-
-  it("ignores the default sentinels (font=theme, nav=full)", () => {
-    const r = resolveAppearance(getter({ "dq-font": "theme", "dq-nav": "full" }), false);
-    expect(r.font).toBeNull();
-    expect(r.navLayout).toBeNull();
   });
 });

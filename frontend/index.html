@@ -15,7 +15,16 @@
         var get = function (k) {
           try { return localStorage.getItem(k); } catch (e) { return null; }
         };
-        d.dataset.dir = get("dq-dir") || "aurora"; // aurora | graphite | editorial
+        // Validate each axis against its enum so a corrupted / tampered value falls
+        // back to the default instead of an unknown data-* the CSS won't match
+        // (#180 review). Mirrors src/lib/appearance.ts:resolveAppearance — this must
+        // stay inline to run before the bundle loads. "comfortable" is intentionally
+        // NOT a valid density (the pre-v2 toggle stored it to mean the 14px default).
+        var pick = function (key, valid) {
+          var v = get(key);
+          return v && valid.indexOf(v) !== -1 ? v : null;
+        };
+        d.dataset.dir = pick("dq-dir", ["aurora", "graphite", "editorial"]) || "aurora";
         var mode = get("dq-theme") || "light"; // light | dark | system
         if (mode === "system") {
           try {
@@ -24,24 +33,21 @@
             mode = "light";
           }
         }
-        if (mode === "dark") {
-          d.dataset.theme = "dark";
-        } else {
-          delete d.dataset.theme;
+        if (mode === "dark") d.dataset.theme = "dark";
+        else delete d.dataset.theme;
+        var den = pick("dq-density", ["compact", "cozy"]);
+        if (den) d.dataset.density = den;
+        else delete d.dataset.density;
+        var font = pick("dq-font", ["inter", "system", "rounded"]);
+        if (font) d.dataset.font = font;
+        else delete d.dataset.font;
+        var nav = pick("dq-nav", ["icons-only", "centered"]); // full = default; CSS variants in #173
+        if (nav) d.dataset.navLayout = nav;
+        else delete d.dataset.navLayout;
+        var accent = get("dq-accent");
+        if (accent && window.CSS && CSS.supports("color", accent)) {
+          d.style.setProperty("--brand", accent);
         }
-        // Legacy: the pre-v2 toggle persisted "comfortable" to mean the DEFAULT
-        // (14px, no attribute) — don't promote it to a density attribute on reload,
-        // or existing users get a larger app (#180 review). Mirrors
-        // src/lib/appearance.ts:resolveAppearance (kept in sync; this must stay
-        // inline to run before the bundle loads).
-        var den = get("dq-density"); // compact | cozy (comfortable = legacy default)
-        if (den && den !== "comfortable") d.dataset.density = den;
-        var font = get("dq-font"); // inter | system | rounded (theme = default)
-        if (font && font !== "theme") d.dataset.font = font;
-        var nav = get("dq-nav"); // icons-only | centered (full = default; variants in #173)
-        if (nav && nav !== "full") d.dataset.navLayout = nav;
-        var accent = get("dq-accent"); // any CSS color; overrides --brand
-        if (accent) d.style.setProperty("--brand", accent);
       })();
     </script>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23509ee3'/%3E%3Cpath d='M16 6l8 3v7c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V9l8-3z' fill='white'/%3E%3Cpath d='M12.5 15.5l2.5 2.5 5-5' stroke='%23509ee3' stroke-width='2.2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
