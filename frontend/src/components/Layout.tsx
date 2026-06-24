@@ -385,9 +385,10 @@ export default function Layout() {
                     to={n.to}
                     end={n.end}
                     className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
+                    title={n.label}
                   >
                     <Icon name={n.icon} />
-                    {n.label}
+                    <span className="nav-label">{n.label}</span>
                   </NavLink>
                 ))}
               </nav>
@@ -398,9 +399,9 @@ export default function Layout() {
         ))}
         <div className="spacer" />
         <nav>
-          <NavLink to="/settings" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
+          <NavLink to="/settings" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`} title="Settings">
             <Icon name="settings" />
-            Settings
+            <span className="nav-label">Settings</span>
           </NavLink>
         </nav>
         <div className="user-box">
@@ -421,6 +422,35 @@ export default function Layout() {
             <AppearanceButton />
           </div>
         </div>
+        {/* Centered nav-layout (#173): hidden except when data-nav-layout="centered",
+            then a sticky bar replaces the hidden sidebar. Reuses NAV_GROUPS. */}
+        <nav className="topnav" aria-label="Primary">
+          {NAV_GROUPS.flatMap((group) => group.items).map((n) => (
+            <NavLink
+              key={n.to}
+              to={n.to}
+              end={n.end}
+              className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
+              title={n.label}
+            >
+              <Icon name={n.icon} />
+              <span className="nav-label">{n.label}</span>
+            </NavLink>
+          ))}
+          {/* Centered hides the sidebar, so the sidebar-only account controls must
+              live here too or they vanish entirely — Settings + Sign out (#182 review). */}
+          <NavLink
+            to="/settings"
+            className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
+            title="Settings"
+          >
+            <Icon name="settings" />
+            <span className="nav-label">Settings</span>
+          </NavLink>
+          <button type="button" className="small ghost topnav-signout" onClick={logout} title="Sign out">
+            Sign out
+          </button>
+        </nav>
         {/* keyed by path so a crashed page resets when the user navigates away */}
         <ErrorBoundary key={location.pathname}>
           <Outlet />
