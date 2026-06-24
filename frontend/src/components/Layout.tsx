@@ -4,7 +4,9 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { api } from "../api/client";
 import type { ConnectionHealth, Dataset, SearchHit, SearchOut } from "../api/types";
 import { useAuth } from "../auth";
+import { applyAppearance, applyMode, getAxis } from "../lib/appearance";
 import { FAVORITES_SIDEBAR_CAP, getFavorites, getRecents, pruneStalePrefs, subscribePrefs } from "../lib/prefs";
+import { AppearanceButton } from "./AppearanceDrawer";
 import DocsLauncher from "./DocsLauncher";
 import ErrorBoundary from "./ErrorBoundary";
 import { Icon } from "./ui";
@@ -281,70 +283,6 @@ function GlobalSearch() {
   );
 }
 
-/** Dark-mode toggle: flips html[data-theme] and persists to localStorage "dq-theme".
- *  index.html applies the stored theme before first paint. */
-function ThemeToggle() {
-  const [theme, setTheme] = useState<"light" | "dark">(() =>
-    document.documentElement.dataset.theme === "dark" ? "dark" : "light",
-  );
-  function toggle() {
-    const next = theme === "dark" ? "light" : "dark";
-    document.documentElement.dataset.theme = next;
-    try {
-      localStorage.setItem("dq-theme", next);
-    } catch {
-      /* storage unavailable — theme still applies for this session */
-    }
-    setTheme(next);
-  }
-  return (
-    <button
-      type="button"
-      className="small icon-only"
-      onClick={toggle}
-      title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-      aria-label="Toggle color theme"
-    >
-      <Icon name={theme === "dark" ? "sun" : "moon"} size={14} />
-    </button>
-  );
-}
-
-/** Density toggle: flips html[data-density] and persists to localStorage
- *  "dq-density". index.html applies the stored density before first paint.
- *  Personal (per-browser) setting, not a tenant/server pref — see issue #58. */
-function DensityToggle() {
-  const [density, setDensity] = useState<"comfortable" | "compact">(() =>
-    document.documentElement.dataset.density === "compact" ? "compact" : "comfortable",
-  );
-  function toggle() {
-    const next = density === "compact" ? "comfortable" : "compact";
-    if (next === "compact") {
-      document.documentElement.dataset.density = "compact";
-    } else {
-      delete document.documentElement.dataset.density;
-    }
-    try {
-      localStorage.setItem("dq-density", next);
-    } catch {
-      /* storage unavailable — density still applies for this session */
-    }
-    setDensity(next);
-  }
-  return (
-    <button
-      type="button"
-      className="small icon-only"
-      onClick={toggle}
-      title={density === "compact" ? "Switch to comfortable density" : "Switch to compact density"}
-      aria-label="Toggle row density"
-      aria-pressed={density === "compact"}
-    >
-      <Icon name="rows" size={14} />
-    </button>
-  );
-}
-
 /** Sidebar "Favorites" group (#59): up to FAVORITES_SIDEBAR_CAP starred datasets
  *  as NavLinks. Names resolve from the shared ["datasets"] query cache (same key
  *  the rest of the app uses — no extra request). Stays in sync with star toggles
@@ -406,6 +344,26 @@ function FavoritesNav() {
 export default function Layout() {
   const { user, logout } = useAuth();
   const location = useLocation();
+  // Keep "system" mode following the OS while the app is open (the pre-paint
+  // bootstrap only resolves it once at load). No-op unless mode === "system".
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const sync = () => {
+      if (getAxis("mode") === "system") applyMode("system");
+    };
+    mq.addEventListener?.("change", sync);
+    return () => mq.removeEventListener?.("change", sync);
+  }, []);
+  // Cross-tab live sync (#181 review): the `storage` event fires in OTHER tabs when
+  // an appearance key changes, so re-apply every axis here — an already-open tab
+  // updates without a reload. (Same-tab changes apply directly in setAxis.)
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === null || e.key.startsWith("dq-")) applyAppearance();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
   return (
     <div className="app">
       <a href="#main-content" className="skip-link">Skip to main content</a>
@@ -460,8 +418,7 @@ export default function Layout() {
           <FleetHealthPill />
           <GlobalSearch />
           <div className="topbar-actions">
-            <DensityToggle />
-            <ThemeToggle />
+            <AppearanceButton />
           </div>
         </div>
         {/* keyed by path so a crashed page resets when the user navigates away */}

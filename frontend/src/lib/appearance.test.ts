@@ -6,7 +6,8 @@ import { resolveAppearance } from "./appearance";
 const getter = (map: Record<string, string>) => (k: string) => map[k] ?? null;
 
 describe("resolveAppearance — pre-paint bootstrap contract (#171)", () => {
-  it("defaults to aurora / light with nothing stored", () => {
+  it("defaults to aurora + system mode (follows the OS) with nothing stored", () => {
+    // system default on a light OS -> no dark attribute
     expect(resolveAppearance(getter({}), false)).toEqual({
       dir: "aurora",
       theme: null,
@@ -15,6 +16,12 @@ describe("resolveAppearance — pre-paint bootstrap contract (#171)", () => {
       navLayout: null,
       accent: null,
     });
+    // system default on a dark OS -> dark (#181 review: system, not light, is the default)
+    expect(resolveAppearance(getter({}), true).theme).toBe("dark");
+  });
+
+  it("honors an explicit stored light even on a dark OS", () => {
+    expect(resolveAppearance(getter({ "dq-theme": "light" }), true).theme).toBeNull();
   });
 
   // #180 regression: the pre-v2 toggle stored dq-density="comfortable" to mean the
@@ -24,9 +31,10 @@ describe("resolveAppearance — pre-paint bootstrap contract (#171)", () => {
     expect(resolveAppearance(getter({ "dq-density": "comfortable" }), false).density).toBeNull();
   });
 
-  it("restores the valid compact / cozy densities and rejects unknown ones", () => {
+  it("restores the valid compact / cozy / spacious densities and rejects unknown ones", () => {
     expect(resolveAppearance(getter({ "dq-density": "compact" }), false).density).toBe("compact");
     expect(resolveAppearance(getter({ "dq-density": "cozy" }), false).density).toBe("cozy");
+    expect(resolveAppearance(getter({ "dq-density": "spacious" }), false).density).toBe("spacious");
     expect(resolveAppearance(getter({ "dq-density": "huge" }), false).density).toBeNull();
   });
 

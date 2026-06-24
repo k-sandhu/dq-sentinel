@@ -25,7 +25,7 @@
           return v && valid.indexOf(v) !== -1 ? v : null;
         };
         d.dataset.dir = pick("dq-dir", ["aurora", "graphite", "editorial"]) || "aurora";
-        var mode = get("dq-theme") || "light"; // light | dark | system
+        var mode = get("dq-theme") || "system"; // light | dark | system — system is the default
         if (mode === "system") {
           try {
             mode = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
@@ -35,7 +35,7 @@
         }
         if (mode === "dark") d.dataset.theme = "dark";
         else delete d.dataset.theme;
-        var den = pick("dq-density", ["compact", "cozy"]);
+        var den = pick("dq-density", ["compact", "cozy", "spacious"]);
         if (den) d.dataset.density = den;
         else delete d.dataset.density;
         var font = pick("dq-font", ["inter", "system", "rounded"]);
@@ -46,7 +46,11 @@
         else delete d.dataset.navLayout;
         var accent = get("dq-accent");
         if (accent && window.CSS && CSS.supports("color", accent)) {
+          // Mirror setAccent(): derive the related brand tokens so a custom accent is
+          // consistent at first paint, not just after the bundle hydrates (#181 review).
           d.style.setProperty("--brand", accent);
+          d.style.setProperty("--brand-dark", "color-mix(in srgb, var(--brand) 75%, var(--text-dark))");
+          d.style.setProperty("--brand-light", "color-mix(in srgb, var(--brand) 16%, var(--card))");
         }
       })();
     </script>
