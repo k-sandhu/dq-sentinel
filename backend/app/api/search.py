@@ -7,9 +7,9 @@ ordered exact-prefix-first, then by entity type in a fixed order.
 Saved queries come from issue #41's table, which may not exist yet — that query
 is wrapped in try/except and skipped silently when the table is absent.
 
-TODO(#26): when per-connection RBAC grants land, filter every branch here by the
-caller's grants (a viewer must not discover datasets/checks on connections they
-cannot access).
+Connection-grant scoping (#159): every connection-bound branch is filtered by the
+caller's visible connections, so a granted user cannot discover datasets / checks
+/ connections on sources they weren't granted (admin and zero-grant users see all).
 """
 
 import logging
@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.db import get_db
-from app.security import get_current_user
+from app.security import get_current_user, visible_connection_ids
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/search", tags=["search"])
@@ -41,7 +41,7 @@ def search(
     q: str = "",
     limit: int = 5,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ) -> schemas.SearchOut:
     needle = q.strip().lower()
     if not needle:
@@ -49,19 +49,20 @@ def search(
     limit = max(1, min(limit, 25))
     like = f"%{needle}%"
     hits: list[schemas.SearchHit] = []
+    vis = visible_connection_ids(db, user)  # None -> unrestricted (admin / zero-grant) (#159)
 
     # datasets: match table_name / display_name; subtitle = connection name.
-    dataset_rows = (
+    ds_q = (
         db.query(models.Dataset, models.Connection.name)
         .join(models.Connection, models.Dataset.connection_id == models.Connection.id)
         .filter(
             func.lower(models.Dataset.table_name).like(like)
             | func.lower(func.coalesce(models.Dataset.display_name, "")).like(like)
         )
-        .order_by(models.Dataset.table_name)
-        .limit(limit)
-        .all()
     )
+    if vis is not None:
+        ds_q = ds_q.filter(models.Dataset.connection_id.in_(vis))
+    dataset_rows = ds_q.order_by(models.Dataset.table_name).limit(limit).all()
     for ds, conn_name in dataset_rows:
         title = f"{ds.schema_name}.{ds.table_name}" if ds.schema_name else ds.table_name
         hits.append(
@@ -75,17 +76,17 @@ def search(
         )
 
     # checks: match name; subtitle = dataset table_name; url = dataset's Checks tab.
-    check_rows = (
+    chk_q = (
         db.query(models.Check, models.Dataset.table_name)
         .join(models.Dataset, models.Check.dataset_id == models.Dataset.id)
         .filter(
             models.Check.status != "archived",
             func.lower(models.Check.name).like(like),
         )
-        .order_by(models.Check.name)
-        .limit(limit)
-        .all()
     )
+    if vis is not None:
+        chk_q = chk_q.filter(models.Dataset.connection_id.in_(vis))
+    check_rows = chk_q.order_by(models.Check.name).limit(limit).all()
     for chk, table_name in check_rows:
         hits.append(
             schemas.SearchHit(
@@ -98,13 +99,10 @@ def search(
         )
 
     # connections: match name; subtitle = kind.
-    conn_rows = (
-        db.query(models.Connection)
-        .filter(func.lower(models.Connection.name).like(like))
-        .order_by(models.Connection.name)
-        .limit(limit)
-        .all()
-    )
+    conn_q = db.query(models.Connection).filter(func.lower(models.Connection.name).like(like))
+    if vis is not None:
+        conn_q = conn_q.filter(models.Connection.id.in_(vis))
+    conn_rows = conn_q.order_by(models.Connection.name).limit(limit).all()
     for conn in conn_rows:
         hits.append(
             schemas.SearchHit(
@@ -117,26 +115,36 @@ def search(
         )
 
     # saved queries (issue #41): the table may not exist yet — skip silently.
-    hits.extend(_saved_query_hits(db, like, limit))
+    hits.extend(_saved_query_hits(db, like, limit, vis))
 
     hits.sort(key=lambda h: _rank(h, needle))
     return schemas.SearchOut(hits=hits)
 
 
-def _saved_query_hits(db: Session, like: str, limit: int) -> list[schemas.SearchHit]:
+def _saved_query_hits(
+    db: Session, like: str, limit: int, vis: set[int] | None
+) -> list[schemas.SearchHit]:
     """Saved-query hits from issue #41's `saved_queries` table.
 
     Feature-detected at runtime: the table won't exist in worktrees built before
     #41 lands, so a missing-table error is caught and the section skipped.
+
+    Connection-grant scoped (#159): saved queries are connection-bound, so a granted
+    user must not discover their names/ids (or the workbench deep-link) for
+    connections they can't access. ``vis is None`` -> unrestricted (admin / zero-grant).
     """
+    sql = "SELECT id, name FROM saved_queries WHERE lower(name) LIKE :like"
+    params: dict = {"like": like, "limit": limit}
+    if vis is not None:
+        if not vis:
+            return []
+        placeholders = ", ".join(f":c{i}" for i in range(len(vis)))
+        sql += f" AND connection_id IN ({placeholders})"
+        for i, cid in enumerate(vis):
+            params[f"c{i}"] = cid
+    sql += " ORDER BY name LIMIT :limit"
     try:
-        rows = db.execute(
-            text(
-                "SELECT id, name FROM saved_queries "
-                "WHERE lower(name) LIKE :like ORDER BY name LIMIT :limit"
-            ),
-            {"like": like, "limit": limit},
-        ).all()
+        rows = db.execute(text(sql), params).all()
     except SQLAlchemyError:
         db.rollback()  # clear the failed transaction so later queries still work
         return []

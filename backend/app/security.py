@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import Connection, ConnectionGrant, User
+from app.models import Connection, ConnectionGrant, Dataset, User
 
 ROLE_RANK = {"viewer": 0, "editor": 1, "admin": 2}
 
@@ -94,8 +94,14 @@ def connection_role(db: Session, user: User, connection_id: int) -> str | None:
     """Effective role on one connection, or ``None`` if it doesn't exist or the
     user can't see it.
 
-    ``admin`` -> ``"admin"``; a zero-grant user -> their global role (legacy); a
-    granted user -> the grant's role on that connection (``None`` if ungranted).
+    ``admin`` -> ``"admin"``; a zero-grant user -> their global role (legacy). For a
+    granted user the grant **scopes and may downgrade access but never elevates it**:
+    the effective role is the lower-ranked of the user's global role and the grant's
+    role (``None`` if ungranted on this connection). So a global ``viewer`` with an
+    ``editor`` grant is still only a ``viewer`` there — the pre-existing global
+    read-only contract holds — while a global ``editor`` with a ``viewer`` grant is
+    restricted to read on that connection. This keeps every mutation gate consistent:
+    ``editor`` action <=> global editor AND editor grant (#159, PR #168 review).
     """
     if db.get(Connection, connection_id) is None:
         return None  # nonexistent connection -> no role (keeps the by-id gate 404-consistent)
@@ -108,7 +114,11 @@ def connection_role(db: Session, user: User, connection_id: int) -> str | None:
     )
     if not grants:
         return user.role  # zero grants -> legacy global role
-    return grants.get(connection_id)  # None -> ungranted -> no access
+    grant_role = grants.get(connection_id)
+    if grant_role is None:
+        return None  # granted user, but not on THIS connection -> no access
+    # Least privilege: cap the grant at the user's global role (never elevate).
+    return grant_role if ROLE_RANK[grant_role] <= ROLE_RANK[user.role] else user.role
 
 
 def assert_connection_visible(db: Session, user: User, connection_id: int) -> Connection:
@@ -118,3 +128,40 @@ def assert_connection_visible(db: Session, user: User, connection_id: int) -> Co
     if conn is None or connection_role(db, user, connection_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
     return conn
+
+
+def assert_connection_role(
+    db: Session, user: User, connection_id: int, min_role: str
+) -> Connection:
+    """The connection must be visible AND the user's effective role on it at least
+    ``min_role``. 404 for missing/invisible (don't leak existence); 403 for a
+    visible connection the user can see but lacks the role to mutate (#159)."""
+    conn = db.get(Connection, connection_id)
+    role = connection_role(db, user, connection_id)
+    if conn is None or role is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    if ROLE_RANK.get(role, -1) < ROLE_RANK[min_role]:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, f"Requires {min_role} on this connection")
+    return conn
+
+
+def assert_dataset_visible(db: Session, user: User, dataset_id: int) -> Dataset:
+    """Return the Dataset if its connection is visible to the user, else 404 — the
+    SAME status for a missing dataset and one on an invisible connection (#159)."""
+    ds = db.get(Dataset, dataset_id)
+    if ds is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    vis = visible_connection_ids(db, user)
+    if vis is not None and ds.connection_id not in vis:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    return ds
+
+
+def visible_dataset_ids(db: Session, user: User):
+    """Subquery of dataset ids on connections the user may see, or ``None`` when
+    unrestricted (admin / zero-grant legacy). Use to scope dataset_id-keyed tables
+    (``check_runs``, ``exception_records``) with ``.in_(...)`` — no extra join."""
+    vis = visible_connection_ids(db, user)
+    if vis is None:
+        return None
+    return db.query(Dataset.id).filter(Dataset.connection_id.in_(vis))

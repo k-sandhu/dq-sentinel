@@ -117,14 +117,18 @@ def normalize_panels(raw_panels: list[dict]) -> list[dict]:
     return out
 
 
-def execute_panels(connector: Connector, panels: list[dict]) -> list[dict]:
-    """Run every panel; per-panel errors are reported, not raised."""
+def execute_panels(connector: Connector, panels: list[dict], limit: int = PANEL_ROW_CAP) -> list[dict]:
+    """Run every panel; per-panel errors are reported, not raised.
+
+    ``limit`` caps rows fetched per panel (default ``PANEL_ROW_CAP``). The chat
+    assistant passes the smaller agent row limit so ``render_chart`` returns no
+    more rows than ``run_sql`` — closing the 500-vs-200 exfil gap (#159 / LLM-3)."""
     results = []
     for p in panels:
         item = dict(p)
         start = time.perf_counter()
         try:
-            res = connector.run_select(p["sql"], limit=PANEL_ROW_CAP)
+            res = connector.run_select(p["sql"], limit=limit)
             item["columns"] = res.columns
             item["rows"] = [[jsonable(v) for v in row] for row in res.rows]
             item["error"] = None

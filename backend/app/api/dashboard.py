@@ -9,34 +9,58 @@ from app.api.serialize import check_out, dataset_out, run_out
 from app.config import get_settings
 from app.db import get_db
 from app.models import utcnow
-from app.security import get_current_user
+from app.security import get_current_user, visible_connection_ids, visible_dataset_ids
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
 @router.get("", response_model=schemas.DashboardOut)
-def summary(db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+def summary(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     now = utcnow()
     day_ago = now - timedelta(hours=24)
     week_ago = now - timedelta(days=7)
     two_weeks_ago = now - timedelta(days=14)
 
-    datasets = db.query(models.Dataset).count()
-    active_checks = db.query(models.Check).filter(models.Check.status == "active").count()
-    proposed_checks = db.query(models.Check).filter(models.Check.status == "proposed").count()
-    runs_24h = db.query(models.CheckRun).filter(models.CheckRun.started_at >= day_ago).count()
-    failing_checks = (
-        db.query(models.Check)
-        .filter(models.Check.status == "active", models.Check.last_status.in_(["fail", "error"]))
-        .count()
-    )
-    open_exceptions = (
-        db.query(models.ExceptionRecord).filter(models.ExceptionRecord.status == "open").count()
-    )
+    # Connection-grant scoping (#159): every figure is restricted to the caller's
+    # visible connections. None -> unrestricted (admin / zero-grant legacy).
+    vis = visible_connection_ids(db, user)
+    visible_ds = visible_dataset_ids(db, user)
+
+    def by_conn(q):  # Dataset-rooted query -> filter on Dataset.connection_id
+        return q.filter(models.Dataset.connection_id.in_(vis)) if vis is not None else q
+
+    def by_ds(q, col):  # dataset_id-keyed query (Check / CheckRun / ExceptionRecord)
+        return q.filter(col.in_(visible_ds)) if visible_ds is not None else q
+
+    datasets = by_conn(db.query(models.Dataset)).count()
+    active_checks = by_ds(
+        db.query(models.Check).filter(models.Check.status == "active"), models.Check.dataset_id
+    ).count()
+    proposed_checks = by_ds(
+        db.query(models.Check).filter(models.Check.status == "proposed"), models.Check.dataset_id
+    ).count()
+    runs_24h = by_ds(
+        db.query(models.CheckRun).filter(models.CheckRun.started_at >= day_ago),
+        models.CheckRun.dataset_id,
+    ).count()
+    failing_checks = by_ds(
+        db.query(models.Check).filter(
+            models.Check.status == "active", models.Check.last_status.in_(["fail", "error"])
+        ),
+        models.Check.dataset_id,
+    ).count()
+    open_exceptions = by_ds(
+        db.query(models.ExceptionRecord).filter(models.ExceptionRecord.status == "open"),
+        models.ExceptionRecord.dataset_id,
+    ).count()
 
     week_runs = (
-        db.query(models.CheckRun.status, func.count())
-        .filter(models.CheckRun.started_at >= week_ago)
+        by_ds(
+            db.query(models.CheckRun.status, func.count()).filter(
+                models.CheckRun.started_at >= week_ago
+            ),
+            models.CheckRun.dataset_id,
+        )
         .group_by(models.CheckRun.status)
         .all()
     )
@@ -46,8 +70,10 @@ def summary(db: Session = Depends(get_db), _: models.User = Depends(get_current_
 
     # daily trend over the last 14 days
     rows = (
-        db.query(models.CheckRun)
-        .filter(models.CheckRun.started_at >= two_weeks_ago)
+        by_ds(
+            db.query(models.CheckRun).filter(models.CheckRun.started_at >= two_weeks_ago),
+            models.CheckRun.dataset_id,
+        )
         .order_by(models.CheckRun.started_at)
         .all()
     )
@@ -67,13 +93,18 @@ def summary(db: Session = Depends(get_db), _: models.User = Depends(get_current_
     ]
 
     recent = (
-        db.query(models.CheckRun).order_by(models.CheckRun.id.desc()).limit(10).all()
+        by_ds(db.query(models.CheckRun), models.CheckRun.dataset_id)
+        .order_by(models.CheckRun.id.desc())
+        .limit(10)
+        .all()
     )
 
     worst = (
-        db.query(models.Dataset)
-        .join(models.ExceptionRecord, models.ExceptionRecord.dataset_id == models.Dataset.id)
-        .filter(models.ExceptionRecord.status == "open")
+        by_conn(
+            db.query(models.Dataset)
+            .join(models.ExceptionRecord, models.ExceptionRecord.dataset_id == models.Dataset.id)
+            .filter(models.ExceptionRecord.status == "open")
+        )
         .group_by(models.Dataset.id)
         .order_by(func.count(models.ExceptionRecord.id).desc())
         .limit(5)
@@ -111,30 +142,41 @@ def console(db: Session = Depends(get_db), user: models.User = Depends(get_curre
     day_ago = now - timedelta(hours=24)
     exc = models.ExceptionRecord
 
-    new_exceptions_24h = db.query(exc).filter(exc.first_seen_at >= day_ago).count()
-    resolved_24h = (
-        db.query(exc).filter(exc.status == "resolved", exc.marked_at >= day_ago).count()
-    )
+    # Connection-grant scoping (#159): None -> unrestricted (admin / zero-grant).
+    visible_ds = visible_dataset_ids(db, user)
+
+    def by_ds(q, col=exc.dataset_id):
+        return q.filter(col.in_(visible_ds)) if visible_ds is not None else q
+
+    new_exceptions_24h = by_ds(db.query(exc).filter(exc.first_seen_at >= day_ago)).count()
+    resolved_24h = by_ds(
+        db.query(exc).filter(exc.status == "resolved", exc.marked_at >= day_ago)
+    ).count()
     # Approximation until system events are queryable (#56): an open exception that
     # has been triaged (marked_at set) yet recurred (occurrence_count > 1) is a
     # regression. Replace with an event-kind count once events land.
-    regressed_open = (
-        db.query(exc)
-        .filter(exc.status == "open", exc.occurrence_count > 1, exc.marked_at.isnot(None))
-        .count()
-    )
-    assigned_to_me_open = (
-        db.query(exc).filter(exc.status == "open", exc.assigned_to_id == user.id).count()
-    )
-    open_total = db.query(exc).filter(exc.status == "open").count()
+    regressed_open = by_ds(
+        db.query(exc).filter(
+            exc.status == "open", exc.occurrence_count > 1, exc.marked_at.isnot(None)
+        )
+    ).count()
+    assigned_to_me_open = by_ds(
+        db.query(exc).filter(exc.status == "open", exc.assigned_to_id == user.id)
+    ).count()
+    open_total = by_ds(db.query(exc).filter(exc.status == "open")).count()
 
     # Failing right now: active checks whose last run failed/errored, error first.
     severity_order = case(
         (models.Check.severity == "error", 0), (models.Check.severity == "warn", 1), else_=2
     )
     failing = (
-        db.query(models.Check)
-        .filter(models.Check.status == "active", models.Check.last_status.in_(["fail", "error"]))
+        by_ds(
+            db.query(models.Check).filter(
+                models.Check.status == "active",
+                models.Check.last_status.in_(["fail", "error"]),
+            ),
+            models.Check.dataset_id,
+        )
         .order_by(severity_order, models.Check.last_run_at.desc())
         .limit(8)
         .all()
@@ -144,8 +186,7 @@ def console(db: Session = Depends(get_db), user: models.User = Depends(get_curre
     # Biggest movers: datasets with the most new exceptions in the last 24h. Two
     # grouped aggregates merged in Python, joined to Dataset for names — no N+1.
     opened_rows = (
-        db.query(exc.dataset_id, func.count())
-        .filter(exc.first_seen_at >= day_ago)
+        by_ds(db.query(exc.dataset_id, func.count()).filter(exc.first_seen_at >= day_ago))
         .group_by(exc.dataset_id)
         .all()
     )
