@@ -30,7 +30,7 @@ export interface ResolvedAppearance {
 const DIRS = new Set(["aurora", "graphite", "editorial"]);
 const DENSITIES = new Set(["compact", "cozy", "spacious"]);
 const FONTS = new Set(["inter", "system", "rounded"]);
-const NAV_LAYOUTS = new Set(["icons-only", "centered"]); // "full" = default (unset)
+const NAV_LAYOUTS = new Set(["icons", "centered"]); // "full" = default (unset)
 
 const inSet = (set: Set<string>, value: string | null): string | null =>
   value && set.has(value) ? value : null;
@@ -123,7 +123,7 @@ export const AXES: Record<AxisName, AxisSpec> = {
     label: "Navigation",
     options: [
       { value: "full", label: "Full" },
-      { value: "icons-only", label: "Icons" },
+      { value: "icons", label: "Icons" },
       { value: "centered", label: "Centered" },
     ],
   },

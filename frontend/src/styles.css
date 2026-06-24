@@ -147,6 +147,29 @@ html[data-font="rounded"] { --font: "SF Pro Rounded", "Nunito", "Quicksand", ui-
   border-radius: var(--radius-sm); background: var(--card); cursor: pointer;
 }
 
+/* Navigation layouts (data-nav-layout = full | icons | centered) (#173). full is the
+   default sidebar. `icons` collapses to a 66px rail: labels use font-size:0 (NOT
+   display:none) so they stay in the accessibility tree, and NavLinks carry title= for
+   hover tooltips; the fixed-size Icon svgs are unaffected by font-size. `centered`
+   hides the sidebar and shows a sticky .topnav bar, constraining content width. */
+.topnav { display: none; }
+html[data-nav-layout="icons"] .sidebar { width: 66px; padding: 14px 8px; }
+html[data-nav-layout="icons"] .nav-item { font-size: 0; justify-content: center; gap: 0; padding: 9px 0; }
+html[data-nav-layout="icons"] .nav-section { font-size: 0; height: 8px; }
+html[data-nav-layout="icons"] .logo { font-size: 0; gap: 0; justify-content: center; }
+html[data-nav-layout="icons"] .user-box > div { font-size: 0; }
+html[data-nav-layout="centered"] .sidebar { display: none; }
+html[data-nav-layout="centered"] .topnav {
+  display: flex; gap: 3px; justify-content: center; flex-wrap: wrap; align-items: center;
+  padding: 8px 18px; border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  backdrop-filter: blur(10px); position: sticky; top: 0; z-index: 14;
+}
+html[data-nav-layout="centered"] .topnav .nav-item { margin: 0; padding: 6px 11px; font-size: 13px; }
+html[data-nav-layout="centered"] .topnav .nav-item svg { display: none; }
+html[data-nav-layout="centered"] .topnav .topnav-signout { margin-left: 8px; }
+html[data-nav-layout="centered"] .page { max-width: 1120px; margin-inline: auto; }
+
 /* Overview operating console (#175) — token-driven inverted-pyramid primitives,
    ported from the wireframe. Status tints use color-mix so they re-skin per
    theme/mode (the app has no dedicated --*-bg tokens). */

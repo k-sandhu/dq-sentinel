@@ -1,21 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { type CSSProperties, type ReactNode, useState } from "react";
 import { Link } from "react-router";
-import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api/client";
 import type {
   Dashboard,
   DashboardConsole,
-  ScorecardHistory,
-  ScorecardHistoryPoint,
   ScorecardSloStatus,
   ScorecardSummary,
 } from "../api/types";
@@ -66,20 +56,6 @@ function panelError(error: unknown, label: string) {
   ) : null;
 }
 
-/** Week-over-week quality-score delta from the 90-day history (display-only). */
-function wowDelta(history: ScorecardHistoryPoint[]): number | null {
-  const scored = history.filter((p) => p.score != null);
-  if (scored.length < 2) return null;
-  const last = scored[scored.length - 1];
-  const lastDate = Date.parse(last.snapshot_date);
-  // nearest point ~7 days before the latest
-  let prev = scored[0];
-  for (const p of scored) {
-    if (Date.parse(p.snapshot_date) <= lastDate - 7 * 86_400_000) prev = p;
-  }
-  return (last.score ?? 0) - (prev.score ?? 0);
-}
-
 // ── Tier 1: status ────────────────────────────────────────────────────────────────
 
 function HealthRing({ pct, tone }: { pct: number | null; tone: Tone }) {
@@ -128,12 +104,10 @@ function Kpi({
 function StatusTier({
   summary,
   dashboard,
-  history,
   openIncidents,
 }: {
   summary: ScorecardSummary | undefined;
   dashboard: Dashboard | undefined;
-  history: ScorecardHistoryPoint[];
   openIncidents: number | null;
 }) {
   const passingPct =
@@ -148,7 +122,6 @@ function StatusTier({
     summary && summary.total_datasets > 0
       ? (summary.scored_datasets / summary.total_datasets) * 100
       : null;
-  const delta = wowDelta(history);
   const openExc = summary?.open_exceptions ?? dashboard?.open_exceptions;
 
   return (
@@ -163,15 +136,6 @@ function StatusTier({
             Quality score <strong>{fmtScore(summary?.score)}</strong>{" "}
             <span className={`pill tone-${sloTone(summary?.slo_status)}`}>{sloLabel(summary?.slo_status)}</span>
           </div>
-          {delta != null && (
-            <div className="foot" style={{ marginTop: 6 }}>
-              <span className={`delta ${delta < 0 ? "down" : "up"}`}>
-                {delta > 0 ? "+" : ""}
-                {delta.toFixed(1)} pts
-              </span>{" "}
-              WoW
-            </div>
-          )}
         </div>
       </div>
       <Kpi
@@ -207,42 +171,42 @@ function StatusTier({
 
 // ── Tier 2: trend + attention ───────────────────────────────────────────────────
 
-function ScoreTrendPanel({
-  points,
+/** Check-results trend (14 days) from the grant-scoped /dashboard `trend` — replaces
+ *  the un-scoped /scorecards/history line so the Overview never aggregates ungranted
+ *  datasets (#183 review). */
+function RunTrendPanel({
+  dashboard,
   isLoading,
   error,
 }: {
-  points: ScorecardHistoryPoint[];
+  dashboard: Dashboard | undefined;
   isLoading: boolean;
   error: unknown;
 }) {
-  const trend = points.map((p) => ({ ...p, day: p.snapshot_date.slice(5) }));
-  const hasSnapshots = trend.some((p) => p.score != null);
-  const hasTarget = trend.some((p) => p.slo_target != null);
+  const trend = (dashboard?.trend ?? []).map((t) => ({ ...t, label: t.day.slice(5) }));
   return (
     <div className="card card-pad">
       <div className="section-title compact">
-        <h2>Quality score trend</h2>
-        <span className="badge">90 days</span>
+        <h2>Check results</h2>
+        <span className="badge">14 days</span>
       </div>
       {error ? (
-        panelError(error, "Scorecard history")
+        panelError(error, "Run results")
       ) : isLoading ? (
-        <Spinner label="Loading score history…" />
-      ) : !hasSnapshots ? (
-        <EmptyState title="No score snapshots yet" hint="Daily history accrues once the worker runs." />
+        <Spinner label="Loading run results…" />
+      ) : trend.length === 0 ? (
+        <EmptyState title="No recent runs" hint="Scheduled and manual check runs will appear here." />
       ) : (
         <ResponsiveContainer width="100%" height={210}>
-          <LineChart data={trend} margin={{ top: 8, right: 10, left: -8, bottom: 0 }}>
-            <CartesianGrid stroke="var(--border-light)" vertical={false} />
-            <XAxis dataKey="day" tick={AXIS} tickLine={false} axisLine={{ stroke: "var(--border)" }} />
-            <YAxis domain={[0, 100]} tick={AXIS} tickLine={false} axisLine={false} width={34} />
-            <Tooltip contentStyle={TOOLTIP_STYLE} />
-            {hasTarget && (
-              <Line type="monotone" dataKey="slo_target" name="SLO target" stroke="var(--warn-strong)" strokeDasharray="4 4" strokeWidth={1.5} dot={false} connectNulls />
-            )}
-            <Line type="monotone" dataKey="score" name="Quality score" stroke="var(--brand)" strokeWidth={2.5} dot={false} connectNulls />
-          </LineChart>
+          <BarChart data={trend} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+            <XAxis dataKey="label" tick={AXIS} tickLine={false} axisLine={{ stroke: "var(--border)" }} />
+            <YAxis tick={AXIS} tickLine={false} axisLine={false} allowDecimals={false} />
+            <Tooltip cursor={{ fill: "var(--hover)" }} contentStyle={TOOLTIP_STYLE} />
+            <Bar dataKey="passed" stackId="a" fill="var(--ok)" />
+            <Bar dataKey="warned" stackId="a" fill="var(--yellow)" />
+            <Bar dataKey="failed" stackId="a" fill="var(--danger)" />
+            <Bar dataKey="errored" stackId="a" fill="var(--danger-deep)" radius={[2, 2, 0, 0]} />
+          </BarChart>
         </ResponsiveContainer>
       )}
     </div>
@@ -295,6 +259,8 @@ function IncidentHeatmap({
             <i
               key={c.key}
               className={c.q ? `q${c.q}` : ""}
+              role="img"
+              aria-label={`${c.key}: ${c.n} incident${c.n === 1 ? "" : "s"}`}
               title={`${c.key}: ${c.n} incident${c.n === 1 ? "" : "s"}`}
             />
           ))}
@@ -477,12 +443,10 @@ function DatasetsByRisk({
 export default function HomePage() {
   const dashboardQuery = useQuery({ queryKey: ["dashboard"], queryFn: () => api.get<Dashboard>("/dashboard"), refetchInterval: 30_000 });
   const summaryQuery = useQuery({ queryKey: ["scorecards", "summary"], queryFn: () => api.get<ScorecardSummary>("/scorecards/summary"), refetchInterval: 60_000, retry: false });
-  const historyQuery = useQuery({ queryKey: ["scorecards", "history", "global", 90], queryFn: () => api.get<ScorecardHistory>("/scorecards/history?grain=global&days=90"), refetchInterval: 60_000, retry: false });
   const consoleQuery = useQuery({ queryKey: ["dashboard", "console"], queryFn: () => api.get<DashboardConsole>("/dashboard/console"), refetchInterval: 60_000, retry: false });
 
   const dashboard = dashboardQuery.data;
   const summary = summaryQuery.data;
-  const history = historyQuery.data?.points ?? [];
   const consoleData = consoleQuery.data;
   const openIncidents = consoleData ? consoleData.open_incidents : null;
 
@@ -510,16 +474,11 @@ export default function HomePage() {
       </div>
 
       {/* Tier 1 — status */}
-      <StatusTier
-        summary={summary}
-        dashboard={dashboard}
-        history={history}
-        openIncidents={openIncidents}
-      />
+      <StatusTier summary={summary} dashboard={dashboard} openIncidents={openIncidents} />
 
       {/* Tier 2 — trend + attention */}
       <div className="split" style={{ margin: "16px 0" }}>
-        <ScoreTrendPanel points={history} isLoading={historyQuery.isLoading} error={historyQuery.error} />
+        <RunTrendPanel dashboard={dashboard} isLoading={dashboardQuery.isLoading} error={dashboardQuery.error} />
         <IncidentHeatmap
           activity={consoleData?.incident_activity}
           loading={consoleQuery.isLoading}

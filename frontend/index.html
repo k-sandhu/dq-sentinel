@@ -41,7 +41,7 @@
         var font = pick("dq-font", ["inter", "system", "rounded"]);
         if (font) d.dataset.font = font;
         else delete d.dataset.font;
-        var nav = pick("dq-nav", ["icons-only", "centered"]); // full = default; CSS variants in #173
+        var nav = pick("dq-nav", ["icons", "centered"]); // full = default (#173)
         if (nav) d.dataset.navLayout = nav;
         else delete d.dataset.navLayout;
         var accent = get("dq-accent");
