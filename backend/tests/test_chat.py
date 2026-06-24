@@ -54,6 +54,16 @@ def _setup_connection(client, headers, source_db, name) -> int:
     return resp.json()["id"]
 
 
+def _register_dataset(client, headers, conn_id) -> int:
+    resp = client.post(
+        "/api/v1/datasets/register",
+        json={"connection_id": conn_id, "tables": [{"table_name": "people"}]},
+        headers=headers,
+    )
+    assert resp.status_code in (200, 201), resp.text
+    return resp.json()[0]["id"]
+
+
 # ----------------------------------------------------------------- REST
 def test_session_crud_and_ownership(client, admin_headers):
     created = client.post("/api/v1/chat/sessions", json={}, headers=admin_headers)
@@ -320,3 +330,166 @@ def test_ws_tools_require_editor_on_connection(client, admin_headers, source_db,
     assert not [e for e in events if e["type"] == "step" and e["step"]["type"] == "chart"]
     last_history = fake.seen[-1][1]
     assert last_history[-1]["results"][0]["is_error"] is True
+
+
+# ------------------------------------------------- authoring tools (#186)
+def _run_tool_turn(client, token, admin_headers, message) -> list[dict]:
+    sid = client.post("/api/v1/chat/sessions", json={}, headers=admin_headers).json()["id"]
+    drop_history(sid)
+    with client.websocket_connect(f"/api/v1/chat/ws/{sid}?token={token}") as ws:
+        ws.receive_json()  # session hello
+        ws.send_json({"type": "user_message", "content": message})
+        return _collect_until_done(ws)
+
+
+def _result_steps(events) -> list[dict]:
+    return [e["step"] for e in events if e["type"] == "step" and e["step"]["type"] == "result"]
+
+
+def test_ws_create_check_tool(client, admin_headers, source_db, monkeypatch):
+    conn_id = _setup_connection(client, admin_headers, source_db, "author-conn")
+    ds_id = _register_dataset(client, admin_headers, conn_id)
+    token = _login(client, "admin@example.com", "admin123")
+
+    fake = FakeProvider(
+        [
+            LlmResponse(
+                text="",
+                tool_calls=[ToolCall("t1", "create_check", {
+                    "dataset_id": ds_id, "check_type": "not_null", "column_name": "email",
+                    "params": {}, "severity": "warn", "name": None,
+                    "rationale": "emails must be present", "schedule_kind": None, "schedule_expr": None,
+                })],
+                stop_reason="tool_use",
+            ),
+            LlmResponse(text="Done — I created a not-null check on email."),
+        ]
+    )
+    monkeypatch.setattr(llm_client, "get_provider", lambda: fake)
+
+    events = _run_tool_turn(client, token, admin_headers, "add a not-null check on email")
+    assert "error" not in {e["type"] for e in events}
+    results = _result_steps(events)
+    assert results and not results[0]["error"]
+    assert "Created check" in results[0]["content"]
+
+    # the check is really persisted, and has a v1 snapshot
+    checks = client.get(f"/api/v1/checks?dataset_id={ds_id}", headers=admin_headers).json()
+    made = [c for c in checks if c["check_type"] == "not_null" and c["column_name"] == "email"]
+    assert made, checks
+    versions = client.get(f"/api/v1/checks/{made[0]['id']}/versions", headers=admin_headers).json()
+    assert len(versions) == 1 and versions[0]["change_note"] == "created via assistant"
+
+
+def test_ws_create_sla_tool(client, admin_headers, source_db, monkeypatch):
+    conn_id = _setup_connection(client, admin_headers, source_db, "author-sla-conn")
+    ds_id = _register_dataset(client, admin_headers, conn_id)
+    token = _login(client, "admin@example.com", "admin123")
+
+    fake = FakeProvider(
+        [
+            LlmResponse(
+                text="",
+                tool_calls=[ToolCall("t1", "create_sla", {
+                    "name": "People reliability", "scope": "dataset", "scope_id": ds_id,
+                    "target_type": "check_success", "objective": 0.95, "window": "rolling_30d",
+                    "enabled": True,
+                })],
+                stop_reason="tool_use",
+            ),
+            LlmResponse(text="Created the SLA."),
+        ]
+    )
+    monkeypatch.setattr(llm_client, "get_provider", lambda: fake)
+
+    events = _run_tool_turn(client, token, admin_headers, "track 95% reliability on this dataset")
+    results = _result_steps(events)
+    assert results and not results[0]["error"]
+    assert "Created SLA" in results[0]["content"]
+
+    slas = client.get(f"/api/v1/sla?dataset_id={ds_id}", headers=admin_headers).json()
+    assert any(s["name"] == "People reliability" for s in slas), slas
+
+
+def test_ws_create_sla_rejects_zero_objective(client, admin_headers, source_db, monkeypatch):
+    """An explicit objective=0 is out of contract and must be rejected, not coerced
+    to the 0.99 default (#186 review)."""
+    conn_id = _setup_connection(client, admin_headers, source_db, "author-sla0-conn")
+    ds_id = _register_dataset(client, admin_headers, conn_id)
+    token = _login(client, "admin@example.com", "admin123")
+
+    fake = FakeProvider(
+        [
+            LlmResponse(
+                text="",
+                tool_calls=[ToolCall("t1", "create_sla", {
+                    "name": "bad", "scope": "dataset", "scope_id": ds_id,
+                    "target_type": "check_success", "objective": 0, "window": "rolling_30d",
+                    "enabled": True,
+                })],
+                stop_reason="tool_use",
+            ),
+            LlmResponse(text="That objective is invalid."),
+        ]
+    )
+    monkeypatch.setattr(llm_client, "get_provider", lambda: fake)
+
+    events = _run_tool_turn(client, token, admin_headers, "track 0% reliability")
+    results = _result_steps(events)
+    assert results and all(s["error"] for s in results)
+    assert any("objective" in s["content"] for s in results)
+    # no SLA was created on that dataset
+    slas = client.get(f"/api/v1/sla?dataset_id={ds_id}", headers=admin_headers).json()
+    assert not slas, slas
+
+
+def test_ws_authoring_requires_editor_on_connection(client, admin_headers, source_db, monkeypatch):
+    """A global editor with only a VIEWER grant on the connection can open the assistant
+    but create_check must fail closed — no config is written through the LLM surface."""
+    conn_id = _setup_connection(client, admin_headers, source_db, "author-authz-conn")
+    ds_id = _register_dataset(client, admin_headers, conn_id)
+    created = client.post(
+        "/api/v1/auth/users",
+        json={"email": "author-vgrant@example.com", "password": "longenough1", "role": "editor"},
+        headers=admin_headers,
+    )
+    assert created.status_code == 201, created.text
+    grant = client.post(
+        f"/api/v1/auth/users/{created.json()['id']}/grants",
+        json={"connection_id": conn_id, "role": "viewer"},
+        headers=admin_headers,
+    )
+    assert grant.status_code == 201, grant.text
+    token = _login(client, "author-vgrant@example.com", "longenough1")
+
+    fake = FakeProvider(
+        [
+            LlmResponse(
+                text="",
+                tool_calls=[ToolCall("t1", "create_check", {
+                    "dataset_id": ds_id, "check_type": "not_null", "column_name": "email",
+                    "params": {}, "severity": "warn", "name": None, "rationale": None,
+                    "schedule_kind": None, "schedule_expr": None,
+                })],
+                stop_reason="tool_use",
+            ),
+            LlmResponse(text="I don't have permission to create that."),
+        ]
+    )
+    monkeypatch.setattr(llm_client, "get_provider", lambda: fake)
+
+    sid = client.post(
+        "/api/v1/chat/sessions", json={}, headers={"Authorization": f"Bearer {token}"}
+    ).json()["id"]
+    drop_history(sid)
+    with client.websocket_connect(f"/api/v1/chat/ws/{sid}?token={token}") as ws:
+        ws.receive_json()
+        ws.send_json({"type": "user_message", "content": "add a not-null check on email"})
+        events = _collect_until_done(ws)
+
+    results = _result_steps(events)
+    assert results and all(s["error"] for s in results)
+    assert all("Access denied" in s["content"] for s in results)
+    # nothing was created on that dataset
+    checks = client.get(f"/api/v1/checks?dataset_id={ds_id}", headers=admin_headers).json()
+    assert not [c for c in checks if c["origin"] == "manual" and c["column_name"] == "email"]

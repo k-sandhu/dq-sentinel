@@ -16,7 +16,10 @@ from typing import Any
 
 from app.config import get_settings
 from app.connectors.sa import Connector, connector_for
+from app.core import check_authoring
+from app.core import sla as sla_core
 from app.core.adhoc import VIZ_TYPES, execute_panels
+from app.core.check_types import CHECK_TYPES
 from app.core.profiler import summarize_profile_for_llm
 from app.db import session_factory
 from app.llm import client as llm_client
@@ -132,12 +135,104 @@ RENDER_CHART_TOOL = {
     },
 }
 
+# ------------------------------------------------------ authoring tools (#186)
+LIST_CHECK_TYPES_TOOL = {
+    "name": "list_check_types",
+    "description": (
+        "List every data-quality check type you can author, with each type's parameters "
+        "(name, whether required, type, default). Call this before proposing or creating a check "
+        "so you use a valid check_type and correct parameter names."
+    ),
+    "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+}
+
+CREATE_CHECK_TOOL = {
+    "name": "create_check",
+    "description": (
+        "Create a data-quality check on a registered dataset. ONLY call this AFTER you have shown "
+        "the user the exact configuration and they have explicitly approved it in the conversation — "
+        "never create a check the user has not confirmed. Use list_check_types for valid check_type "
+        "values and their params, and set thresholds from the actual data (profile / queries), not "
+        "guesses. The check is created live and its configuration is saved as version 1 (rollback-able)."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "dataset_id": {"type": "integer", "description": "Registered dataset id the check runs on"},
+            "check_type": {"type": "string", "description": "A key from list_check_types (e.g. not_null, range, freshness, custom_sql)"},
+            "column_name": {"type": ["string", "null"], "description": "Column to check, or null for table-level checks"},
+            "params": {"type": "object", "description": "Check-type-specific parameters (see list_check_types)"},
+            "severity": {"type": "string", "enum": ["info", "warn", "error"], "description": "info=monitor, warn=investigate, error=page/block"},
+            "name": {"type": ["string", "null"], "description": "Optional display name; a sensible default is generated if null"},
+            "rationale": {"type": ["string", "null"], "description": "One line: why this check exists / what it protects"},
+            "schedule_kind": {"type": ["string", "null"], "description": "'interval' (minutes) or 'cron'; null defaults to interval"},
+            "schedule_expr": {"type": ["string", "null"], "description": "Minutes for interval ('1440'=daily, '360'=6-hourly) or a cron string; null defaults to 1440"},
+        },
+        "required": ["dataset_id", "check_type", "column_name", "params", "severity", "name", "rationale", "schedule_kind", "schedule_expr"],
+        "additionalProperties": False,
+    },
+}
+
+UPDATE_CHECK_TOOL = {
+    "name": "update_check",
+    "description": (
+        "Edit an existing check's configuration or lifecycle (pause/resume). ONLY call this after the "
+        "user has approved the change. Pass only the fields you want to change; leave the rest null. "
+        "Definition changes are versioned and can be rolled back. To change the threshold of a check, "
+        "pass its new params object."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "check_id": {"type": "integer", "description": "Id of the check to edit"},
+            "name": {"type": ["string", "null"]},
+            "column_name": {"type": ["string", "null"], "description": "New column (rarely changed); null = leave unchanged"},
+            "params": {"type": ["object", "null"], "description": "Replacement parameters object; null = leave unchanged"},
+            "severity": {"type": ["string", "null"], "enum": ["info", "warn", "error", None]},
+            "rationale": {"type": ["string", "null"]},
+            "schedule_kind": {"type": ["string", "null"]},
+            "schedule_expr": {"type": ["string", "null"]},
+            "status": {"type": ["string", "null"], "enum": ["active", "disabled", "proposed", "archived", None], "description": "Lifecycle: active=running, disabled=paused"},
+        },
+        "required": ["check_id", "name", "column_name", "params", "severity", "rationale", "schedule_kind", "schedule_expr", "status"],
+        "additionalProperties": False,
+    },
+}
+
+CREATE_SLA_TOOL = {
+    "name": "create_sla",
+    "description": (
+        "Create a reliability SLA that tracks check-run success over a rolling window and alerts when "
+        "attainment falls below the objective. ONLY call this after the user has approved it. scope='dataset' "
+        "rolls up the dataset's checks (target_type freshness | volume | check_success); scope='check' tracks "
+        "one check (pass scope_id=check id)."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "name": {"type": ["string", "null"], "description": "Optional name; a default is generated if null"},
+            "scope": {"type": "string", "enum": ["dataset", "check"], "description": "What the SLA covers"},
+            "scope_id": {"type": "integer", "description": "dataset_id when scope=dataset, else check id"},
+            "target_type": {"type": "string", "enum": ["freshness", "volume", "check_success"], "description": "Which checks count toward attainment"},
+            "objective": {"type": "number", "description": "Target attainment fraction in (0, 1], e.g. 0.99"},
+            "window": {"type": "string", "enum": ["rolling_7d", "rolling_30d"], "description": "Rolling evaluation window"},
+            "enabled": {"type": "boolean", "description": "Whether the SLA is active"},
+        },
+        "required": ["name", "scope", "scope_id", "target_type", "objective", "window", "enabled"],
+        "additionalProperties": False,
+    },
+}
+
 CHAT_TOOLS = [
     DATASET_OVERVIEW_TOOL,
     RECENT_FAILURES_TOOL,
     CHAT_RUN_SQL_TOOL,
     CHAT_GET_TABLE_CODE_TOOL,
     RENDER_CHART_TOOL,
+    LIST_CHECK_TYPES_TOOL,
+    CREATE_CHECK_TOOL,
+    UPDATE_CHECK_TOOL,
+    CREATE_SLA_TOOL,
 ]
 
 # ------------------------------------------------- in-process LLM history
@@ -547,12 +642,141 @@ def _run_loop(
             f"Data preview:\n{preview}"
         )
 
+    def require_dataset_editor(dataset_id: Any) -> Dataset:
+        """Authorize an authoring action against the dataset's connection (#186):
+        the WS gate is global-editor, but writing checks/SLAs requires editor on
+        the specific connection — the same bar as the REST endpoints."""
+        ds = db.get(Dataset, int(dataset_id or 0))
+        if ds is None:
+            raise ValueError(f"Dataset {dataset_id} not found — see the platform state for valid ids.")
+        role = connection_role(db, user, ds.connection_id)
+        if role is None or ROLE_RANK.get(role, -1) < ROLE_RANK["editor"]:
+            raise ValueError(
+                f"Access denied: authoring checks/SLAs on dataset {ds.id} requires editor access "
+                f"to its connection."
+            )
+        return ds
+
+    def list_check_types(_inp: dict[str, Any]) -> str:
+        lines = []
+        for ct in CHECK_TYPES.values():
+            ps = ", ".join(
+                f"{p['name']}{'*' if p['required'] else ''}:{p['type']}"
+                + (f"={p['default']}" if p.get("default") not in (None, "", []) else "")
+                for p in ct.params
+            ) or "none"
+            col = "needs a column" if ct.needs_column else "table-level"
+            lines.append(f"- {ct.key}: {ct.description}. {col}. params: {ps}")
+        return (
+            "Check types you can author (use these keys + param names with create_check; "
+            "* marks a required param):\n" + "\n".join(lines)
+        )
+
+    def create_check_tool(inp: dict[str, Any]) -> str:
+        ds = require_dataset_editor(inp.get("dataset_id"))
+        try:
+            check = check_authoring.create_check(
+                db, user, ds,
+                name=inp.get("name") or "",
+                check_type=str(inp.get("check_type") or ""),
+                column_name=inp.get("column_name") or None,
+                params=inp.get("params") or {},
+                severity=str(inp.get("severity") or "warn"),
+                rationale=inp.get("rationale") or "",
+                schedule_kind=inp.get("schedule_kind") or "interval",
+                schedule_expr=inp.get("schedule_expr") or "1440",
+                status="active",
+                change_note="created via assistant",
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        db.refresh(check)
+        return (
+            f"Created check #{check.id} '{check.name}' "
+            f"[{check.check_type}{f' on {check.column_name}' if check.column_name else ''}], "
+            f"severity={check.severity}, status={check.status}, "
+            f"schedule={check.schedule_kind}:{check.schedule_expr}. It is live and saved as version 1 "
+            f"(the user can roll it back from the check's history)."
+        )
+
+    def update_check_tool(inp: dict[str, Any]) -> str:
+        check = db.get(Check, int(inp.get("check_id") or 0))
+        if check is None:
+            raise ValueError(f"Check {inp.get('check_id')} not found.")
+        require_dataset_editor(check.dataset_id)
+        fields = ("name", "column_name", "params", "severity", "rationale", "schedule_kind", "schedule_expr", "status")
+        changes: dict[str, Any] = {k: inp[k] for k in fields if inp.get(k) is not None}
+        if not changes:
+            return "No changes were specified — nothing to update."
+        changes["change_note"] = "edited via assistant"
+        try:
+            check_authoring.apply_update(db, user, check, changes)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        db.refresh(check)
+        return (
+            f"Updated check #{check.id} '{check.name}' (changed: "
+            f"{', '.join(k for k in changes if k != 'change_note')}). Definition changes are versioned "
+            f"and can be rolled back."
+        )
+
+    def create_sla_tool(inp: dict[str, Any]) -> str:
+        scope = str(inp.get("scope") or "dataset")
+        scope_id = int(inp.get("scope_id") or 0)
+        target_type = str(inp.get("target_type") or "check_success")
+        window = str(inp.get("window") or "rolling_30d")
+        raw_obj = inp.get("objective")  # don't use `or`: an explicit 0 must hit the guard below
+        objective = float(raw_obj) if raw_obj is not None else 0.99
+        if scope not in ("dataset", "check"):
+            raise ValueError("scope must be 'dataset' or 'check'.")
+        if target_type not in ("freshness", "volume", "check_success"):
+            raise ValueError("target_type must be 'freshness', 'volume', or 'check_success'.")
+        if window not in ("rolling_7d", "rolling_30d"):
+            raise ValueError("window must be 'rolling_7d' or 'rolling_30d'.")
+        if not 0 < objective <= 1:
+            raise ValueError("objective must be a fraction in (0, 1], e.g. 0.99.")
+        if scope == "check":
+            chk = db.get(Check, scope_id)
+            if chk is None:
+                raise ValueError(f"Check {scope_id} not found.")
+            require_dataset_editor(chk.dataset_id)
+        else:
+            require_dataset_editor(scope_id)
+        try:
+            sla = sla_core.create_sla_definition(
+                db, user,
+                name=inp.get("name") or "",
+                scope=scope, scope_id=scope_id,
+                target_type=target_type, objective=objective, window=window,
+                enabled=bool(inp.get("enabled", True)),
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        db.refresh(sla)
+        latest = sla.evaluations[-1] if sla.evaluations else None
+        att = f"{latest.attainment * 100:.1f}%" if latest else "n/a"
+        return (
+            f"Created SLA #{sla.id} '{sla.name}' — {sla.target_type} objective "
+            f"{sla.objective * 100:.1f}% over {sla.window} (current attainment {att}). "
+            f"It will alert when attainment falls below the objective."
+        )
+
     handlers = {
         "run_sql": run_sql,
         "get_table_code": get_code,
         "get_dataset_overview": lambda inp: _dataset_overview(db, inp, user),
         "get_recent_failures": lambda inp: _recent_failures(db, inp, user),
         "render_chart": render_chart,
+        "list_check_types": list_check_types,
+        "create_check": create_check_tool,
+        "update_check": update_check_tool,
+        "create_sla": create_sla_tool,
     }
 
     system = _system_prompt(db, user)
