@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
@@ -18,4 +19,14 @@ export default defineConfig(({ mode }) => ({
     },
   },
   build: { outDir: "dist", sourcemap: mode !== "production" },
+  test: {
+    // jsdom so component tests (React Testing Library) can render; pure-logic tests
+    // run here too. setup registers jest-dom matchers + per-test cleanup.
+    environment: "jsdom",
+    setupFiles: ["./src/test/setup.ts"],
+    css: false,
+    // Unit/component tests live under src/. Playwright e2e specs live in e2e/ and run
+    // via `npm run test:e2e`, NOT vitest — so they're excluded here.
+    include: ["src/**/*.{test,spec}.{ts,tsx}"],
+  },
 }));
