@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { api } from "../api/client";
+import { qk } from "../api/queryKeys";
 import type {
   Connection,
   Dataset,
@@ -39,12 +40,12 @@ function SchemaSidebar({
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [ddlTable, setDdlTable] = useState<string | null>(null);
   const { data, isLoading } = useQuery({
-    queryKey: ["schema", connectionId],
+    queryKey: qk.schema.detail(connectionId),
     queryFn: () => api.get<SchemaTable[]>(`/connections/${connectionId}/schema`),
     staleTime: 120_000,
   });
   const ddl = useQuery({
-    queryKey: ["ddl", connectionId, ddlTable],
+    queryKey: qk.ddl.detail(connectionId, ddlTable),
     queryFn: () => api.get<Ddl>(`/connections/${connectionId}/ddl?table=${encodeURIComponent(ddlTable!)}`),
     enabled: !!ddlTable,
   });
@@ -157,7 +158,7 @@ function SaveQueryModal({
   const [datasetId, setDatasetId] = useState<number | "">(defaultDatasetId ?? "");
 
   const { data: datasets } = useQuery({
-    queryKey: ["datasets", { connectionId }],
+    queryKey: qk.datasets.byConnection(connectionId),
     queryFn: () => api.get<Dataset[]>(`/datasets?connection_id=${connectionId}`),
   });
 
@@ -253,14 +254,14 @@ function SavedQueriesRail({
   const [activeTag, setActiveTag] = useState<string | null>(null);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["saved-queries", { connectionId }],
+    queryKey: qk.savedQueries.byConnection(connectionId),
     queryFn: () => api.get<SavedQuery[]>(`/queries?connection_id=${connectionId}`),
     staleTime: 15_000,
   });
 
   const remove = useMutation({
     mutationFn: (id: number) => api.del(`/queries/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["saved-queries"] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.savedQueries.all }),
   });
 
   const allTags = useMemo(() => {
@@ -495,16 +496,16 @@ export default function WorkbenchPage() {
   const editActiveSql = (next: string) => patchActive({ sql: next, dirty: true });
 
   const { data: connections } = useQuery({
-    queryKey: ["connections"],
+    queryKey: qk.connections.list(),
     queryFn: () => api.get<Connection[]>("/connections"),
   });
   const { data: dataset } = useQuery({
-    queryKey: ["datasets", datasetId],
+    queryKey: qk.datasets.detail(datasetId!),
     queryFn: () => api.get<Dataset>(`/datasets/${datasetId}`),
     enabled: !!datasetId,
   });
   const schemaQuery = useQuery({
-    queryKey: ["schema", connectionId],
+    queryKey: qk.schema.detail(connectionId),
     queryFn: () => api.get<SchemaTable[]>(`/connections/${connectionId}/schema`),
     enabled: !!connectionId,
     staleTime: 120_000,
@@ -520,7 +521,7 @@ export default function WorkbenchPage() {
   // once — reuse the active tab when it's empty, else open a dedicated tab so we
   // never clobber work restored from a previous session (tabs persist to localStorage).
   const deepLinked = useQuery({
-    queryKey: ["saved-query", savedQueryId],
+    queryKey: qk.savedQuery.detail(savedQueryId!),
     queryFn: () => api.get<SavedQuery>(`/queries/${savedQueryId}`),
     enabled: !!savedQueryId,
   });
@@ -541,7 +542,7 @@ export default function WorkbenchPage() {
   }, [deepLinked.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const suggest = useQuery({
-    queryKey: ["suggest", { connectionId, datasetId, runId, exceptionId, checkId }],
+    queryKey: qk.suggest.detail({ connectionId, datasetId, runId, exceptionId, checkId }),
     queryFn: () =>
       api.post<SuggestResult>("/query/suggest", {
         connection_id: connectionId,
@@ -961,7 +962,7 @@ export default function WorkbenchPage() {
           onSaved={() => {
             setShowSave(false);
             patchActive({ dirty: false });
-            qc.invalidateQueries({ queryKey: ["saved-queries"] });
+            qc.invalidateQueries({ queryKey: qk.savedQueries.all });
           }}
         />
       )}
