@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { api, ApiError } from "../../api/client";
+import { qk } from "../../api/queryKeys";
 import type {
   ColumnInfo,
   ContractClauseConformance,
@@ -107,39 +108,39 @@ export default function ContractTab({ dataset }: { dataset: Dataset }) {
   const [saved, setSaved] = useState(false);
 
   const contractQuery = useQuery({
-    queryKey: ["contract", dataset.id],
+    queryKey: qk.contract.detail(dataset.id),
     queryFn: () => api.get<DataContract>(`/datasets/${dataset.id}/contract`),
     retry: (count, error) => error instanceof ApiError && error.status === 404 ? false : count < 2,
   });
   const contract = contractQuery.data;
 
   const columnsQuery = useQuery({
-    queryKey: ["columns", dataset.id],
+    queryKey: qk.columns.detail(dataset.id),
     queryFn: () => api.get<ColumnInfo[]>(`/datasets/${dataset.id}/columns`),
   });
 
   const conformanceQuery = useQuery({
-    queryKey: ["contract-conformance", dataset.id, contract?.id],
+    queryKey: qk.contractConformance.detail(dataset.id, contract?.id),
     queryFn: () => api.get<DataContractConformance>(`/datasets/${dataset.id}/contract/${contract!.id}/conformance`),
     enabled: !!contract,
     refetchInterval: 30_000,
   });
 
   const exportQuery = useQuery({
-    queryKey: ["contract-export", dataset.id, contract?.id],
+    queryKey: qk.contractExport.detail(dataset.id, contract?.id),
     queryFn: () => api.get<DataContractExport>(`/datasets/${dataset.id}/contract/${contract!.id}/export?format=odcs`),
     enabled: !!contract && mode === "yaml",
   });
 
   const versionsQuery = useQuery({
-    queryKey: ["contract-versions", dataset.id, contract?.id],
+    queryKey: qk.contractVersions.detail(dataset.id, contract?.id),
     queryFn: () => api.get<DataContractVersion[]>(`/datasets/${dataset.id}/contract/${contract!.id}/versions`),
     enabled: !!contract && mode === "versions",
   });
 
   const versions = versionsQuery.data ?? [];
   const diffQuery = useQuery({
-    queryKey: ["contract-diff", dataset.id, contract?.id, versions[1]?.id, versions[0]?.id],
+    queryKey: qk.contractDiff.detail(dataset.id, contract?.id, versions[1]?.id, versions[0]?.id),
     queryFn: () =>
       api.get<DataContractDiff>(
         `/datasets/${dataset.id}/contract/${contract!.id}/versions/${versions[1].id}/diff?to_version_id=${versions[0].id}`,
@@ -162,7 +163,7 @@ export default function ContractTab({ dataset }: { dataset: Dataset }) {
     mutationFn: () => api.post<DataContract>(`/datasets/${dataset.id}/contract`, {}),
     onSuccess: (created) => {
       qc.setQueryData(["contract", dataset.id], created);
-      qc.invalidateQueries({ queryKey: ["contract"] });
+      qc.invalidateQueries({ queryKey: qk.contract.all });
     },
   });
 
@@ -175,7 +176,7 @@ export default function ContractTab({ dataset }: { dataset: Dataset }) {
       }),
     onSuccess: (updated) => {
       qc.setQueryData(["contract", dataset.id], updated);
-      qc.invalidateQueries({ queryKey: ["contract-versions", dataset.id, updated.id] });
+      qc.invalidateQueries({ queryKey: qk.contractVersions.detail(dataset.id, updated.id) });
       setSaved(true);
       setTimeout(() => setSaved(false), 2200);
     },
@@ -185,9 +186,9 @@ export default function ContractTab({ dataset }: { dataset: Dataset }) {
     mutationFn: () => api.post<DataContractApplyResult>(`/datasets/${dataset.id}/contract/${contract!.id}/activate`),
     onSuccess: (result) => {
       qc.setQueryData(["contract", dataset.id], result.contract);
-      qc.invalidateQueries({ queryKey: ["checks"] });
-      qc.invalidateQueries({ queryKey: ["contract-conformance", dataset.id, result.contract.id] });
-      qc.invalidateQueries({ queryKey: ["contract-versions", dataset.id, result.contract.id] });
+      qc.invalidateQueries({ queryKey: qk.checks.all });
+      qc.invalidateQueries({ queryKey: qk.contractConformance.detail(dataset.id, result.contract.id) });
+      qc.invalidateQueries({ queryKey: qk.contractVersions.detail(dataset.id, result.contract.id) });
     },
   });
 
@@ -195,7 +196,7 @@ export default function ContractTab({ dataset }: { dataset: Dataset }) {
     mutationFn: () => api.post<DataContract>(`/datasets/${dataset.id}/contract/import`, { yaml: yamlText }),
     onSuccess: (created) => {
       qc.setQueryData(["contract", dataset.id], created);
-      qc.invalidateQueries({ queryKey: ["contract"] });
+      qc.invalidateQueries({ queryKey: qk.contract.all });
       setMode("form");
     },
   });

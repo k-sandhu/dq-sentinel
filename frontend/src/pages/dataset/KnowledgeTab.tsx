@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type MutableRefObject } from "react";
 import { api } from "../../api/client";
+import { qk } from "../../api/queryKeys";
 import type { Knowledge } from "../../api/types";
 import { canEdit, useAuth } from "../../auth";
 import { ErrorBox, Spinner } from "../../components/ui";
@@ -44,7 +45,7 @@ export default function KnowledgeTab({
   const [saved, setSaved] = useState(false);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["knowledge", datasetId],
+    queryKey: qk.knowledge.detail(datasetId),
     queryFn: () => api.get<Knowledge>(`/datasets/${datasetId}/knowledge`),
   });
 
@@ -77,7 +78,7 @@ export default function KnowledgeTab({
       });
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["knowledge", datasetId] });
+      qc.invalidateQueries({ queryKey: qk.knowledge.detail(datasetId) });
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     },
@@ -252,7 +253,7 @@ export default function KnowledgeTab({
           )}
         </fieldset>
       </div>
-      <div className="card card-pad" style={{ background: "#fbfcfd" }}>
+      <div className="card card-pad" style={{ background: "var(--card2)" }}>
         <h3>How knowledge is used</h3>
         <ul style={{ fontSize: 13, lineHeight: 1.8, paddingLeft: 18, margin: 0 }}>
           <li><strong>Known issues</strong> → the AI proposes checks that catch recurrences.</li>

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api } from "../api/client";
+import { qk } from "../api/queryKeys";
 import type { Dataset, Profile } from "../api/types";
 import { canEdit, useAuth } from "../auth";
 import { Breadcrumbs, ErrorBox, Icon, Spinner, StatusPill } from "../components/ui";
@@ -44,12 +45,12 @@ export default function DatasetDetailPage() {
   };
 
   const { data: dataset, error } = useQuery({
-    queryKey: ["datasets", datasetId],
+    queryKey: qk.datasets.detail(datasetId),
     queryFn: () => api.get<Dataset>(`/datasets/${datasetId}`),
   });
 
   const profileQuery = useQuery({
-    queryKey: ["profile", datasetId],
+    queryKey: qk.profile.detail(datasetId),
     queryFn: () => api.get<Profile>(`/datasets/${datasetId}/profile`),
     retry: false, // 404 until first profiling
   });
@@ -57,8 +58,8 @@ export default function DatasetDetailPage() {
   const runProfile = useMutation({
     mutationFn: () => api.post<Profile>(`/datasets/${datasetId}/profile`),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["profile", datasetId] });
-      qc.invalidateQueries({ queryKey: ["datasets"] });
+      qc.invalidateQueries({ queryKey: qk.profile.detail(datasetId) });
+      qc.invalidateQueries({ queryKey: qk.datasets.all });
     },
   });
 

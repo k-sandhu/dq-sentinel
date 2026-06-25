@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../../api/client";
+import { qk } from "../../api/queryKeys";
 import type { Health, RcaSession } from "../../api/types";
 import { canEdit, useAuth } from "../../auth";
 import RcaReport from "../../components/RcaReport";
@@ -11,11 +12,11 @@ export default function RcaTab({ datasetId }: { datasetId: number }) {
   const qc = useQueryClient();
   const [question, setQuestion] = useState("");
 
-  const { data: health } = useQuery({ queryKey: ["health"], queryFn: () => api.get<Health>("/health") });
+  const { data: health } = useQuery({ queryKey: qk.health.get(), queryFn: () => api.get<Health>("/health") });
   const llm = health?.llm_enabled ?? false;
 
   const { data: sessions, isLoading, error } = useQuery({
-    queryKey: ["rca", datasetId],
+    queryKey: qk.rca.byDataset(datasetId),
     queryFn: () => api.get<RcaSession[]>(`/rca?dataset_id=${datasetId}`),
     refetchInterval: (query) =>
       (query.state.data ?? []).some((s) => s.status === "running") ? 4_000 : false,
@@ -25,7 +26,7 @@ export default function RcaTab({ datasetId }: { datasetId: number }) {
     mutationFn: () => api.post<RcaSession>("/rca/start", { dataset_id: datasetId, question }),
     onSuccess: () => {
       setQuestion("");
-      qc.invalidateQueries({ queryKey: ["rca", datasetId] });
+      qc.invalidateQueries({ queryKey: qk.rca.byDataset(datasetId) });
     },
   });
 
