@@ -56,10 +56,20 @@ function StepList({ steps }: { steps: ChatStep[] }) {
       const next = steps[i + 1];
       const result = next?.type === "result" ? next : null;
       if (result) i++;
+      // Authoring tools (#186) write config — surface them with a clear verb and
+      // open the confirmation by default; read tools stay collapsed.
+      const WRITE_TOOLS: Record<string, { icon: string; label: string }> = {
+        create_check: { icon: "plus", label: "Created a check" },
+        update_check: { icon: "settings", label: "Updated a check" },
+        create_sla: { icon: "plus", label: "Created an SLA" },
+        list_check_types: { icon: "book", label: "Looked up check types" },
+      };
+      const meta = WRITE_TOOLS[s.name];
       out.push(
-        <details key={i} className="chat-activity">
+        <details key={i} className="chat-activity" open={!!meta && !result?.error}>
           <summary>
-            <Icon name="book" size={12} /> Looked at {s.name.replace(/_/g, " ").replace(/^get /, "")}
+            <Icon name={meta?.icon ?? "book"} size={12} />{" "}
+            {meta ? meta.label : `Looked at ${s.name.replace(/_/g, " ").replace(/^get /, "")}`}
             {result?.error && <span className="badge danger">failed</span>}
           </summary>
           {result && <pre className="result">{result.content}</pre>}
@@ -154,6 +164,11 @@ export default function AssistantPage() {
         setBusy(false);
         setStatus(null);
         qc.invalidateQueries({ queryKey: ["chat-sessions"] });
+        // The assistant can author checks/SLAs (#186); refresh those views so a
+        // newly-created object shows up without a manual reload.
+        for (const key of ["checks", "runs", "sla", "reliability"]) {
+          qc.invalidateQueries({ queryKey: [key] });
+        }
       }
     },
     [qc],

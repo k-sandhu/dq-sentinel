@@ -59,6 +59,35 @@ def test_migrations_match_metadata():
     meta_engine.dispose()
 
 
+def test_check_version_backfill_seeds_v1():
+    """0011 must backfill a v1 'baseline' snapshot for every check that already
+    existed before the migration, so history/restore work immediately (#185)."""
+    tmp = Path(tempfile.mkdtemp(prefix="dq-cvbf-"))
+    url = f"sqlite:///{(tmp / 'bf.db').as_posix()}"
+    cfg = Config(str(BACKEND_DIR / "alembic.ini"))
+    cfg.set_main_option("sqlalchemy.url", url)
+
+    # Schema up to the revision BEFORE check_versions, then seed a legacy check.
+    command.upgrade(cfg, "0010_connection_grants")
+    engine = create_engine(url)
+    with engine.begin() as c:
+        c.exec_driver_sql(
+            "INSERT INTO checks (id, dataset_id, name, check_type, column_name, params, "
+            "severity, status, origin, rationale, schedule_kind, schedule_expr, created_at) "
+            "VALUES (1, 1, 'legacy nn', 'not_null', 'email', '{}', 'error', 'active', "
+            "'manual', '', 'interval', '1440', '2026-01-01 00:00:00')"
+        )
+
+    # Applying 0011 backfills a v1 baseline carrying the check's definition.
+    command.upgrade(cfg, "head")
+    with engine.connect() as c:
+        rows = c.exec_driver_sql(
+            "SELECT check_id, version, change_note, check_type, column_name FROM check_versions"
+        ).fetchall()
+    assert rows == [(1, 1, "baseline", "not_null", "email")]
+    engine.dispose()
+
+
 def test_existing_create_all_db_is_stamped(monkeypatch):
     """A pre-Alembic DB (built by create_all, no alembic_version) is adopted via
     `stamp head` — NOT re-migrated (which would fail on the already-present tables).

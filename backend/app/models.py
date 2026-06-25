@@ -285,6 +285,9 @@ class Check(Base):
 
     dataset: Mapped[Dataset] = relationship(back_populates="checks")
     runs: Mapped[list["CheckRun"]] = relationship(back_populates="check", cascade="all, delete-orphan")
+    versions: Mapped[list["CheckVersion"]] = relationship(
+        back_populates="check", cascade="all, delete-orphan", order_by="CheckVersion.version"
+    )
 
 
 class CheckRun(Base):
@@ -311,6 +314,40 @@ class CheckRun(Base):
         cascade="all, delete-orphan",
         foreign_keys="ExceptionRecord.run_id",
     )
+
+
+class CheckVersion(Base):
+    """Immutable snapshot of a check's *definition* for history + rollback (#185).
+
+    A new row is appended whenever a check's definition changes — on create, on
+    edit (manual or assistant-authored), and on restore. ``version`` is 1-based
+    and contiguous per check; the highest version always mirrors the live check.
+    Lifecycle-only changes (pause/resume/archive) do NOT create a version.
+    """
+
+    __tablename__ = "check_versions"
+    # Unique (check_id, version) guards the contiguity invariant against a
+    # read-modify-write race on max(version)+1 — a concurrent collision fails
+    # loudly instead of silently forking history. Its index also serves the
+    # "newest version for a check" lookups.
+    __table_args__ = (UniqueConstraint("check_id", "version", name="uq_check_versions_check_version"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    check_id: Mapped[int] = mapped_column(ForeignKey("checks.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer)  # 1-based, contiguous per check
+    name: Mapped[str] = mapped_column(String(500))
+    check_type: Mapped[str] = mapped_column(String(50))
+    column_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    params: Mapped[dict] = mapped_column(JSON, default=dict)
+    severity: Mapped[str] = mapped_column(String(10), default="error")
+    rationale: Mapped[str] = mapped_column(Text, default="")
+    schedule_kind: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    schedule_expr: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    change_note: Mapped[str] = mapped_column(String(255), default="")  # created | edited | restored from vN | ...
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    check: Mapped[Check] = relationship(back_populates="versions")
 
 
 class Incident(Base):

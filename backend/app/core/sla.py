@@ -15,7 +15,16 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core import notify
-from app.models import Check, CheckRun, ExceptionRecord, SLADefinition, SLAEvaluation, utcnow
+from app.core.audit import audit
+from app.models import (
+    Check,
+    CheckRun,
+    ExceptionRecord,
+    SLADefinition,
+    SLAEvaluation,
+    User,
+    utcnow,
+)
 from app.observability import SLA_ATTAINMENT, SLA_BREACHES
 
 log = logging.getLogger(__name__)
@@ -108,6 +117,38 @@ def evaluate_sla(db: Session, sla: SLADefinition, now: datetime | None = None) -
     db.add(ev)
     db.flush()
     return ev
+
+
+def create_sla_definition(
+    db: Session,
+    user: User | None,
+    *,
+    name: str = "",
+    scope: str = "dataset",
+    scope_id: int,
+    target_type: str = "check_success",
+    objective: float = 0.99,
+    window: str = "rolling_30d",
+    enabled: bool = True,
+) -> SLADefinition:
+    """Create an SLA, audit it, and seed an initial rollup so the UI shows status
+    at once. Shared by the REST API and the assistant. Caller validates that the
+    scope entity exists, and commits + refreshes."""
+    sla = SLADefinition(
+        name=name or f"{target_type} SLA",
+        scope=scope,
+        scope_id=scope_id,
+        target_type=target_type,
+        objective=objective,
+        window=window,
+        enabled=enabled,
+        created_by_id=getattr(user, "id", None),
+    )
+    db.add(sla)
+    db.flush()
+    audit(db, user, "sla.create", "sla", sla.id, scope=scope, scope_id=scope_id, target_type=target_type)
+    evaluate_sla(db, sla)  # seed an initial rollup
+    return sla
 
 
 def latest_evaluation(db: Session, sla_id: int) -> SLAEvaluation | None:

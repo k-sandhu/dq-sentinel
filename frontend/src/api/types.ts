@@ -237,6 +237,25 @@ export interface Check {
   created_at: string;
 }
 
+// ---- check versioning + rollback (#185) ----
+export interface CheckVersion {
+  id: number;
+  check_id: number;
+  version: number;
+  name: string;
+  check_type: string;
+  column_name: string | null;
+  params: Record<string, unknown>;
+  severity: Severity;
+  rationale: string;
+  schedule_kind: string | null;
+  schedule_expr: string | null;
+  change_note: string;
+  created_by: string | null;
+  created_at: string;
+  is_current: boolean;
+}
+
 // ---- managed monitor packs (issues #111/#113/#115) ----
 export type MonitorKind = "freshness" | "volume" | "schema" | "drift";
 export type MonitorPackStatus = "ready" | "partial" | "pending_profile" | "disabled" | "error" | string;

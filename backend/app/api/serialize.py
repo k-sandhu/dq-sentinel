@@ -29,6 +29,15 @@ def check_out(check: models.Check, dataset_name: str | None = None) -> schemas.C
     return out
 
 
+def check_version_out(
+    db: Session, cv: models.CheckVersion, is_current: bool = False
+) -> schemas.CheckVersionOut:
+    out = schemas.CheckVersionOut.model_validate(cv)
+    out.is_current = is_current
+    out.created_by = _display_name(db.get(models.User, cv.created_by_id)) if cv.created_by_id else None
+    return out
+
+
 def run_out(db: Session, run: models.CheckRun) -> schemas.RunOut:
     out = schemas.RunOut.model_validate(run)
     check = run.check

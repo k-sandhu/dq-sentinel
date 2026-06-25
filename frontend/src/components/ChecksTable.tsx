@@ -6,6 +6,7 @@ import type { Check, CheckTypeInfo, Run } from "../api/types";
 import { canEdit, useAuth } from "../auth";
 import { checkTypeLabel, originLabel } from "../lib/checkMeta";
 import { describeSchedule, timeAgo } from "../lib/format";
+import CheckHistory from "./CheckHistory";
 import { useConfirm } from "./confirm";
 import CheckParamsForm, { validateParams } from "./CheckParamsForm";
 import { EmptyState, ErrorBox, Icon, Modal, SeverityBadge, StatusPill } from "./ui";
@@ -131,6 +132,7 @@ export default function ChecksTable({
   const navigate = useNavigate();
   const editable = canEdit(user);
   const [editing, setEditing] = useState<Check | null>(null);
+  const [historyFor, setHistoryFor] = useState<Check | null>(null);
   const [runningId, setRunningId] = useState<number | null>(null);
 
   const invalidate = () => {
@@ -374,6 +376,16 @@ export default function ChecksTable({
                           Edit
                         </button>{" "}
                         <button
+                          className="small"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setHistoryFor(c);
+                          }}
+                          title="Version history & rollback"
+                        >
+                          History
+                        </button>{" "}
+                        <button
                           className="small danger"
                           onClick={async (e) => {
                             e.stopPropagation();
@@ -405,6 +417,15 @@ export default function ChecksTable({
         </div>
       )}
       {editing && <EditCheckModal check={editing} onClose={() => setEditing(null)} />}
+      {historyFor && (
+        <Modal
+          title={`Version history — ${historyFor.name}`}
+          onClose={() => setHistoryFor(null)}
+          footer={<button onClick={() => setHistoryFor(null)}>Close</button>}
+        >
+          <CheckHistory checkId={historyFor.id} />
+        </Modal>
+      )}
     </>
   );
 }

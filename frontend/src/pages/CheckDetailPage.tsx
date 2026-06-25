@@ -4,6 +4,7 @@ import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recha
 import { api } from "../api/client";
 import type { Check, Run } from "../api/types";
 import { canEdit, useAuth } from "../auth";
+import CheckHistory from "../components/CheckHistory";
 import RunsTable from "../components/RunsTable";
 import { EmptyState, ErrorBox, Icon, SeverityBadge, Spinner, StatCard, StatusPill } from "../components/ui";
 import { checkTypeLabel, originLabel } from "../lib/checkMeta";
@@ -177,6 +178,13 @@ export default function CheckDetailPage() {
           <pre className="sql">{check.params.sql}</pre>
         </div>
       )}
+
+      <div className="section-title">
+        <h2>Version history</h2>
+      </div>
+      <div className="card card-pad" style={{ marginBottom: 16 }}>
+        <CheckHistory checkId={check.id} />
+      </div>
 
       <div className="section-title">
         <h2>Run history</h2>

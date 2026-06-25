@@ -69,19 +69,16 @@ def create_sla(
     user: models.User = Depends(require_role("editor")),
 ):
     _validate_scope(db, body.scope, body.scope_id)
-    sla = models.SLADefinition(
-        name=body.name or f"{body.target_type} SLA",
+    sla = sla_core.create_sla_definition(
+        db, user,
+        name=body.name,
         scope=body.scope,
         scope_id=body.scope_id,
         target_type=body.target_type,
         objective=body.objective,
         window=body.window,
         enabled=body.enabled,
-        created_by_id=user.id,
     )
-    db.add(sla)
-    db.flush()
-    sla_core.evaluate_sla(db, sla)  # seed an initial rollup so the UI shows status at once
     db.commit()
     db.refresh(sla)
     return _sla_out(db, sla)
