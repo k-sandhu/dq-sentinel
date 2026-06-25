@@ -23,6 +23,7 @@ import type {
   LineageNode,
 } from "../api/types";
 import { lineageDestLabel, lineageNodeHref } from "../lib/lineageNav";
+import { edgeTone, healthColor } from "./lineage/lineageColors";
 import { activateOnKey, EmptyState, Icon, StatusPill } from "./ui";
 
 type Granularity = "table" | "column";
@@ -164,15 +165,6 @@ function ColumnNode({ data }: NodeProps<FlowNode>) {
 }
 
 const nodeTypes = { tableNode: TableNode, columnNode: ColumnNode };
-
-function edgeTone(kind?: string) {
-  if (kind === "aggregate") return "var(--purple)";
-  if (kind === "derived") return "var(--brand-dark)";
-  if (kind === "unresolved") return "var(--warn-strong)";
-  // --slate (#b8c0c8) reads clearly on both light and dark canvases; the previous
-  // --border-light was so pale that direct edges were effectively invisible.
-  return "var(--slate)";
-}
 
 function toFlow(
   graph: LineageGraphData,
@@ -462,7 +454,7 @@ function LineageCanvas({
             <MiniMap pannable zoomable nodeStrokeWidth={0} nodeBorderRadius={3} nodeColor={(n) => {
               const d = n.data as FlowData;
               const health = d.kind === "table" ? d.node.health : d.table.health;
-              return health === "fail" ? "#ed6e6e" : health === "warn" ? "#e8a541" : health === "pass" ? "#84bb4c" : "#b8c0c8";
+              return healthColor(health);
             }} />
           </ReactFlow>
         </div>

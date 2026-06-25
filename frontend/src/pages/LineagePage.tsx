@@ -2,27 +2,21 @@
 // The interactive explorer (search, focus, health filter, side panel with a
 // "needs attention" jump list) is the whole page now — the old split layout,
 // standalone attention card, and flat edge table were redundant with it.
-import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import { api } from "../api/client";
-import type { Connection, LineageGraph as LineageGraphData } from "../api/types";
 import LineageGraph from "../components/LineageGraph";
+import { resolveLineageConnection } from "../components/lineage/lineageSelection";
+import { useConnectionLineage, useConnections } from "../components/lineage/useConnectionLineage";
 import { EmptyState, ErrorBox, Spinner } from "../components/ui";
 
 export default function LineagePage() {
   const [params, setParams] = useSearchParams();
   const [granularity, setGranularity] = useState<"table" | "column">("table");
 
-  const connectionsQuery = useQuery({
-    queryKey: ["connections"],
-    queryFn: () => api.get<Connection[]>("/connections"),
-  });
+  const connectionsQuery = useConnections();
   const connections = connectionsQuery.data;
 
-  const raw = params.get("connection");
-  const fromParam = raw && Number.isFinite(Number(raw)) ? Number(raw) : null;
-  const connectionId = fromParam ?? connections?.[0]?.id ?? null;
+  const { fromParam, connectionId } = resolveLineageConnection(params.get("connection"), connections);
 
   // Keep ?connection=ID in sync: write the default into the URL once
   // connections load so the view is shareable/bookmarkable.
@@ -32,12 +26,7 @@ export default function LineagePage() {
     }
   }, [fromParam, connections, setParams]);
 
-  const lineage = useQuery({
-    queryKey: ["connection-lineage", connectionId, granularity],
-    queryFn: () => api.get<LineageGraphData>(`/connections/${connectionId}/lineage?granularity=${granularity}`),
-    enabled: connectionId !== null,
-    staleTime: 30_000,
-  });
+  const lineage = useConnectionLineage(connectionId, granularity);
   const graph = lineage.data;
 
   if (connectionsQuery.isLoading) return <Spinner label="Loading connections…" />;
