@@ -1,7 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router";
-import { api } from "../api/client";
-import type { Dataset } from "../api/types";
+import { useDatasets } from "../components/datasets/useDatasets";
 import ExceptionsTriage from "../components/ExceptionsTriage";
 import { Breadcrumbs } from "../components/ui";
 
@@ -14,10 +12,7 @@ export default function ExceptionsPage() {
   // workspace itself; these three pinned ids are passed as props.
   const checkId = params.get("check_id") ? Number(params.get("check_id")) : undefined;
 
-  const { data: datasets } = useQuery({
-    queryKey: ["datasets"],
-    queryFn: () => api.get<Dataset[]>("/datasets"),
-  });
+  const { data: datasets } = useDatasets();
   const datasetName = datasets?.find((d) => d.id === datasetFilter)?.table_name;
 
   // Mutate a clone of the current params so other filters (e.g. run_id) survive (BF-2).
@@ -48,6 +43,7 @@ export default function ExceptionsPage() {
         <div className="header-actions">
           <select
             value={datasetFilter ?? ""}
+            aria-label="Filter by dataset"
             onChange={(e) =>
               patchParams((p) => {
                 if (e.target.value) p.set("dataset_id", e.target.value);
