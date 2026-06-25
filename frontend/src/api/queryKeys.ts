@@ -29,13 +29,15 @@
 /** Dataset/connection/run/etc. ids appear as Number(...) or sometimes string. */
 type Id = number | string;
 
-/** Workbench "suggest" object segment (POST-as-read). */
+/** Workbench "suggest" object segment (POST-as-read). The optional context ids
+ *  arrive straight from URL params as `number | undefined`, so they must accept
+ *  undefined — the segment is hashed verbatim (undefined stays distinct from null). */
 type SuggestScope = {
   connectionId: Id | null;
-  datasetId: Id | null;
-  runId: Id | null;
-  exceptionId: Id | null;
-  checkId: Id | null;
+  datasetId: Id | null | undefined;
+  runId: Id | null | undefined;
+  exceptionId: Id | null | undefined;
+  checkId: Id | null | undefined;
 };
 
 // ---------------------------------------------------------------------------
