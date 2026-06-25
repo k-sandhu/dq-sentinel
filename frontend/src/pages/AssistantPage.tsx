@@ -1,15 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { KeyboardEvent, ReactNode } from "react";
+import type { KeyboardEvent } from "react";
 import { api } from "../api/client";
+import { qk } from "../api/queryKeys";
 import type { ChatMessage, ChatSession, ChatStep, ChatWsEvent, Health } from "../api/types";
 import { canEdit, useAuth } from "../auth";
+import { ChatComposer } from "../components/assistant/ChatComposer";
+import { MessageView } from "../components/assistant/MessageView";
+import { SessionsSidebar } from "../components/assistant/SessionsSidebar";
+import { StepList } from "../components/assistant/StepList";
 import { useConfirm } from "../components/confirm";
-import ErrorBoundary from "../components/ErrorBoundary";
-import Markdown from "../components/Markdown";
-import PanelChart from "../components/PanelChart";
-import { EmptyState, ErrorBox, Icon, Spinner } from "../components/ui";
-import { timeAgo } from "../lib/format";
+import { EmptyState, ErrorBox } from "../components/ui";
 import { useChatSocket } from "../lib/useChatSocket";
 
 const SUGGESTIONS = [
@@ -18,94 +19,6 @@ const SUGGESTIONS = [
   "Investigate the most recent failed check and find the root cause",
   "Pick the busiest dataset and chart its daily row volume",
 ];
-
-function StepList({ steps }: { steps: ChatStep[] }) {
-  const out: ReactNode[] = [];
-  for (let i = 0; i < steps.length; i++) {
-    const s = steps[i];
-    if (s.type === "text") {
-      out.push(<Markdown key={i}>{s.content}</Markdown>);
-    } else if (s.type === "sql") {
-      // pair each query with its result in one collapsible
-      const next = steps[i + 1];
-      const result = next?.type === "result" ? next : null;
-      if (result) i++;
-      out.push(
-        <details key={i} className="chat-activity">
-          <summary>
-            <Icon name="search" size={12} /> {s.purpose || "Ran a query"}
-            {result?.error && <span className="badge danger">failed</span>}
-          </summary>
-          <pre className="sql">{s.sql}</pre>
-          {result && (
-            <pre className="result" style={result.error ? { borderColor: "var(--danger)", color: "var(--danger-dark)" } : undefined}>
-              {result.content}
-            </pre>
-          )}
-        </details>,
-      );
-    } else if (s.type === "result") {
-      // orphan result (its sql was rendered in a previous batch) — show plainly
-      out.push(
-        <details key={i} className="chat-activity">
-          <summary>{s.error ? "Query failed" : "Result"}</summary>
-          <pre className="result">{s.content}</pre>
-        </details>,
-      );
-    } else if (s.type === "tool") {
-      const next = steps[i + 1];
-      const result = next?.type === "result" ? next : null;
-      if (result) i++;
-      // Authoring tools (#186) write config — surface them with a clear verb and
-      // open the confirmation by default; read tools stay collapsed.
-      const WRITE_TOOLS: Record<string, { icon: string; label: string }> = {
-        create_check: { icon: "plus", label: "Created a check" },
-        update_check: { icon: "settings", label: "Updated a check" },
-        create_sla: { icon: "plus", label: "Created an SLA" },
-        list_check_types: { icon: "book", label: "Looked up check types" },
-      };
-      const meta = WRITE_TOOLS[s.name];
-      out.push(
-        <details key={i} className="chat-activity" open={!!meta && !result?.error}>
-          <summary>
-            <Icon name={meta?.icon ?? "book"} size={12} />{" "}
-            {meta ? meta.label : `Looked at ${s.name.replace(/_/g, " ").replace(/^get /, "")}`}
-            {result?.error && <span className="badge danger">failed</span>}
-          </summary>
-          {result && <pre className="result">{result.content}</pre>}
-        </details>,
-      );
-    } else if (s.type === "chart") {
-      out.push(
-        <div key={i} className="chat-chart">
-          <div className="chat-chart-title">{s.title}</div>
-          <ErrorBoundary fallback={<div className="error-box">Could not render this chart.</div>}>
-            <PanelChart columns={s.columns ?? []} rows={s.rows ?? []} viz={s.viz} height={220} />
-          </ErrorBoundary>
-        </div>,
-      );
-    } else if (s.type === "error") {
-      out.push(
-        <div key={i} className="error-box">
-          {s.content}
-        </div>,
-      );
-    }
-  }
-  return <>{out}</>;
-}
-
-function MessageView({ message }: { message: ChatMessage }) {
-  if (message.role === "user") {
-    return <div className="chat-msg user">{message.content}</div>;
-  }
-  return (
-    <div className="chat-msg assistant">
-      <StepList steps={message.steps} />
-      {message.steps.length === 0 && message.content && <Markdown>{message.content}</Markdown>}
-    </div>
-  );
-}
 
 export default function AssistantPage() {
   const { user } = useAuth();
@@ -124,11 +37,11 @@ export default function AssistantPage() {
   const sendMessageRef = useRef<(text: string) => void>(() => {});
   const threadEndRef = useRef<HTMLDivElement | null>(null);
 
-  const { data: health } = useQuery({ queryKey: ["health"], queryFn: () => api.get<Health>("/health") });
+  const { data: health } = useQuery({ queryKey: qk.health.get(), queryFn: () => api.get<Health>("/health") });
   const llm = health?.llm_enabled ?? true;
 
   const sessions = useQuery({
-    queryKey: ["chat-sessions"],
+    queryKey: qk.chatSessions.list(),
     queryFn: () => api.get<ChatSession[]>("/chat/sessions"),
   });
 
@@ -163,11 +76,11 @@ export default function AssistantPage() {
       } else if (e.type === "done") {
         setBusy(false);
         setStatus(null);
-        qc.invalidateQueries({ queryKey: ["chat-sessions"] });
+        qc.invalidateQueries({ queryKey: qk.chatSessions.all });
         // The assistant can author checks/SLAs (#186); refresh those views so a
         // newly-created object shows up without a manual reload.
-        for (const key of ["checks", "runs", "sla", "reliability"]) {
-          qc.invalidateQueries({ queryKey: [key] });
+        for (const family of [qk.checks.all, qk.runs.all, qk.sla.all, qk.reliability.all]) {
+          qc.invalidateQueries({ queryKey: family });
         }
       }
     },
@@ -205,7 +118,7 @@ export default function AssistantPage() {
   const createSession = useMutation({
     mutationFn: () => api.post<ChatSession>("/chat/sessions", {}),
     onSuccess: (s) => {
-      qc.invalidateQueries({ queryKey: ["chat-sessions"] });
+      qc.invalidateQueries({ queryKey: qk.chatSessions.all });
       setSessionId(s.id);
     },
   });
@@ -213,10 +126,26 @@ export default function AssistantPage() {
   const deleteSession = useMutation({
     mutationFn: (id: number) => api.del<void>(`/chat/sessions/${id}`),
     onSuccess: (_d, id) => {
-      qc.invalidateQueries({ queryKey: ["chat-sessions"] });
+      qc.invalidateQueries({ queryKey: qk.chatSessions.all });
       if (id === sessionId) setSessionId(null);
     },
   });
+
+  const onDeleteSession = async (s: ChatSession) => {
+    if (
+      await confirm({
+        title: "Delete conversation",
+        danger: true,
+        confirmLabel: "Delete",
+        body: (
+          <>
+            Delete <strong>{s.title || "New conversation"}</strong>? Its messages will be removed.
+          </>
+        ),
+      })
+    )
+      deleteSession.mutate(s.id);
+  };
 
   const startWith = (text: string) => {
     if (!editable) return;
@@ -239,58 +168,16 @@ export default function AssistantPage() {
 
   return (
     <div className="chat-layout">
-      <aside className="chat-sessions">
-        <button
-          className="primary"
-          style={{ width: "100%", justifyContent: "center" }}
-          onClick={() => createSession.mutate()}
-          disabled={createSession.isPending || !editable}
-        >
-          <Icon name="plus" size={14} /> New conversation
-        </button>
-        <div className="chat-session-list">
-          {sessions.isLoading ? (
-            <Spinner />
-          ) : (
-            (sessions.data ?? []).map((s) => (
-              <div
-                key={s.id}
-                className={`chat-session-item${s.id === sessionId ? " active" : ""}`}
-                onClick={() => setSessionId(s.id)}
-              >
-                <div className="title">{s.title || "New conversation"}</div>
-                <div className="meta">
-                  {s.message_count > 0 ? `${s.message_count} messages · ` : ""}
-                  {timeAgo(s.updated_at)}
-                </div>
-                <button
-                  className="ghost small del"
-                  title="Delete conversation"
-                  onClick={async (e) => {
-                    e.stopPropagation();
-                    if (
-                      await confirm({
-                        title: "Delete conversation",
-                        danger: true,
-                        confirmLabel: "Delete",
-                        body: (
-                          <>
-                            Delete <strong>{s.title || "New conversation"}</strong>? Its messages will be
-                            removed.
-                          </>
-                        ),
-                      })
-                    )
-                      deleteSession.mutate(s.id);
-                  }}
-                >
-                  <Icon name="x" size={12} />
-                </button>
-              </div>
-            ))
-          )}
-        </div>
-      </aside>
+      <SessionsSidebar
+        sessions={sessions.data ?? []}
+        loading={sessions.isLoading}
+        sessionId={sessionId}
+        editable={editable}
+        createPending={createSession.isPending}
+        onSelect={setSessionId}
+        onCreate={() => createSession.mutate()}
+        onDelete={onDeleteSession}
+      />
 
       <section className="chat-main">
         <div className="chat-thread">
@@ -357,33 +244,21 @@ export default function AssistantPage() {
           <div ref={threadEndRef} />
         </div>
 
-        <div className="chat-composer">
-          <textarea
-            rows={2}
-            placeholder={
-              sessionId === null
-                ? "Start a new conversation…"
-                : "Ask about your data, investigate a failure, or request a chart… (Enter to send)"
-            }
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={onComposerKey}
-            disabled={!editable || sessionId === null || busy || socket.state !== "open"}
-          />
-          {busy ? (
-            <button className="danger" onClick={socket.stop} title="Stop generating">
-              <Icon name="x" size={14} /> Stop
-            </button>
-          ) : (
-            <button
-              className="primary"
-              onClick={() => sendMessage(input)}
-              disabled={!editable || sessionId === null || !input.trim() || socket.state !== "open"}
-            >
-              <Icon name="bolt" size={14} /> Send
-            </button>
-          )}
-        </div>
+        <ChatComposer
+          input={input}
+          placeholder={
+            sessionId === null
+              ? "Start a new conversation…"
+              : "Ask about your data, investigate a failure, or request a chart… (Enter to send)"
+          }
+          busy={busy}
+          textareaDisabled={!editable || sessionId === null || busy || socket.state !== "open"}
+          sendDisabled={!editable || sessionId === null || !input.trim() || socket.state !== "open"}
+          onInput={setInput}
+          onKey={onComposerKey}
+          onSend={() => sendMessage(input)}
+          onStop={socket.stop}
+        />
       </section>
     </div>
   );
