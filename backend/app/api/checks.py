@@ -15,7 +15,12 @@ from app.core.profiler import summarize_profile_for_llm
 from app.core.runner import run_check
 from app.db import get_db
 from app.llm.client import llm_enabled
-from app.security import get_current_user, require_role
+from app.security import (
+    assert_connection_role,
+    assert_dataset_visible,
+    get_current_user,
+    require_role,
+)
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/checks", tags=["checks"])
@@ -123,11 +128,15 @@ def run_now(
 def list_check_versions(
     check_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
     check = db.get(models.Check, check_id)
     if check is None:
-        raise HTTPException(404, "Check not found")
+        raise HTTPException(404, "Not found")
+    # Scope through the check's dataset connection (#159): 404 (not 403) if the
+    # user can't see that connection, so check existence isn't leaked across the
+    # data boundary. Read access = viewer-or-above on the owning connection.
+    assert_dataset_visible(db, user, check.dataset_id)
     versions = (
         db.query(models.CheckVersion)
         .filter(models.CheckVersion.check_id == check_id)
@@ -147,7 +156,14 @@ def restore_check_version(
 ):
     check = db.get(models.Check, check_id)
     if check is None:
-        raise HTTPException(404, "Check not found")
+        raise HTTPException(404, "Not found")
+    ds = db.get(models.Dataset, check.dataset_id)
+    if ds is None:
+        raise HTTPException(404, "Not found")
+    # Restoring mutates the check, so require effective EDITOR on the owning
+    # connection (#159) — a global editor with only a viewer grant there is
+    # blocked. 404 for an invisible connection, 403 for visible-but-not-editor.
+    assert_connection_role(db, user, ds.connection_id, "editor")
     try:
         check_authoring.restore_version(db, user, check, body.version)
     except LookupError as exc:

@@ -44,6 +44,24 @@ def _versions(client, headers, check_id) -> list[dict]:
     return r.json()
 
 
+def _editor_with_grant(client, admin_headers, email, conn_id, grant_role) -> dict:
+    uid = client.post(
+        "/api/v1/auth/users",
+        json={"email": email, "password": "longenough1", "role": "editor"},
+        headers=admin_headers,
+    ).json()["id"]
+    g = client.post(
+        f"/api/v1/auth/users/{uid}/grants",
+        json={"connection_id": conn_id, "role": grant_role},
+        headers=admin_headers,
+    )
+    assert g.status_code == 201, g.text
+    tok = client.post(
+        "/api/v1/auth/login", json={"email": email, "password": "longenough1"}
+    ).json()["access_token"]
+    return {"Authorization": f"Bearer {tok}"}
+
+
 def test_create_snapshots_v1(client, admin_headers, source_db):
     ds = _api_dataset(client, admin_headers, source_db)
     c = _create_check(client, admin_headers, ds["id"])
@@ -98,6 +116,38 @@ def test_restore_requires_editor(client, admin_headers, source_db):
     ds = _api_dataset(client, admin_headers, source_db)
     cid = _create_check(client, admin_headers, ds["id"])["id"]
     assert client.post(f"/api/v1/checks/{cid}/restore", json={"version": 1}).status_code == 401
+
+
+def test_versions_and_restore_respect_connection_grants(client, admin_headers, source_db):
+    """The version-history (read) and restore (write) endpoints scope through the
+    check's dataset connection (#159 / PR #187 review): a user who can't see the
+    connection gets 404, and a viewer-grant editor can read history but not restore."""
+    conn = client.post(
+        "/api/v1/connections", json={"name": f"cg-{uuid.uuid4().hex}", "dsn": source_db}, headers=admin_headers
+    ).json()
+    ds = client.post(
+        "/api/v1/datasets/register",
+        json={"connection_id": conn["id"], "tables": [{"table_name": "products"}]},
+        headers=admin_headers,
+    ).json()[0]
+    cid = _create_check(client, admin_headers, ds["id"])["id"]
+
+    # Viewer grant on this connection: may READ history, may NOT restore (403).
+    viewer = _editor_with_grant(
+        client, admin_headers, f"cg-view-{uuid.uuid4().hex}@example.com", conn["id"], "viewer"
+    )
+    assert client.get(f"/api/v1/checks/{cid}/versions", headers=viewer).status_code == 200
+    assert client.post(f"/api/v1/checks/{cid}/restore", json={"version": 1}, headers=viewer).status_code == 403
+
+    # Editor, but granted only on a DIFFERENT connection -> no access here: 404 on both.
+    other = client.post(
+        "/api/v1/connections", json={"name": f"cg-other-{uuid.uuid4().hex}", "dsn": source_db}, headers=admin_headers
+    ).json()
+    outsider = _editor_with_grant(
+        client, admin_headers, f"cg-none-{uuid.uuid4().hex}@example.com", other["id"], "editor"
+    )
+    assert client.get(f"/api/v1/checks/{cid}/versions", headers=outsider).status_code == 404
+    assert client.post(f"/api/v1/checks/{cid}/restore", json={"version": 1}, headers=outsider).status_code == 404
 
 
 def test_core_create_rejects_bad_enums(source_db):
