@@ -9,6 +9,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { api } from "../../api/client";
+import { qk } from "../../api/queryKeys";
 import type { Assignee, ExceptionFacets, ExceptionPage, ExceptionRecord } from "../../api/types";
 import { canEdit, useAuth } from "../../auth";
 import BulkBar from "./BulkBar";
@@ -61,21 +62,21 @@ export default function ExceptionsWorkspace({
   }, [apiParams, filters.offset, filters.sort]);
 
   const list = useQuery({
-    queryKey: ["exceptions", listParams],
+    queryKey: qk.exceptions.list(listParams),
     queryFn: () => api.get<ExceptionPage>(`/exceptions?${listParams}`),
     refetchInterval: 30_000, // teammates triage the same queue (#63 concurrency)
     placeholderData: keepPreviousData, // keep rows on filter change — no flicker
   });
 
   const facetsQ = useQuery({
-    queryKey: ["exceptions-facets", apiParams],
+    queryKey: qk.exceptionsFacets.list(apiParams),
     queryFn: () => api.get<ExceptionFacets>(`/exceptions/facets?${apiParams}`),
     refetchInterval: 30_000,
     placeholderData: keepPreviousData,
   });
 
   const { data: assignees = [] } = useQuery({
-    queryKey: ["assignees"],
+    queryKey: qk.assignees.list(),
     queryFn: () => api.get<Assignee[]>("/auth/assignees"),
     staleTime: 5 * 60_000,
   });
@@ -151,10 +152,10 @@ export default function ExceptionsWorkspace({
       if (returned.length < ids.length) {
         setToast(`${ids.length - returned.length} already triaged by someone else`);
       }
-      qc.invalidateQueries({ queryKey: ["exceptions"] });
-      qc.invalidateQueries({ queryKey: ["exceptions-facets"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
-      qc.invalidateQueries({ queryKey: ["datasets"] });
+      qc.invalidateQueries({ queryKey: qk.exceptions.all });
+      qc.invalidateQueries({ queryKey: qk.exceptionsFacets.all });
+      qc.invalidateQueries({ queryKey: qk.dashboard.all });
+      qc.invalidateQueries({ queryKey: qk.datasets.all });
     },
     onError: (e) => setToast(e instanceof Error ? e.message : "Triage failed"),
   });

@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api/client";
+import { qk } from "../../api/queryKeys";
 import type { Assignee, CheckTypeInfo, ExceptionFacets } from "../../api/types";
 import { checkTypeLabel } from "../../lib/checkMeta";
 import { ALL_SEVERITIES, ALL_STATUSES, SEEN_SINCE_OPTIONS, SORT_OPTIONS } from "./shared";
@@ -37,7 +38,7 @@ export default function FilterBar({
   }, [qLocal]);
 
   const { data: checkTypes } = useQuery({
-    queryKey: ["check-types"],
+    queryKey: qk.checkTypes.list(),
     queryFn: () => api.get<CheckTypeInfo[]>("/checks/types"),
   });
 
