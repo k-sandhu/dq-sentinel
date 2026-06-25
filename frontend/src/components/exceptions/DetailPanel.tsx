@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import type { MutableRefObject } from "react";
 import { Link } from "react-router";
 import { api } from "../../api/client";
+import { qk } from "../../api/queryKeys";
 import type { Assignee, Check, ExceptionEvent, ExceptionRecord } from "../../api/types";
 import { canEdit, useAuth } from "../../auth";
 import { checkTypeLabel } from "../../lib/checkMeta";
@@ -58,13 +59,13 @@ export default function DetailPanel({
   // No single-check GET endpoint exists; fetch the dataset's checks (cached and
   // shared with the Checks tab) and pick this one for params/rationale context.
   const { data: checks } = useQuery({
-    queryKey: ["checks", exc.dataset_id],
+    queryKey: qk.checks.byDatasetId(exc.dataset_id),
     queryFn: () => api.get<Check[]>(`/checks?dataset_id=${exc.dataset_id}`),
   });
   const check = checks?.find((c) => c.id === exc.check_id);
 
   const { data: events, isLoading: eventsLoading } = useQuery({
-    queryKey: ["exception-events", exc.id],
+    queryKey: qk.exceptionEvents.detail(exc.id),
     queryFn: () => api.get<ExceptionEvent[]>(`/exceptions/${exc.id}/events`),
   });
 
@@ -72,8 +73,8 @@ export default function DetailPanel({
     mutationFn: () => api.post<ExceptionEvent>(`/exceptions/${exc.id}/comments`, { comment }),
     onSuccess: () => {
       setComment("");
-      qc.invalidateQueries({ queryKey: ["exception-events", exc.id] });
-      qc.invalidateQueries({ queryKey: ["exceptions"] });
+      qc.invalidateQueries({ queryKey: qk.exceptionEvents.detail(exc.id) });
+      qc.invalidateQueries({ queryKey: qk.exceptions.all });
     },
   });
 
