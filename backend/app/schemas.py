@@ -767,6 +767,37 @@ class CommentIn(BaseModel):
     expected_version: int | None = None  # optimistic concurrency (#156): 409 if stale
 
 
+# ---- exception "why it failed" attribution (D6 / #176) ----
+# Deterministic, PII-safe good-vs-bad + column attribution. Row cells are already
+# pii-redacted; factors never reference a pii column. `computable=false` carries a
+# `reason` for the honest empty state (no fabricated chart).
+class AttributionRow(BaseModel):
+    columns: list[str]
+    cells: list[Any]  # parallel to columns; pii columns rendered as "[REDACTED]"
+
+
+class AttributionFactor(BaseModel):
+    column: str
+    label: str  # e.g. "status = refunded"
+    pct: int  # 0..100 — % of failing rows with this value
+    fail_count: int
+    healthy_count: int
+    lift: float
+
+
+class ExceptionAttributionOut(BaseModel):
+    exception_id: int
+    computable: bool
+    reason: str = ""  # "" when computable; else no_failing_rows | no_row_predicate |
+    # all_columns_redacted | no_healthy_rows | source_unavailable
+    columns: list[str] = []
+    good_rows: list[AttributionRow] = []
+    bad_rows: list[AttributionRow] = []
+    factors: list[AttributionFactor] = []
+    summary: str = ""
+    generated_at: datetime
+
+
 # ---- exceptions API v2 (#57) ----
 class FacetEntry(BaseModel):
     id: int

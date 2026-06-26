@@ -447,6 +447,33 @@ export interface ExceptionEvent {
   created_at: string;
 }
 
+// ---- exception "why it failed" attribution (D6 / #176) — Mirrors backend/app/schemas.py ----
+export interface AttributionRow {
+  columns: string[];
+  cells: unknown[]; // parallel to columns; pii columns rendered as "[REDACTED]"
+}
+
+export interface AttributionFactor {
+  column: string;
+  label: string; // e.g. "status = refunded"
+  pct: number; // 0..100 — % of failing rows with this value
+  fail_count: number;
+  healthy_count: number;
+  lift: number;
+}
+
+export interface ExceptionAttribution {
+  exception_id: number;
+  computable: boolean;
+  reason: string; // "" when computable; else no_failing_rows | no_row_predicate | all_columns_redacted | no_healthy_rows | source_unavailable
+  columns: string[];
+  good_rows: AttributionRow[];
+  bad_rows: AttributionRow[];
+  factors: AttributionFactor[];
+  summary: string;
+  generated_at: string;
+}
+
 export interface Assignee {
   id: number;
   name: string;

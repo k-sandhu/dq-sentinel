@@ -190,6 +190,10 @@ export const qk = {
     all: ["exception-events"] as const,
     detail: (exceptionId: Id) => ["exception-events", exceptionId] as const,
   },
+  exceptionAttribution: {
+    all: ["exception-attribution"] as const,
+    detail: (exceptionId: Id) => ["exception-attribution", exceptionId] as const,
+  },
   assignees: {
     all: ["assignees"] as const,
     list: () => ["assignees"] as const,
