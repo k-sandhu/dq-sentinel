@@ -101,8 +101,17 @@ def _load_incident_for_mutation(
     incident = db.get(models.Incident, incident_id)
     if incident is None:
         raise HTTPException(404, "Incident not found")
-    ds = assert_dataset_visible(db, user, incident.dataset_id)
-    assert_connection_role(db, user, ds.connection_id, "editor")
+    # Normalize the authz 404s to the SAME detail as a missing incident so the
+    # message can't distinguish "doesn't exist" from "exists but you can't see it"
+    # (the helpers raise a generic "Not found"). The 403 for a visible connection
+    # with an insufficient grant passes through unchanged (#159/#179, PR #204 review).
+    try:
+        ds = assert_dataset_visible(db, user, incident.dataset_id)
+        assert_connection_role(db, user, ds.connection_id, "editor")
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            raise HTTPException(404, "Incident not found") from exc
+        raise
     return incident
 
 

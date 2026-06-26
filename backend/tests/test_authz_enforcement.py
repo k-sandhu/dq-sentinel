@@ -323,9 +323,13 @@ def test_incident_ack_resolve_scoped_to_grants(client, admin_headers, source_db)
     _grant(client, h, alice["id"], a["id"], "editor")
     ah = _login(client, f"authz-inc-alice-{sfx}@x.com")
 
-    # Cross-connection: alice (editor on A) is blind to B's incident -> 404 on both verbs.
-    assert client.post(f"{QH}/incidents/{inc_id}/ack", json={"note": "x"}, headers=ah).status_code == 404
-    assert client.post(f"{QH}/incidents/{inc_id}/resolve", json={"note": "x"}, headers=ah).status_code == 404
+    # Cross-connection: alice (editor on A) is blind to B's incident -> 404 on both verbs,
+    # with the SAME detail as a missing incident so the message doesn't leak existence.
+    ack = client.post(f"{QH}/incidents/{inc_id}/ack", json={"note": "x"}, headers=ah)
+    resolve = client.post(f"{QH}/incidents/{inc_id}/resolve", json={"note": "x"}, headers=ah)
+    assert ack.status_code == 404 and resolve.status_code == 404
+    assert ack.json()["detail"] == "Incident not found"
+    assert resolve.json()["detail"] == "Incident not found"
 
     # No state change landed: admin still sees it open, with no ack/resolve events.
     detail = client.get(f"{QH}/incidents/{inc_id}", headers=h).json()
