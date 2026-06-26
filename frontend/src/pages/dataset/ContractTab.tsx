@@ -162,7 +162,7 @@ export default function ContractTab({ dataset }: { dataset: Dataset }) {
   const create = useMutation({
     mutationFn: () => api.post<DataContract>(`/datasets/${dataset.id}/contract`, {}),
     onSuccess: (created) => {
-      qc.setQueryData(["contract", dataset.id], created);
+      qc.setQueryData(qk.contract.detail(dataset.id), created);
       qc.invalidateQueries({ queryKey: qk.contract.all });
     },
   });
@@ -175,7 +175,7 @@ export default function ContractTab({ dataset }: { dataset: Dataset }) {
         spec: normalizeSpec(draft),
       }),
     onSuccess: (updated) => {
-      qc.setQueryData(["contract", dataset.id], updated);
+      qc.setQueryData(qk.contract.detail(dataset.id), updated);
       qc.invalidateQueries({ queryKey: qk.contractVersions.detail(dataset.id, updated.id) });
       setSaved(true);
       setTimeout(() => setSaved(false), 2200);
@@ -185,7 +185,7 @@ export default function ContractTab({ dataset }: { dataset: Dataset }) {
   const activate = useMutation({
     mutationFn: () => api.post<DataContractApplyResult>(`/datasets/${dataset.id}/contract/${contract!.id}/activate`),
     onSuccess: (result) => {
-      qc.setQueryData(["contract", dataset.id], result.contract);
+      qc.setQueryData(qk.contract.detail(dataset.id), result.contract);
       qc.invalidateQueries({ queryKey: qk.checks.all });
       qc.invalidateQueries({ queryKey: qk.contractConformance.detail(dataset.id, result.contract.id) });
       qc.invalidateQueries({ queryKey: qk.contractVersions.detail(dataset.id, result.contract.id) });
@@ -195,7 +195,7 @@ export default function ContractTab({ dataset }: { dataset: Dataset }) {
   const importYaml = useMutation({
     mutationFn: () => api.post<DataContract>(`/datasets/${dataset.id}/contract/import`, { yaml: yamlText }),
     onSuccess: (created) => {
-      qc.setQueryData(["contract", dataset.id], created);
+      qc.setQueryData(qk.contract.detail(dataset.id), created);
       qc.invalidateQueries({ queryKey: qk.contract.all });
       setMode("form");
     },

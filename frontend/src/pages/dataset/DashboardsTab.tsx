@@ -69,7 +69,7 @@ export default function DashboardsTab({ datasetId, hasProfile }: { datasetId: nu
     onSuccess: (d) => {
       setFocus("");
       qc.invalidateQueries({ queryKey: qk.adhoc.all });
-      qc.setQueryData(["adhoc-open", d.id], d);
+      qc.setQueryData(qk.adhocOpen.detail(d.id), d);
       setOpenId(d.id);
     },
   });
