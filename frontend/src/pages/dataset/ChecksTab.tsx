@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../../api/client";
+import { qk } from "../../api/queryKeys";
 import type { Check, CheckTypeInfo, ColumnInfo, GenerateResult, Health } from "../../api/types";
 import { canEdit, useAuth } from "../../auth";
 import ChecksTable from "../../components/ChecksTable";
@@ -10,11 +11,11 @@ import { ErrorBox, Icon, Modal, Spinner } from "../../components/ui";
 function NewCheckModal({ datasetId, onClose }: { datasetId: number; onClose: () => void }) {
   const qc = useQueryClient();
   const { data: types } = useQuery({
-    queryKey: ["check-types"],
+    queryKey: qk.checkTypes.list(),
     queryFn: () => api.get<CheckTypeInfo[]>("/checks/types"),
   });
   const { data: columns } = useQuery({
-    queryKey: ["columns", datasetId],
+    queryKey: qk.columns.detail(datasetId),
     queryFn: () => api.get<ColumnInfo[]>(`/datasets/${datasetId}/columns`),
   });
 
@@ -39,7 +40,7 @@ function NewCheckModal({ datasetId, onClose }: { datasetId: number; onClose: () 
         status: "active",
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["checks"] });
+      qc.invalidateQueries({ queryKey: qk.checks.all });
       onClose();
     },
   });
@@ -104,11 +105,11 @@ export default function ChecksTab({ datasetId, hasProfile }: { datasetId: number
   const [explore, setExplore] = useState(false);
   const [genResult, setGenResult] = useState<GenerateResult | null>(null);
 
-  const { data: health } = useQuery({ queryKey: ["health"], queryFn: () => api.get<Health>("/health") });
+  const { data: health } = useQuery({ queryKey: qk.health.get(), queryFn: () => api.get<Health>("/health") });
   const llm = health?.llm_enabled ?? false;
 
   const { data: checks, isLoading, error } = useQuery({
-    queryKey: ["checks", { datasetId }],
+    queryKey: qk.checks.byDatasetObj(datasetId),
     queryFn: () => api.get<Check[]>(`/checks?dataset_id=${datasetId}`),
   });
 
@@ -117,8 +118,8 @@ export default function ChecksTab({ datasetId, hasProfile }: { datasetId: number
       api.post<GenerateResult>("/checks/generate", { dataset_id: datasetId, use_llm: llm, explore: llm && explore }),
     onSuccess: (result) => {
       setGenResult(result);
-      qc.invalidateQueries({ queryKey: ["checks"] });
-      qc.invalidateQueries({ queryKey: ["exploration", datasetId] });
+      qc.invalidateQueries({ queryKey: qk.checks.all });
+      qc.invalidateQueries({ queryKey: qk.exploration.detail(datasetId) });
     },
   });
 

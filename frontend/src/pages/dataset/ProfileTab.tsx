@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../../api/client";
+import { qk } from "../../api/queryKeys";
 import type { ColumnProfile, Exploration, Preview, Profile } from "../../api/types";
 import { EmptyState, Spinner } from "../../components/ui";
 import { fmtNum, fmtPct, fmtValue } from "../../lib/format";
@@ -67,12 +68,12 @@ export default function ProfileTab({
 }) {
   const [showPreview, setShowPreview] = useState(false);
   const preview = useQuery({
-    queryKey: ["preview", datasetId],
+    queryKey: qk.preview.detail(datasetId),
     queryFn: () => api.get<Preview>(`/datasets/${datasetId}/preview?limit=25`),
     enabled: showPreview,
   });
   const exploration = useQuery({
-    queryKey: ["exploration", datasetId],
+    queryKey: qk.exploration.detail(datasetId),
     queryFn: () => api.get<Exploration>(`/datasets/${datasetId}/exploration`),
   });
 

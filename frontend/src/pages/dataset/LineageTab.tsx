@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
 import { api } from "../../api/client";
+import { qk } from "../../api/queryKeys";
 import type { Dataset, LineageGraph as LineageGraphData } from "../../api/types";
 import LineageGraph from "../../components/LineageGraph";
 import { ErrorBox, Icon, Spinner } from "../../components/ui";
@@ -13,7 +14,7 @@ export default function LineageTab({ dataset }: { dataset: Dataset }) {
   const [depth, setDepth] = useState(2);
   const [granularity, setGranularity] = useState<"table" | "column">("table");
   const { data, isLoading, error } = useQuery({
-    queryKey: ["lineage-dataset", dataset.id, depth, granularity],
+    queryKey: qk.lineageDataset.detail(dataset.id, depth, granularity),
     queryFn: () => api.get<LineageGraphData>(`/datasets/${dataset.id}/lineage?depth=${depth}&granularity=${granularity}`),
     staleTime: 30_000,
     placeholderData: (prev) => prev, // keep the old graph while a new depth loads

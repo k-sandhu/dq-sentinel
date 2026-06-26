@@ -6,12 +6,13 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
 import { api } from "../../api/client";
+import { qk } from "../../api/queryKeys";
 import type { DatasetDdl, SavedQuery } from "../../api/types";
 import { EmptyState, ErrorBox, Icon, Spinner } from "../../components/ui";
 
 function PinnedQueries({ datasetId }: { datasetId: number }) {
   const { data, isLoading, error } = useQuery({
-    queryKey: ["saved-queries", { datasetId }],
+    queryKey: qk.savedQueries.byDataset(datasetId),
     queryFn: () => api.get<SavedQuery[]>(`/queries?dataset_id=${datasetId}`),
     staleTime: 30_000,
   });
@@ -64,7 +65,7 @@ function PinnedQueries({ datasetId }: { datasetId: number }) {
 export default function CodeTab({ datasetId }: { datasetId: number }) {
   const [copied, setCopied] = useState(false);
   const { data, isLoading, error } = useQuery({
-    queryKey: ["dataset-ddl", datasetId],
+    queryKey: qk.datasetDdl.detail(datasetId),
     queryFn: () => api.get<DatasetDdl>(`/datasets/${datasetId}/ddl`),
     retry: false,
     staleTime: 60_000,

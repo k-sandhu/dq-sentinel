@@ -4,6 +4,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../../api/client";
+import { qk } from "../../api/queryKeys";
 import type { SchemaHistory, SchemaSnapshot } from "../../api/types";
 import { canEdit, useAuth } from "../../auth";
 import { ErrorBox, Icon, Spinner } from "../../components/ui";
@@ -36,12 +37,12 @@ export default function SchemaTab({ datasetId }: { datasetId: number }) {
   const [selected, setSelected] = useState<number | null>(null);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["schema-history", datasetId],
+    queryKey: qk.schemaHistory.detail(datasetId),
     queryFn: () => api.get<SchemaHistory>(`/datasets/${datasetId}/schema-history`),
   });
   const pin = useMutation({
     mutationFn: () => api.post<SchemaSnapshot>(`/datasets/${datasetId}/schema-baseline`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["schema-history", datasetId] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.schemaHistory.detail(datasetId) }),
   });
 
   if (isLoading) return <Spinner label="Loading schema history…" />;

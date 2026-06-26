@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../../api/client";
+import { qk } from "../../api/queryKeys";
 import type { AdhocDashboard, AdhocDashboardMeta, Health, Panel } from "../../api/types";
 import { canEdit, useAuth } from "../../auth";
 import { useConfirm } from "../../components/confirm";
@@ -49,16 +50,16 @@ export default function DashboardsTab({ datasetId, hasProfile }: { datasetId: nu
   const [focus, setFocus] = useState("");
   const [openId, setOpenId] = useState<number | null>(null);
 
-  const { data: health } = useQuery({ queryKey: ["health"], queryFn: () => api.get<Health>("/health") });
+  const { data: health } = useQuery({ queryKey: qk.health.get(), queryFn: () => api.get<Health>("/health") });
   const llm = health?.llm_enabled ?? false;
 
   const metas = useQuery({
-    queryKey: ["adhoc", { datasetId }],
+    queryKey: qk.adhoc.byDataset(datasetId),
     queryFn: () => api.get<AdhocDashboardMeta[]>(`/adhoc-dashboards?dataset_id=${datasetId}`),
   });
 
   const dashboard = useQuery({
-    queryKey: ["adhoc-open", openId],
+    queryKey: qk.adhocOpen.detail(openId),
     queryFn: () => api.get<AdhocDashboard>(`/adhoc-dashboards/${openId}`),
     enabled: !!openId,
   });
@@ -67,8 +68,8 @@ export default function DashboardsTab({ datasetId, hasProfile }: { datasetId: nu
     mutationFn: () => api.post<AdhocDashboard>("/adhoc-dashboards/generate", { dataset_id: datasetId, focus }),
     onSuccess: (d) => {
       setFocus("");
-      qc.invalidateQueries({ queryKey: ["adhoc"] });
-      qc.setQueryData(["adhoc-open", d.id], d);
+      qc.invalidateQueries({ queryKey: qk.adhoc.all });
+      qc.setQueryData(qk.adhocOpen.detail(d.id), d);
       setOpenId(d.id);
     },
   });
@@ -77,7 +78,7 @@ export default function DashboardsTab({ datasetId, hasProfile }: { datasetId: nu
     mutationFn: (id: number) => api.del(`/adhoc-dashboards/${id}`),
     onSuccess: (_d, id) => {
       if (openId === id) setOpenId(null);
-      qc.invalidateQueries({ queryKey: ["adhoc"] });
+      qc.invalidateQueries({ queryKey: qk.adhoc.all });
     },
   });
 

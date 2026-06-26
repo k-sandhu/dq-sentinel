@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
 import { api } from "../../api/client";
+import { qk } from "../../api/queryKeys";
 import type { Check, MonitorKind, MonitorPackConfig, MonitorPackSkipped, MonitorPackState } from "../../api/types";
 import { canEdit, useAuth } from "../../auth";
 import { checkTypeLabel } from "../../lib/checkMeta";
@@ -286,15 +287,15 @@ export default function MonitorPackTab({
   const [configOpen, setConfigOpen] = useState(false);
 
   const packQuery = useQuery({
-    queryKey: ["monitor-pack", datasetId],
+    queryKey: qk.monitorPack.detail(datasetId),
     queryFn: () => api.get<MonitorPackState>(`/datasets/${datasetId}/monitor-pack`),
     retry: false,
   });
 
   const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ["monitor-pack", datasetId] });
-    qc.invalidateQueries({ queryKey: ["checks"] });
-    qc.invalidateQueries({ queryKey: ["datasets"] });
+    qc.invalidateQueries({ queryKey: qk.monitorPack.detail(datasetId) });
+    qc.invalidateQueries({ queryKey: qk.checks.all });
+    qc.invalidateQueries({ queryKey: qk.datasets.all });
   };
 
   const reconcile = useMutation({
