@@ -156,6 +156,46 @@ def test_grants_scope_runs_and_exceptions(client, admin_headers, source_db):
         assert client.delete(f"{QH}/connections/{cid}", headers=h).status_code == 204
 
 
+def test_grants_scope_incidents_list_and_detail(client, admin_headers, source_db):
+    """The /incidents list and detail endpoints are grant-scoped (#179): a user
+    granted only connection A cannot see incidents on connection B's datasets —
+    absent from the list, 404 on the by-id detail (existence not leaked)."""
+    h = admin_headers
+    sfx = uuid4().hex[:8]
+    a = _conn(client, h, f"authz-inc-A-{sfx}", source_db)
+    b = _conn(client, h, f"authz-inc-B-{sfx}", source_db)
+    dsb = _register_people(client, h, b["id"])
+
+    # A failing not_null check on B's email column opens an incident on B's dataset.
+    chk = client.post(
+        f"{QH}/checks",
+        json={"dataset_id": dsb["id"], "check_type": "not_null", "column_name": "email",
+              "name": f"authz-inc-chk-{sfx}"},
+        headers=h,
+    ).json()
+    assert client.post(f"{QH}/checks/{chk['id']}/run", headers=h).status_code in (200, 201)
+
+    # Admin sees the incident on B and learns its id (used for the by-id probe below).
+    b_incidents = client.get(f"{QH}/incidents", params={"dataset_id": dsb["id"]}, headers=h).json()
+    assert b_incidents, "admin should see B's incident"
+    inc_id = b_incidents[0]["id"]
+
+    alice = _mk_user(client, h, f"authz-inc-alice-{sfx}@x.com")  # granted A only
+    _grant(client, h, alice["id"], a["id"], "editor")
+    ah = _login(client, f"authz-inc-alice-{sfx}@x.com")
+
+    # List: B's incident is absent for alice (even when she filters on B's dataset).
+    assert inc_id not in {i["id"] for i in client.get(f"{QH}/incidents", headers=ah).json()}
+    scoped = client.get(f"{QH}/incidents", params={"dataset_id": dsb["id"]}, headers=ah).json()
+    assert scoped == []
+    # Detail: 404 (not 403/200) so the out-of-scope incident's existence isn't leaked.
+    assert client.get(f"{QH}/incidents/{inc_id}", headers=ah).status_code == 404
+
+    # Clean up the failing check/run/incident so they don't skew global counts.
+    for cid in (a["id"], b["id"]):
+        assert client.delete(f"{QH}/connections/{cid}", headers=h).status_code == 204
+
+
 def test_exception_mutation_requires_editor_on_connection(client, admin_headers, source_db):
     """A viewer-grant can READ an exception but not change its triage state — mutation
     requires editor ON the connection, consistent with /query/run etc. (#159)."""
