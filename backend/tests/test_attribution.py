@@ -10,8 +10,9 @@ conftest `people` fixture (status active/inactive + one "x"; emails null for row
 """
 
 from datetime import datetime
+from types import SimpleNamespace
 
-from app.core.attribution import attribution_factors
+from app.core.attribution import attribution_factors, healthy_where
 from app.db import session_factory
 from app.models import Check, CheckRun, Connection, Dataset, ExceptionRecord, TableKnowledge
 
@@ -150,6 +151,23 @@ def test_attribution_not_computable_without_predicate(client, admin_headers, sou
     assert data["computable"] is False
     assert data["reason"] == "no_row_predicate"
     assert data["factors"] == []
+
+
+def test_healthy_where_treats_nulls_as_passing():
+    # value/range/length checks only flag NON-null rows, so NULLs are passing and the
+    # healthy predicate must include them (else an all-NULL column reports no_healthy_rows).
+    av = SimpleNamespace(check_type="accepted_values", params={"values": ["active", "inactive"]}, column_name="status")
+    w = healthy_where(av, '"status"')
+    assert "IS NULL OR" in w and "IN (" in w
+    rng = SimpleNamespace(check_type="range", params={"min": 0, "max": 10}, column_name="age")
+    assert "IS NULL OR" in healthy_where(rng, '"age"')
+    sl = SimpleNamespace(check_type="string_length", params={"min_len": 2}, column_name="name")
+    assert "IS NULL OR" in healthy_where(sl, '"name"')
+    # not_null: the NULL *is* the violation, so it stays excluded
+    nn = SimpleNamespace(check_type="not_null", params={}, column_name="email")
+    assert healthy_where(nn, '"email"') == '"email" IS NOT NULL'
+    # no per-row predicate -> None
+    assert healthy_where(SimpleNamespace(check_type="unique", params={}, column_name="x"), '"x"') is None
 
 
 def test_attribution_factors_pure():

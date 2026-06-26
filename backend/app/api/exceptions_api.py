@@ -456,7 +456,7 @@ def get_attribution(
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),  # viewer-readable (no triage)
 ):
-    """"Why it failed": deterministic good-vs-bad sample + column attribution (#176).
+    """Deterministic good-vs-bad sample + column attribution — "why it failed" (#176).
     Fetched only when the drawer opens, off the hot list path (like /events). PII is
     redacted and capped server-side; non-computable cases return an honest reason."""
     exc = db.get(models.ExceptionRecord, exc_id)

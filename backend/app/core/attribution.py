@@ -24,9 +24,15 @@ MAX_FACTORS = 8  # ranked attribution list cap
 
 
 def healthy_where(check: models.Check, col_sql: str) -> str | None:
-    """The passing-rows predicate (the negation of the check's violation WHERE) for
-    the column check types where it is well-defined; ``None`` => no per-row signal
-    (unique / regex / freshness / volume / custom)."""
+    """The passing-rows predicate = the exact negation of the check's violation WHERE,
+    for the column check types where it is well-defined; ``None`` => no per-row signal
+    (unique / regex / freshness / volume / custom).
+
+    NULLs count as PASSING for the value/range/length checks: their compilers flag only
+    non-NULL violations (check_types.py ``{col} IS NOT NULL AND ...``), so a true
+    negation must include ``{col} IS NULL`` — otherwise an all-NULL column wrongly
+    reports "no healthy rows". For not_null the NULL *is* the violation, so it stays
+    excluded."""
     p = check.params or {}
     t = check.check_type
     if t == "not_null":
@@ -36,29 +42,31 @@ def healthy_where(check: models.Check, col_sql: str) -> str | None:
         if not values:
             return None
         if p.get("case_sensitive", True):
-            return f"{col_sql} IN ({', '.join(_lit(v) for v in values)})"
-        lits = ", ".join(_lit(str(v).lower()) for v in values)
-        return f"LOWER(CAST({col_sql} AS VARCHAR)) IN ({lits})"
+            in_set = f"{col_sql} IN ({', '.join(_lit(v) for v in values)})"
+        else:
+            lits = ", ".join(_lit(str(v).lower()) for v in values)
+            in_set = f"LOWER(CAST({col_sql} AS VARCHAR)) IN ({lits})"
+        return f"({col_sql} IS NULL OR {in_set})"
     if t == "range":
         lo, hi = p.get("min"), p.get("max")
         if lo is None and hi is None:
             return None
-        parts = [f"{col_sql} IS NOT NULL"]
+        parts = []
         if lo is not None:
             parts.append(f"{col_sql} >= {_lit(lo)}")
         if hi is not None:
             parts.append(f"{col_sql} <= {_lit(hi)}")
-        return " AND ".join(parts)
+        return f"({col_sql} IS NULL OR ({' AND '.join(parts)}))"
     if t == "string_length":
         lo, hi = p.get("min_len"), p.get("max_len")
         if lo is None and hi is None:
             return None
-        parts = [f"{col_sql} IS NOT NULL"]
+        parts = []
         if lo is not None:
             parts.append(f"LENGTH({col_sql}) >= {int(lo)}")
         if hi is not None:
             parts.append(f"LENGTH({col_sql}) <= {int(hi)}")
-        return " AND ".join(parts)
+        return f"({col_sql} IS NULL OR ({' AND '.join(parts)}))"
     return None
 
 
@@ -155,11 +163,14 @@ def _healthy_sample(
     connection = dataset.connection
     if not connection:
         return [], "source_unavailable"
-    conn = connector_for(connection)
-    where = healthy_where(check, conn.quote(check.column_name))
-    if where is None:
-        return [], "no_row_predicate"
+    # The whole build — connector init, predicate derivation (which can raise on
+    # malformed params, e.g. a non-int min_len), and the live read — is guarded so a
+    # bad source/check degrades to an honest reason instead of a 500.
     try:
+        conn = connector_for(connection)
+        where = healthy_where(check, conn.quote(check.column_name))
+        if where is None:
+            return [], "no_row_predicate"
         ref = conn.table_ref(dataset.table_name, dataset.schema_name)
         res = conn.run_select(f"SELECT * FROM {ref} WHERE {where}", limit=SAMPLE_ROWS)
         rows = [dict(zip(res.columns, r, strict=False)) for r in res.rows]
