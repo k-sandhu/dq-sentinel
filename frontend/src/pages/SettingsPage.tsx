@@ -1,5 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { Link } from "react-router";
 import { api } from "../api/client";
 import type {
   AuditPage,
@@ -758,6 +759,11 @@ export default function SettingsPage() {
         <div>
           <h1>Settings</h1>
           <div className="sub">Instance health, AI integration, and user management</div>
+        </div>
+        <div className="header-actions">
+          <Link to="/status" className="btn">
+            View status page →
+          </Link>
         </div>
       </div>
 

@@ -704,6 +704,40 @@ class IncidentDetailOut(IncidentOut):
     events: list[IncidentEventOut] = []
 
 
+# ---- public data-status page (D9 / #179) ----
+# A deliberate ALLOWLIST subset for a viewer-safe, stakeholder-facing status page.
+# NOT a filtered IncidentOut: it never carries external_refs, dedupe_key, event
+# `detail` blobs, assignee/user names, or any row-level data. Public health
+# vocabulary (operational/delayed/degraded) maps from the app's pass/warn/fail.
+DataHealth = Literal["operational", "delayed", "degraded", "unknown"]
+
+
+class StatusDatasetOut(BaseModel):
+    id: int
+    name: str
+    health: DataHealth
+    open_incidents: int
+    last_incident_at: datetime | None = None
+
+
+class StatusUpdateOut(BaseModel):
+    kind: str  # safe subset only: opened | occurred | acknowledged | resolved | recovered
+    title: str  # incident title (check + dataset; carries no row samples)
+    dataset_name: str
+    severity: Severity
+    at: datetime
+
+
+class DataStatusOut(BaseModel):
+    overall: DataHealth
+    operational: int
+    delayed: int
+    degraded: int
+    datasets: list[StatusDatasetOut]
+    updates: list[StatusUpdateOut]
+    generated_at: datetime
+
+
 class IncidentActionIn(BaseModel):
     note: str = Field(default="", max_length=2_000)
 

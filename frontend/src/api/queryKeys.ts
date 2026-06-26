@@ -315,6 +315,10 @@ export const qk = {
     all: ["sla"] as const,
     detail: (id: Id) => ["sla", id] as const,
   },
+  status: {
+    all: ["status"] as const,
+    get: () => ["status"] as const,
+  },
 
   // === Docs =============================================================
   doc: {

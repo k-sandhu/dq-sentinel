@@ -24,6 +24,7 @@ import ReliabilityPage from "./pages/ReliabilityPage";
 import RunDetailPage from "./pages/RunDetailPage";
 import RunsPage from "./pages/RunsPage";
 import SettingsPage from "./pages/SettingsPage";
+import StatusPage from "./pages/StatusPage";
 
 // Route-level code-splitting (FE-1): the heavy editor/graph pages load on demand
 // behind a single Suspense boundary inside the Layout outlet, so their bundles
@@ -113,6 +114,7 @@ export default function App() {
         <Route path="/exceptions" element={<ExceptionsPage />} />
         <Route path="/incidents" element={<IncidentsPage />} />
         <Route path="/reliability" element={<ReliabilityPage />} />
+        <Route path="/status" element={<StatusPage />} />
         {/* One Suspense boundary for the lazy-loaded heavy routes (FE-1). The
             pathless route shares a single Spinner fallback across all three. */}
         <Route
