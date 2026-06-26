@@ -26,6 +26,7 @@ from app.api import (
     scorecards,
     search,
     sla,
+    status,
 )
 
 api_router = APIRouter()
@@ -53,4 +54,5 @@ api_router.include_router(notifications.router)
 api_router.include_router(audit.router)
 api_router.include_router(search.router)
 api_router.include_router(sla.router)
+api_router.include_router(status.router)
 api_router.include_router(docs.router)

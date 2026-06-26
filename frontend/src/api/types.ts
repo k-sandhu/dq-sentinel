@@ -855,6 +855,37 @@ export interface IncidentDetail extends IncidentRecord {
   events: IncidentEvent[];
 }
 
+// ---- public data status page (D9 / #179) — Mirrors backend/app/schemas.py ----
+// A deliberate allowlist subset of incident/dataset state — no external_refs,
+// dedupe_key, event detail, user names, or row-level data.
+export type DataHealth = "operational" | "delayed" | "degraded" | "unknown";
+
+export interface StatusDataset {
+  id: number;
+  name: string;
+  health: DataHealth;
+  open_incidents: number;
+  last_incident_at: string | null;
+}
+
+export interface StatusUpdate {
+  kind: string; // safe subset: opened | occurred | acknowledged | resolved | recovered
+  title: string;
+  dataset_name: string;
+  severity: Severity;
+  at: string;
+}
+
+export interface DataStatus {
+  overall: DataHealth;
+  operational: number;
+  delayed: number;
+  degraded: number;
+  datasets: StatusDataset[];
+  updates: StatusUpdate[];
+  generated_at: string;
+}
+
 // ---- ad-hoc dashboards ----
 export type VizType = "number" | "bar" | "line" | "area" | "pie" | "table";
 
