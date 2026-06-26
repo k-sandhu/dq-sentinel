@@ -292,6 +292,78 @@ def test_saved_query_search_scoped_to_grants(client, admin_headers, source_db):
         assert client.delete(f"{QH}/connections/{cid}", headers=h).status_code == 204
 
 
+def _open_incident_on(client, admin_headers, connection_id, sfx):
+    """Run a failing not_null check so the runner opens a durable incident; return
+    (incident_id, check_id). people.email has nulls, so the run fails (#179)."""
+    h = admin_headers
+    dsx = _register_people(client, h, connection_id)
+    chk = client.post(
+        f"{QH}/checks",
+        json={"dataset_id": dsx["id"], "check_type": "not_null", "column_name": "email",
+              "name": f"authz-inc-chk-{sfx}"},
+        headers=h,
+    ).json()
+    assert client.post(f"{QH}/checks/{chk['id']}/run", headers=h).status_code in (200, 201)
+    incidents = client.get(f"{QH}/incidents", params={"check_id": chk["id"]}, headers=h).json()
+    assert incidents and incidents[0]["status"] == "open", "failing run should open an incident"
+    return incidents[0]["id"], chk["id"]
+
+
+def test_incident_ack_resolve_scoped_to_grants(client, admin_headers, source_db):
+    """ack/resolve mutate state, so a grant-scoped editor on connection A must not be
+    able to acknowledge/resolve an incident on connection B — 404 (don't leak
+    existence) AND no state change lands (#159/#179)."""
+    h = admin_headers
+    sfx = uuid4().hex[:8]
+    a = _conn(client, h, f"authz-inc-A-{sfx}", source_db)
+    b = _conn(client, h, f"authz-inc-B-{sfx}", source_db)
+    inc_id, _chk = _open_incident_on(client, h, b["id"], sfx)
+
+    alice = _mk_user(client, h, f"authz-inc-alice-{sfx}@x.com")  # editor, granted A only
+    _grant(client, h, alice["id"], a["id"], "editor")
+    ah = _login(client, f"authz-inc-alice-{sfx}@x.com")
+
+    # Cross-connection: alice (editor on A) is blind to B's incident -> 404 on both verbs.
+    assert client.post(f"{QH}/incidents/{inc_id}/ack", json={"note": "x"}, headers=ah).status_code == 404
+    assert client.post(f"{QH}/incidents/{inc_id}/resolve", json={"note": "x"}, headers=ah).status_code == 404
+
+    # No state change landed: admin still sees it open, with no ack/resolve events.
+    detail = client.get(f"{QH}/incidents/{inc_id}", headers=h).json()
+    assert detail["status"] == "open"
+    kinds = {ev["kind"] for ev in detail["events"]}
+    assert "acknowledged" not in kinds and "resolved" not in kinds
+
+    for cid in (a["id"], b["id"]):
+        assert client.delete(f"{QH}/connections/{cid}", headers=h).status_code == 204
+
+
+def test_incident_mutation_requires_editor_on_connection(client, admin_headers, source_db):
+    """A viewer-grant can READ an incident but not ack/resolve it — mutation requires
+    editor ON the connection, consistent with exception triage (#159/#179)."""
+    h = admin_headers
+    sfx = uuid4().hex[:8]
+    b = _conn(client, h, f"authz-incmut-B-{sfx}", source_db)
+    inc_id, _chk = _open_incident_on(client, h, b["id"], sfx)
+
+    viewer = _mk_user(client, h, f"authz-incmut-viewer-{sfx}@x.com")  # global editor, viewer grant on B
+    _grant(client, h, viewer["id"], b["id"], "viewer")
+    editor = _mk_user(client, h, f"authz-incmut-editor-{sfx}@x.com")
+    _grant(client, h, editor["id"], b["id"], "editor")
+    vh = _login(client, f"authz-incmut-viewer-{sfx}@x.com")
+    eh = _login(client, f"authz-incmut-editor-{sfx}@x.com")
+
+    # viewer-grant: can SEE the incident, but ack/resolve are 403 (visible, lacks editor).
+    assert client.get(f"{QH}/incidents/{inc_id}", headers=vh).status_code == 200
+    assert client.post(f"{QH}/incidents/{inc_id}/ack", json={"note": "no"}, headers=vh).status_code == 403
+    assert client.post(f"{QH}/incidents/{inc_id}/resolve", json={"note": "no"}, headers=vh).status_code == 403
+    # editor-grant: ack then resolve succeed.
+    assert client.post(f"{QH}/incidents/{inc_id}/ack", json={"note": "mine"}, headers=eh).status_code == 200
+    resolved = client.post(f"{QH}/incidents/{inc_id}/resolve", json={"note": "fixed"}, headers=eh)
+    assert resolved.status_code == 200 and resolved.json()["status"] == "resolved"
+
+    assert client.delete(f"{QH}/connections/{b['id']}", headers=h).status_code == 204
+
+
 def test_dashboard_scoped_to_grants(client, admin_headers, source_db):
     """The home dashboard/console aggregates are restricted to the caller's grants
     (#159): a user granted only an empty connection sees zero datasets, while admin

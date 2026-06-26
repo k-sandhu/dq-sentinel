@@ -6,7 +6,12 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from app.core.incidents import acknowledge_incident, resolve_incident
 from app.db import get_db
-from app.security import get_current_user, require_role
+from app.security import (
+    assert_connection_role,
+    assert_dataset_visible,
+    get_current_user,
+    require_role,
+)
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
 
@@ -79,6 +84,28 @@ def get_incident(
     return out
 
 
+def _load_incident_for_mutation(
+    db: Session, user: models.User, incident_id: int
+) -> models.Incident:
+    """Fetch an incident and enforce object-level authz before any mutation.
+
+    The global ``require_role("editor")`` dependency only checks the caller's
+    *global* role, not their per-connection grant — so without this a grant-scoped
+    editor on connection A could ack/resolve an incident on connection B (#159/#179).
+    404 for a missing incident or one on a connection the user can't see (don't leak
+    existence); 403 for a visible connection where the grant role is below editor.
+    ack/resolve mutate state, so require effective EDITOR on the connection, matching
+    exception triage (see ``assert_connection_role`` and
+    test_authz_enforcement.py::test_exception_mutation_requires_editor_on_connection).
+    """
+    incident = db.get(models.Incident, incident_id)
+    if incident is None:
+        raise HTTPException(404, "Incident not found")
+    ds = assert_dataset_visible(db, user, incident.dataset_id)
+    assert_connection_role(db, user, ds.connection_id, "editor")
+    return incident
+
+
 @router.post("/{incident_id}/ack", response_model=schemas.IncidentDetailOut)
 def ack_incident(
     incident_id: int,
@@ -86,9 +113,7 @@ def ack_incident(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role("editor")),
 ):
-    incident = db.get(models.Incident, incident_id)
-    if incident is None:
-        raise HTTPException(404, "Incident not found")
+    incident = _load_incident_for_mutation(db, user, incident_id)
     acknowledge_incident(db, incident, user, body.note if body else "")
     return get_incident(incident_id, db, user)
 
@@ -100,8 +125,6 @@ def resolve_incident_endpoint(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role("editor")),
 ):
-    incident = db.get(models.Incident, incident_id)
-    if incident is None:
-        raise HTTPException(404, "Incident not found")
+    incident = _load_incident_for_mutation(db, user, incident_id)
     resolve_incident(db, incident, user, body.note if body else "")
     return get_incident(incident_id, db, user)
