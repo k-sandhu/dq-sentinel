@@ -188,8 +188,12 @@ def test_incident_read_scoped_to_grants(client, admin_headers, source_db):
     _grant(client, h, alice["id"], a["id"], "editor")
     ah = _login(client, f"authz-inc-alice-{sfx}@x.com")
 
-    # by-id detail: 404 for B's incident (same status as missing -> no existence leak).
-    assert client.get(f"{QH}/incidents/{b_inc_id}", headers=ah).status_code == 404
+    # by-id detail: 404 for B's incident, and INDISTINGUISHABLE from a missing id —
+    # identical status AND body, else sequential id probing reveals out-of-scope ids.
+    missing = client.get(f"{QH}/incidents/999999999", headers=ah)
+    invisible = client.get(f"{QH}/incidents/{b_inc_id}", headers=ah)
+    assert missing.status_code == invisible.status_code == 404
+    assert missing.json()["detail"] == invisible.json()["detail"]
     assert client.get(f"{QH}/incidents/{b_inc_id}", headers=h).status_code == 200  # admin sees it
 
     # list: B's incident is absent from alice's list, present in admin's (filter by
@@ -223,8 +227,12 @@ def test_incident_mutation_scoped_to_grants(client, admin_headers, source_db):
     _grant(client, h, editor["id"], b["id"], "editor")
     eh = _login(client, f"authz-incw-editor-{sfx}@x.com")
 
-    # A-only editor: 404 on B's incident (existence not leaked) for both write verbs.
-    assert client.post(f"{QH}/incidents/{b_inc_id}/resolve", headers=ah).status_code == 404
+    # A-only editor: 404 on B's incident, INDISTINGUISHABLE from a missing id (identical
+    # status + body) so a write probe can't reveal out-of-scope ids either.
+    miss = client.post(f"{QH}/incidents/999999999/resolve", headers=ah)
+    inv = client.post(f"{QH}/incidents/{b_inc_id}/resolve", headers=ah)
+    assert miss.status_code == inv.status_code == 404
+    assert miss.json()["detail"] == inv.json()["detail"]
     assert client.post(f"{QH}/incidents/{b_inc_id}/ack", headers=ah).status_code == 404
     # viewer-grant on B: visible but under-role -> 403.
     assert client.post(f"{QH}/incidents/{b_inc_id}/ack", headers=vh).status_code == 403

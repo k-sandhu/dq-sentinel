@@ -40,18 +40,34 @@ def _event_out(db: Session, ev: models.IncidentEvent) -> schemas.IncidentEventOu
     return out
 
 
+def _visible_incident_or_404(
+    db: Session, user: models.User, incident_id: int
+) -> models.Incident:
+    """Load an incident the caller may see, raising 404 with an IDENTICAL body for a
+    missing id AND one on an invisible connection — distinct detail strings would let
+    sequential id probing reveal which out-of-scope incidents exist (#72 review). The
+    visibility rule stays in assert_dataset_visible; here we only normalize its detail."""
+    incident = db.get(models.Incident, incident_id)
+    if incident is None:
+        raise HTTPException(404, "Incident not found")
+    try:
+        assert_dataset_visible(db, user, incident.dataset_id)
+    except HTTPException:
+        # Same body as the missing case: never reveal that this id exists elsewhere.
+        raise HTTPException(404, "Incident not found") from None
+    return incident
+
+
 def _load_incident_for_mutation(
     db: Session, user: models.User, incident_id: int
 ) -> models.Incident:
     """Fetch an incident for a write (ack/resolve), enforcing grant scoping BEFORE the
     mutation (the core helpers commit). A global editor must not change an incident on a
-    connection they can't see or only view (#72): 404 for missing/invisible (existence
-    not leaked), 403 for a visible connection the caller lacks editor on. Mirrors
+    connection they can't see or only view (#72): 404 (indistinguishable from missing)
+    for invisible, 403 for a visible connection the caller lacks editor on. Mirrors
     exceptions_api.py's editor-on-connection gate for triage/comments."""
-    incident = db.get(models.Incident, incident_id)
-    if incident is None:
-        raise HTTPException(404, "Incident not found")
-    ds = assert_dataset_visible(db, user, incident.dataset_id)  # 404 missing/invisible
+    incident = _visible_incident_or_404(db, user, incident_id)
+    ds = db.get(models.Dataset, incident.dataset_id)  # visibility-checked above; identity-mapped
     assert_connection_role(db, user, ds.connection_id, "editor")  # 403 for a view-only grant
     return incident
 
@@ -96,10 +112,7 @@ def get_incident(
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),
 ):
-    incident = db.get(models.Incident, incident_id)
-    if incident is None:
-        raise HTTPException(404, "Incident not found")
-    assert_dataset_visible(db, user, incident.dataset_id)  # incident on a visible connection (#159/#179)
+    incident = _visible_incident_or_404(db, user, incident_id)
     out = schemas.IncidentDetailOut(**_incident_out(db, incident).model_dump())
     out.events = [_event_out(db, ev) for ev in incident.events]
     return out
