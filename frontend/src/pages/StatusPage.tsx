@@ -63,7 +63,10 @@ export default function StatusPage() {
 
       <ErrorBox error={error} />
 
-      {data && data.datasets.length > 0 ? (
+      {/* Split states so the page never claims "operational" when the status is
+          unavailable or empty: error -> ErrorBox only; datasets -> tiles (each
+          carries its own health); zero datasets -> an honest empty card. */}
+      {error ? null : data && data.datasets.length > 0 ? (
         <div className="grid cols-3" style={{ marginBottom: 16 }}>
           {data.datasets.map((d) => (
             <div key={d.id} className="card card-pad status-tile">
@@ -84,8 +87,8 @@ export default function StatusPage() {
       ) : (
         <div className="card">
           <EmptyState
-            title="All data operational"
-            hint="No monitored datasets are reporting issues right now."
+            title="No monitored datasets"
+            hint="Datasets appear here once they have active checks reporting health."
           />
         </div>
       )}
