@@ -7,6 +7,7 @@ from app import models, schemas
 from app.core.incidents import acknowledge_incident, resolve_incident
 from app.db import get_db
 from app.security import (
+    assert_connection_role,
     assert_dataset_visible,
     get_current_user,
     require_role,
@@ -37,6 +38,22 @@ def _event_out(db: Session, ev: models.IncidentEvent) -> schemas.IncidentEventOu
     out = schemas.IncidentEventOut.model_validate(ev)
     out.user = _display_name(db.get(models.User, ev.user_id)) if ev.user_id else None
     return out
+
+
+def _load_incident_for_mutation(
+    db: Session, user: models.User, incident_id: int
+) -> models.Incident:
+    """Fetch an incident for a write (ack/resolve), enforcing grant scoping BEFORE the
+    mutation (the core helpers commit). A global editor must not change an incident on a
+    connection they can't see or only view (#72): 404 for missing/invisible (existence
+    not leaked), 403 for a visible connection the caller lacks editor on. Mirrors
+    exceptions_api.py's editor-on-connection gate for triage/comments."""
+    incident = db.get(models.Incident, incident_id)
+    if incident is None:
+        raise HTTPException(404, "Incident not found")
+    ds = assert_dataset_visible(db, user, incident.dataset_id)  # 404 missing/invisible
+    assert_connection_role(db, user, ds.connection_id, "editor")  # 403 for a view-only grant
+    return incident
 
 
 @router.get("", response_model=list[schemas.IncidentOut])
@@ -95,9 +112,7 @@ def ack_incident(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role("editor")),
 ):
-    incident = db.get(models.Incident, incident_id)
-    if incident is None:
-        raise HTTPException(404, "Incident not found")
+    incident = _load_incident_for_mutation(db, user, incident_id)
     acknowledge_incident(db, incident, user, body.note if body else "")
     return get_incident(incident_id, db, user)
 
@@ -109,8 +124,6 @@ def resolve_incident_endpoint(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role("editor")),
 ):
-    incident = db.get(models.Incident, incident_id)
-    if incident is None:
-        raise HTTPException(404, "Incident not found")
+    incident = _load_incident_for_mutation(db, user, incident_id)
     resolve_incident(db, incident, user, body.note if body else "")
     return get_incident(incident_id, db, user)

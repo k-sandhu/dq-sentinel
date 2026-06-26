@@ -202,6 +202,43 @@ def test_incident_read_scoped_to_grants(client, admin_headers, source_db):
         assert client.delete(f"{QH}/connections/{cid}", headers=h).status_code == 204
 
 
+def test_incident_mutation_scoped_to_grants(client, admin_headers, source_db):
+    """Incident WRITE endpoints (ack/resolve) gate on editor-ON-the-connection BEFORE
+    mutating (#72, PR #203 review): a global editor granted only on A cannot ack/resolve
+    B's incident (404, and nothing commits), a viewer-grant on B is 403, an editor-grant
+    on B succeeds. The core ack/resolve helpers commit, so the gate must run first."""
+    h = admin_headers
+    sfx = uuid4().hex[:8]
+    a = _conn(client, h, f"authz-incw-A-{sfx}", source_db)
+    b = _conn(client, h, f"authz-incw-B-{sfx}", source_db)
+    _, b_inc_id = _open_incident_on(client, h, b["id"], sfx)
+
+    alice = _mk_user(client, h, f"authz-incw-alice-{sfx}@x.com")  # global editor, granted A only
+    _grant(client, h, alice["id"], a["id"], "editor")
+    ah = _login(client, f"authz-incw-alice-{sfx}@x.com")
+    viewer = _mk_user(client, h, f"authz-incw-viewer-{sfx}@x.com")  # global editor, viewer grant on B
+    _grant(client, h, viewer["id"], b["id"], "viewer")
+    vh = _login(client, f"authz-incw-viewer-{sfx}@x.com")
+    editor = _mk_user(client, h, f"authz-incw-editor-{sfx}@x.com")  # editor grant on B
+    _grant(client, h, editor["id"], b["id"], "editor")
+    eh = _login(client, f"authz-incw-editor-{sfx}@x.com")
+
+    # A-only editor: 404 on B's incident (existence not leaked) for both write verbs.
+    assert client.post(f"{QH}/incidents/{b_inc_id}/resolve", headers=ah).status_code == 404
+    assert client.post(f"{QH}/incidents/{b_inc_id}/ack", headers=ah).status_code == 404
+    # viewer-grant on B: visible but under-role -> 403.
+    assert client.post(f"{QH}/incidents/{b_inc_id}/ack", headers=vh).status_code == 403
+    # ...and none of the rejected writes committed: admin still sees the incident open.
+    assert client.get(f"{QH}/incidents/{b_inc_id}", headers=h).json()["status"] == "open"
+    # editor-grant on B: ack succeeds and persists.
+    ack = client.post(f"{QH}/incidents/{b_inc_id}/ack", json={"note": "mine"}, headers=eh)
+    assert ack.status_code == 200, ack.text
+    assert ack.json()["status"] == "acknowledged"
+
+    for cid in (a["id"], b["id"]):
+        assert client.delete(f"{QH}/connections/{cid}", headers=h).status_code == 204
+
+
 def test_exception_mutation_requires_editor_on_connection(client, admin_headers, source_db):
     """A viewer-grant can READ an exception but not change its triage state — mutation
     requires editor ON the connection, consistent with /query/run etc. (#159)."""
