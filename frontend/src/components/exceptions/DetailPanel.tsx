@@ -7,7 +7,15 @@ import type { MutableRefObject } from "react";
 import { Link } from "react-router";
 import { api } from "../../api/client";
 import { qk } from "../../api/queryKeys";
-import type { Assignee, Check, ExceptionEvent, ExceptionRecord } from "../../api/types";
+import type {
+  Assignee,
+  AttributionFactor,
+  AttributionRow,
+  Check,
+  ExceptionAttribution,
+  ExceptionEvent,
+  ExceptionRecord,
+} from "../../api/types";
 import { canEdit, useAuth } from "../../auth";
 import { checkTypeLabel } from "../../lib/checkMeta";
 import { fmtDateTime, fmtRelative, fmtValue } from "../../lib/format";
@@ -67,6 +75,13 @@ export default function DetailPanel({
   const { data: events, isLoading: eventsLoading } = useQuery({
     queryKey: qk.exceptionEvents.detail(exc.id),
     queryFn: () => api.get<ExceptionEvent[]>(`/exceptions/${exc.id}/events`),
+  });
+
+  // "Why it failed" (#176): good-vs-bad sample + column attribution. Fetched only
+  // when the drawer is open (off the hot list path), like events.
+  const { data: attr, isLoading: attrLoading } = useQuery({
+    queryKey: qk.exceptionAttribution.detail(exc.id),
+    queryFn: () => api.get<ExceptionAttribution>(`/exceptions/${exc.id}/attribution`),
   });
 
   const addComment = useMutation({
@@ -181,6 +196,13 @@ export default function DetailPanel({
           </div>
         </div>
 
+        {/* 3.5 Why it failed: good-vs-bad sample + column attribution (#176) */}
+        <WhyItFailed
+          attr={attr}
+          loading={attrLoading}
+          checkColumn={check?.column_name ?? exc.column_name ?? null}
+        />
+
         {/* 4. Check context card */}
         <div className="xw-panel-section">
           <div className="xw-panel-label">Check</div>
@@ -265,4 +287,122 @@ function eventTitle(ev: ExceptionEvent): string {
   if (ev.kind === "assign") return ev.comment || "assignment changed";
   if (ev.kind === "comment") return "comment";
   return ev.comment || "system";
+}
+
+// "Why it failed" presentational pieces (#176). Read-only; no autofocus and no
+// query invalidation, so the drawer's focus-return-on-close is unaffected.
+const ATTR_REASON_MSG: Record<string, string> = {
+  no_row_predicate: "This check type has no per-row signal to compare.",
+  no_failing_rows: "No sample rows were captured for this exception.",
+  all_columns_redacted: "The relevant columns are redacted.",
+  no_healthy_rows: "No passing rows were found to compare against.",
+  source_unavailable: "A live sample from the source wasn't available.",
+};
+
+function WhyItFailed({
+  attr,
+  loading,
+  checkColumn,
+}: {
+  attr: ExceptionAttribution | undefined;
+  loading: boolean;
+  checkColumn: string | null;
+}) {
+  if (loading) {
+    return (
+      <div className="xw-panel-section">
+        <div className="xw-panel-label">Why it failed</div>
+        <div className="xw-muted">Analyzing why these rows failed…</div>
+      </div>
+    );
+  }
+  if (!attr) return null;
+  if (!attr.computable) {
+    return (
+      <div className="xw-panel-section">
+        <div className="xw-panel-label">Why it failed</div>
+        <div className="xw-muted">
+          {ATTR_REASON_MSG[attr.reason] ?? "Not enough signal to explain this failure."}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="xw-panel-section">
+      <div className="xw-panel-label">Why it failed</div>
+      {attr.summary && <div className="xw-attr-summary">{attr.summary}</div>}
+      {attr.factors.length > 0 && <AttrBars factors={attr.factors} />}
+      <div className="gb-cols">
+        <GoodBadTable tone="good" title="Healthy sample" rows={attr.good_rows} checkColumn={checkColumn} />
+        <GoodBadTable tone="bad" title="Failing sample" rows={attr.bad_rows} checkColumn={checkColumn} />
+      </div>
+    </div>
+  );
+}
+
+function AttrBars({ factors }: { factors: AttributionFactor[] }) {
+  return (
+    <div className="attr-list">
+      <div className="xw-attr-head">Why these rows?</div>
+      {factors.map((f, i) => (
+        <div key={i} className="attr-row" title={`${f.fail_count} failing vs ${f.healthy_count} healthy`}>
+          <div className="ab">
+            <span className="ab-fill" style={{ width: `${f.pct}%` }} />
+            <span className="ab-lbl">{f.label}</span>
+          </div>
+          <span className="ab-pct">{f.pct}%</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function GoodBadTable({
+  tone,
+  title,
+  rows,
+  checkColumn,
+}: {
+  tone: "good" | "bad";
+  title: string;
+  rows: AttributionRow[];
+  checkColumn: string | null;
+}) {
+  const columns = (rows[0]?.columns ?? []).slice(0, 4); // keep the drawer narrow
+  return (
+    <div className="gb-col">
+      <span className={`gb-h ${tone}`}>{title}</span>
+      {rows.length === 0 ? (
+        <div className="xw-muted" style={{ fontSize: 11.5 }}>
+          No rows
+        </div>
+      ) : (
+        <div className="table-wrap">
+          <table className="data gb-table">
+            <thead>
+              <tr>
+                {columns.map((c) => (
+                  <th key={c}>{c}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.slice(0, 5).map((r, ri) => (
+                <tr key={ri}>
+                  {columns.map((c) => {
+                    const idx = r.columns.indexOf(c);
+                    return (
+                      <td key={c} className={`mono${c === checkColumn ? " xw-rd-hit" : ""}`}>
+                        {fmtValue(r.cells[idx])}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
 }

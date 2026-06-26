@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.api.serialize import exception_event_out, exception_out
+from app.core.attribution import build_attribution
 from app.core.audit import audit
 from app.core.events import record_event
 from app.db import get_db
@@ -447,6 +448,22 @@ def list_events(
         .all()
     )
     return [exception_event_out(db, ev) for ev in events]
+
+
+@router.get("/{exc_id}/attribution", response_model=schemas.ExceptionAttributionOut)
+def get_attribution(
+    exc_id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),  # viewer-readable (no triage)
+):
+    """Deterministic good-vs-bad sample + column attribution — "why it failed" (#176).
+    Fetched only when the drawer opens, off the hot list path (like /events). PII is
+    redacted and capped server-side; non-computable cases return an honest reason."""
+    exc = db.get(models.ExceptionRecord, exc_id)
+    if exc is None:
+        raise HTTPException(404, "Exception not found")
+    assert_dataset_visible(db, user, exc.dataset_id)  # 404 for an ungranted connection (#159)
+    return build_attribution(db, exc)
 
 
 @router.post("/{exc_id}/comments", response_model=schemas.ExceptionEventOut, status_code=201)

@@ -1397,6 +1397,23 @@ button.primary.cd-danger-btn:hover { background: var(--danger-deep); border-colo
 .xw-rowdata-table td { padding: 6px 10px; font-size: 12.5px; }
 .xw-rd-key { font-weight: 600; width: 40%; color: var(--text-dark); }
 .xw-rd-hit { color: var(--danger-dark); font-weight: 700; }
+
+/* "Why it failed" attribution (D6 / #176): good-vs-bad + column bars. Tokens only;
+   color always pairs with a text label, so meaning never rides on hue alone. */
+.xw-attr-summary { font-size: 12.5px; color: var(--text-dark); }
+.xw-attr-head { font-size: 11px; font-weight: 700; color: var(--text-light); text-transform: uppercase; letter-spacing: 0.03em; }
+.attr-list { display: flex; flex-direction: column; gap: 6px; margin: 2px 0 4px; }
+.attr-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
+.attr-row .ab { position: relative; height: 19px; border-radius: var(--radius-sm); background: var(--hover-soft); overflow: hidden; display: flex; align-items: center; }
+.attr-row .ab-fill { position: absolute; left: 0; top: 0; bottom: 0; background: color-mix(in srgb, var(--danger) 32%, var(--card)); }
+.attr-row .ab-lbl { position: relative; z-index: 1; padding: 0 8px; font-size: 11px; color: var(--text-dark); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.attr-row .ab-pct { font-size: 11.5px; font-weight: 700; color: var(--danger-dark); min-width: 38px; text-align: right; }
+.gb-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.gb-h { display: inline-block; font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: var(--radius-sm); margin-bottom: 5px; }
+.gb-h.good { background: color-mix(in srgb, var(--ok) 18%, var(--card)); color: color-mix(in srgb, var(--ok) 62%, var(--text-dark)); }
+.gb-h.bad { background: color-mix(in srgb, var(--danger) 18%, var(--card)); color: var(--danger-dark); }
+.gb-table td, .gb-table th { padding: 3px 6px; font-size: 11px; }
+.gb-table th { color: var(--text-light); font-weight: 600; text-align: left; }
 .xw-check-card { background: var(--card2); border: 1px solid var(--border-light); border-radius: 6px; padding: 10px 12px; display: flex; flex-direction: column; gap: 5px; }
 .xw-check-name { font-weight: 700; }
 .xw-check-meta { font-size: 12px; color: var(--text-light); }
