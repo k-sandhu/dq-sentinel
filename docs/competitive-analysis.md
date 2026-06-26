@@ -58,7 +58,7 @@ Column headers used below: **DQ-S** = DQ Sentinel · **GX** = Great Expectations
 | Custom SQL checks (read-only guarded) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Freshness monitoring | ✅ | 🟡 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Volume / row-count anomaly | ✅⁹ | 🟡 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 |
-| Schema-change detection (first-class) | ❌ | 🟡 | ✅ | ✅¹⁰ | ✅ | ✅ | ✅ | ✅ | 🟡 |
+| Schema-change detection (first-class) | ✅⁴¹ | 🟡 | ✅ | ✅¹⁰ | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | Auto-suggested checks (profile-based) | ✅¹¹ | 🟡 | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Unsupervised "monitor everything, no rules" ML | 🟡¹² | ❌ | ✅ | 🟡 | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Statistical distribution drift (PSI / KS) | ✅¹³ | 🟡 | 🟡 | 🟡 | ✅ | ✅ | ✅ | ✅ | ❌ |
@@ -67,7 +67,7 @@ Column headers used below: **DQ-S** = DQ Sentinel · **GX** = Great Expectations
 | Referential-integrity / cross-table checks | 🟡¹⁶ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | Unstructured / text / GenAI data quality | ❌ | ❌ | 🟡 | ❌ | ✅ | ✅ | 🟡 | 🟡 | ❌ |
 
-⁷ 12 check types (see §6). · ⁸ GX ships hundreds of "Expectations." · ⁹ `row_count_min` + `row_count_anomaly` (z-score vs history). · ¹⁰ dbt **model contracts** enforce schema. · ¹¹ Heuristic generator from profile stats. · ¹² ML outlier + drift exist as opt-in check *types*, but DQ-S still expects checks to be defined (auto-gen helps); it is not the zero-config "watch every column automatically" paradigm of Anomalo / Soda RAD. · ¹³ `distribution_drift` (PSI vs profile baseline, KS run-over-run) — a packaged first-class check, which is uncommon in OSS. · ¹⁴ First-class `ml_outlier` (sklearn IsolationForest, deterministic). · ¹⁵ Anomaly is z-score/PSI/KS, not Prophet-style seasonal forecasting. · ¹⁶ Must be expressed via `custom_sql`; no dedicated foreign-key check.
+⁷ 14 check types (see §6). · ⁸ GX ships hundreds of "Expectations." · ⁹ `row_count_min` + `row_count_anomaly` (z-score vs history). · ¹⁰ dbt **model contracts** enforce schema. · ¹¹ Heuristic generator from profile stats. · ¹² ML outlier + drift exist as opt-in check *types*, but DQ-S still expects checks to be defined (auto-gen helps); it is not the zero-config "watch every column automatically" paradigm of Anomalo / Soda RAD. · ¹³ `distribution_drift` (PSI vs profile baseline, KS run-over-run) — a packaged first-class check, which is uncommon in OSS. · ¹⁴ First-class `ml_outlier` (sklearn IsolationForest, deterministic). · ¹⁵ Anomaly is z-score/PSI/KS, not Prophet-style seasonal forecasting. · ¹⁶ Must be expressed via `custom_sql`; no dedicated foreign-key check. · ⁴¹ First-class `schema_change` check (added/removed/retyped/nullability/reorder vs a `previous` or `pinned` baseline) backed by a schema-snapshot monitor; plus a `schema_contract` check that enforces an expected column set.
 
 ---
 
@@ -97,31 +97,31 @@ Column headers used below: **DQ-S** = DQ Sentinel · **GX** = Great Expectations
 | Capability | DQ-S | GX | Soda | dbt+El | MC | Anom | Bigeye | Ent | Native |
 |---|---|---|---|---|---|---|---|---|---|
 | Lineage — table level | ✅²⁷ | ❌ | 🟡 | ✅ | ✅ | 🟡 | ✅ | ✅ | 🟡 |
-| Lineage — **column level** | ❌ | ❌ | 🟡 | 🟡 | ✅ | 🟡 | ✅ | ✅ | 🟡 |
+| Lineage — **column level** | 🟡⁴² | ❌ | 🟡 | 🟡 | ✅ | 🟡 | ✅ | ✅ | 🟡 |
 | Lineage from query logs (not just DDL) | ❌²⁸ | ❌ | 🟡 | ❌ | ✅ | 🟡 | ✅ | ✅ | ✅ |
 | Check-health overlay on lineage | ✅²⁹ | ❌ | 🟡 | 🟡 | ✅ | 🟡 | ✅ | 🟡 | ❌ |
 | Business knowledge base / glossary / ownership | ✅³⁰ | ❌ | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | ✅ | 🟡 |
-| **Data contracts** | ❌ | 🟡 | ✅ | ✅ | 🟡 | 🟡 | 🟡 | ✅ | 🟡 |
+| **Data contracts** | ✅⁴³ | 🟡 | ✅ | ✅ | 🟡 | 🟡 | 🟡 | ✅ | 🟡 |
 | Incident/exception triage workflow | ✅³¹ | ❌ | ✅ | 🟡 | ✅ | ✅ | ✅ | ✅ | ❌ |
 | "Expected/known-issue" feedback loop | ✅³² | ❌ | 🟡 | ❌ | ✅ | ✅ | 🟡 | 🟡 | ❌ |
 | Recurrence / identity tracking (dedup, auto-resolve, regression) | ✅³³ | ❌ | 🟡 | ❌ | ✅ | ✅ | ✅ | 🟡 | ❌ |
-| SLA tracking / enforcement | 🟡³⁴ | ❌ | ✅ | 🟡 | ✅ | 🟡 | ✅ | ✅ | ❌ |
+| SLA tracking / enforcement | ✅³⁴ | ❌ | ✅ | 🟡 | ✅ | 🟡 | ✅ | ✅ | ❌ |
 | Alerting — Slack / Email | ✅ | 🟡 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 |
-| Alerting — PagerDuty/Opsgenie/Teams/webhook | ❌³⁵ | 🟡 | ✅ | 🟡 | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Alert digests / escalation / on-call routing | ❌ | ❌ | ✅ | 🟡 | ✅ | 🟡 | ✅ | ✅ | ❌ |
+| Alerting — PagerDuty/Opsgenie/Teams/webhook | ✅³⁵ | 🟡 | ✅ | 🟡 | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Alert digests / escalation / on-call routing | 🟡⁴⁴ | ❌ | ✅ | 🟡 | ✅ | 🟡 | ✅ | ✅ | ❌ |
 | CI/CD PR gating / data diff | ❌³⁶ | ✅ | ✅ | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | Ad-hoc SQL workbench + saved queries | ✅³⁷ | ❌ | ❌ | ❌ | 🟡 | 🟡 | 🟡 | 🟡 | — |
 | Custom dashboards / reporting UI | ✅³⁸ | 🟡 | ✅ | 🟡 | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Read-only SQL guard on **all** queries (incl. AI) | ✅³⁹ | — | 🟡 | — | 🟡 | 🟡 | 🟡 | 🟡 | ✅ |
 | Source-engine breadth | 🟡⁴⁰ | ✅ | ✅ | 🟡 | ✅ | 🟡 | ✅ | ✅ | ❌ |
 
-²⁷ sqlglot parses view DDL → table-level graph. · ²⁸ DDL/view-definition only; no CTAS/query-history lineage; no cross-connection federation. · ²⁹ pass/warn/fail/unknown per node from live check + exception state — a nice touch. · ³⁰ `TableKnowledge`: business context, owner, importance, freshness SLA, PII columns, known issues — and it **feeds the AI agents**. · ³¹ open → acknowledged / expected / resolved / muted, with assignment, comments, append-only event trail, faceted search, bulk ops, CSV export. Commercial-grade. · ³² "expected" markings flow back into the knowledge base. · ³³ SHA-256 fingerprint identity → occurrence counts, auto-resolve on passing runs, auto-reopen on regression. · ³⁴ Freshness SLA is stored in the knowledge base but not enforced/tracked as an SLA with MTTR dashboards. · ³⁵ Only Slack + Email channels today. · ³⁶ No PR-gate / environment diffing (Datafold's home turf). · ³⁷ Guarded SELECT workbench + shareable saved-query library — uncommon in pure DQ tools. · ³⁸ System dashboard + LLM/heuristic ad-hoc dashboards + a custom widget builder (metric/exceptions/checks/SQL/note). · ³⁹ `guard_sql()` (single SELECT/CTE, keyword denylist, forced LIMIT, literal/comment stripping) on custom checks, workbench, saved queries, dashboard SQL **and every LLM-authored query** — a strong, consistent safety posture. · ⁴⁰ 9 SQL engines (SQLite, DuckDB, PostgreSQL, MySQL, SQL Server, Snowflake, BigQuery, Trino, ClickHouse); no NoSQL, SaaS-app, streaming/CDC, file/object-store, or BI-tool sources.
+²⁷ sqlglot parses view DDL → table-level graph. · ²⁸ DDL/view-definition only; no CTAS/query-history lineage; no cross-connection federation. · ²⁹ pass/warn/fail/unknown per node from live check + exception state — a nice touch. · ³⁰ `TableKnowledge`: business context, owner, importance, freshness SLA, PII columns, known issues — and it **feeds the AI agents**. · ³¹ open → acknowledged / expected / resolved / muted, with assignment, comments, append-only event trail, faceted search + saved views, keyboard triage, bulk ops, CSV export. Commercial-grade. Failures also roll up into a distinct **Incident** object (dedupe per check, open/ack/resolved lifecycle, time-based escalation), separate from row-level exceptions. · ³² "expected" markings flow back into the knowledge base. · ³³ SHA-256 fingerprint identity → occurrence counts, auto-resolve on passing runs, auto-reopen on regression. · ³⁴ First-class SLA tracking (issue #102): `SLADefinition`/`SLAEvaluation`, rolling 7d/30d attainment + error-budget + **MTTR**, breach alerts, and an error-budget dashboard (the **Reliability** page). A dataset's freshness SLA auto-creates a tracked objective. · ³⁵ Slack, Email (SMTP), Microsoft Teams, generic webhook (optional HMAC), and PagerDuty Events v2, plus Jira / ServiceNow ticketing — selected per rule. No Opsgenie. · ³⁶ No PR-gate / environment diffing (Datafold's home turf). · ³⁷ Guarded SELECT workbench + shareable saved-query library — uncommon in pure DQ tools. · ³⁸ System dashboard + LLM/heuristic ad-hoc dashboards + a custom widget builder (metric/exceptions/checks/SQL/note). · ³⁹ `guard_sql()` (single SELECT/CTE, keyword denylist, forced LIMIT, literal/comment stripping) on custom checks, workbench, saved queries, dashboard SQL **and every LLM-authored query** — a strong, consistent safety posture. · ⁴⁰ 9 SQL engines (SQLite, DuckDB, PostgreSQL, MySQL, SQL Server, Snowflake, BigQuery, Trino, ClickHouse); no NoSQL, SaaS-app, streaming/CDC, file/object-store, or BI-tool sources. · ⁴² Opt-in **column-level** lineage (issue #106): sqlglot `qualify`+`lineage` over view DDL classifies column edges (direct/derived/aggregate/unresolved); still DDL-based, not query-log/runtime. · ⁴³ Full **data contracts** (issue #105): `DataContract`/`DataContractVersion`, **ODCS v3 YAML** import/export, and *enforcement* — activating a contract materializes its schema/freshness/volume/quality clauses into real scheduled checks + a pinned schema baseline, with a live per-clause conformance view. · ⁴⁴ Time-based **incident escalation** exists; no scheduled digests or on-call rotation.
 
 ---
 
 ## 6. DQ Sentinel's own check inventory (for reference)
 
-12 first-class check types, all read-only and dialect-aware:
+14 first-class check types, all read-only and dialect-aware:
 
 | # | Type | Level | What it does |
 |---|---|---|---|
@@ -131,14 +131,16 @@ Column headers used below: **DQ-S** = DQ Sentinel · **GX** = Great Expectations
 | 4 | `range` | column | Numeric/date bounds (open-ended ok) |
 | 5 | `string_length` | column | Length bounds |
 | 6 | `regex_match` | column | Pattern match (native regex; Python fallback on SQLite) |
-| 7 | `freshness` | column | Newest timestamp within SLA (excludes future-dated rows) |
-| 8 | `row_count_min` | table | Minimum row threshold |
-| 9 | `row_count_anomaly` | table | Z-score vs rolling history (σ, lookback, min-history) |
-| 10 | `custom_sql` | table | User SELECT returning violating rows (guarded) |
-| 11 | `ml_outlier` | table | IsolationForest multivariate outliers (deterministic, top-N) |
-| 12 | `distribution_drift` | column | PSI vs profile baseline **or** KS run-over-run |
+| 7 | `schema_contract` | table | Current columns match an expected set (missing / type / nullability / additive) |
+| 8 | `freshness` | column | Newest timestamp within SLA — `static` or `adaptive` (median-cadence); excludes future-dated rows |
+| 9 | `row_count_min` | table | Minimum row threshold |
+| 10 | `row_count_anomaly` | table | Row count vs rolling history — `sigma` (z-score) or `adaptive` (median/MAD) |
+| 11 | `custom_sql` | table | User SELECT returning violating rows (guarded) |
+| 12 | `ml_outlier` | table | IsolationForest multivariate outliers (deterministic, top-N) |
+| 13 | `distribution_drift` | column | PSI vs profile baseline **or** KS run-over-run |
+| 14 | `schema_change` | table | Added / removed / retyped / nullability / reorder vs `previous` or `pinned` baseline |
 
-Supporting machinery: a profiler (SQL aggregates + pandas sample stats: quantiles, patterns, PK candidates, top-values), a heuristic + LLM check generator, a cron/interval **scheduler** with optimistic-CAS claiming, severity → status mapping with tolerance, and the exception reconciliation/triage lifecycle described above.
+Supporting machinery: a profiler (SQL aggregates + pandas sample stats: quantiles, patterns, PK candidates, top-values), a heuristic + LLM check generator, a cron/interval **scheduler** with optimistic-CAS claiming, severity → status mapping with tolerance, and the exception reconciliation/triage lifecycle described above. A managed **monitor pack** can auto-provision and reconcile freshness / volume / schema / drift checks per dataset, and a schema-snapshot monitor backs schema history + pinned baselines.
 
 ---
 
@@ -147,14 +149,17 @@ Supporting machinery: a profiler (SQL aggregates + pandas sample stats: quantile
 1. **Agentic, self-hostable AI** — LLM check-gen, a pre-proposal **exploration agent**, an **RCA agent** (read-only SQL tool-loop with evidence-backed reports), and a **conversational assistant** with inline charts. The OSS field has nothing comparable; this rivals Monte Carlo/Anomalo's newest paid AI.
 2. **Provider-agnostic AI incl. local models** — Anthropic *or any* OpenAI-compatible endpoint (OpenRouter/vLLM/Ollama). A real privacy/sovereignty story no commercial competitor matches.
 3. **MCP-aware** — agents can pull in dbt/repo/doc context via MCP. Essentially unique in the DQ space.
-4. **ML as first-class checks** — IsolationForest multivariate outliers + PSI/KS drift + z-score volume anomaly, packaged and deterministic.
-5. **Commercial-grade exception triage** — fingerprint identity, recurrence counts, auto-resolve, regression re-open, assignment, comments, append-only audit, faceted search, bulk ops, CSV export.
-6. **Knowledge base that feeds the AI** — business context, owner, SLA, importance, PII columns; "expected" markings loop back in.
-7. **Lineage with a live check-health overlay.**
-8. **Strong, uniform safety** — `guard_sql()` on *every* query path including AI; PII redaction in prompts; read-only connections per driver; data never leaves the source.
-9. **Batteries-included ops** — built-in scheduler/worker (no Airflow needed), Prometheus + Grafana + Loki self-observability, structured logs with request-ID correlation, audit log, RBAC.
-10. **Analyst UX** — ad-hoc SQL workbench, saved-query library, system + ad-hoc + custom dashboards, global command-K search.
-11. **Fully OSS / self-hosted** — no per-seat SaaS bill, no vendor lock-in, no data egress.
+4. **ML & monitoring breadth as first-class checks** — IsolationForest multivariate outliers + PSI/KS drift + z-score/adaptive volume anomaly + first-class **schema-change** detection, packaged and deterministic. A managed **monitor pack** auto-provisions and reconciles freshness/volume/schema/drift checks per dataset.
+5. **Data contracts (ODCS)** — author/version a contract, import/export **ODCS v3 YAML**, and *enforce* it: activation materializes schema/freshness/volume/quality clauses into real scheduled checks with a live per-clause conformance view.
+6. **SLA tracking & error budgets** — rolling 7d/30d attainment, error-budget burn, and **MTTR**, surfaced on a Reliability dashboard with breach alerts; freshness SLAs auto-create tracked objectives.
+7. **Commercial-grade incident & exception workflow** — fingerprint identity, recurrence counts, auto-resolve, regression re-open; a distinct **Incident** object with dedupe + time-based escalation; assignment, comments, append-only audit, **saved views + keyboard triage**, bulk ops, CSV export — plus a "My work" daily operating console.
+8. **Knowledge base that feeds the AI** — business context, owner, SLA, importance, PII columns; "expected" markings loop back in.
+9. **Lineage with a live check-health overlay** — table-level always, **opt-in column-level**, with search/health/focus controls in the explorer.
+10. **Alerting fan-out** — Slack, Email, Microsoft Teams, generic webhook (HMAC), PagerDuty Events v2, plus Jira/ServiceNow ticketing, with incident escalation.
+11. **Strong, uniform safety** — `guard_sql()` on *every* query path including AI; PII redaction in prompts; read-only connections per driver; data never leaves the source.
+12. **Batteries-included ops** — built-in scheduler/worker (no Airflow needed), Prometheus + Grafana + Loki self-observability, structured logs with request-ID correlation, audit log, RBAC.
+13. **Analyst UX** — ad-hoc SQL workbench (query history + saved-query library), system + ad-hoc + custom drag-and-drop dashboards, global command-K search across datasets/checks/connections/queries.
+14. **Fully OSS / self-hosted** — no per-seat SaaS bill, no vendor lock-in, no data egress.
 
 ## 8. What we **don't** have (gaps), roughly by impact
 
@@ -165,15 +170,12 @@ Supporting machinery: a profiler (SQL aggregates + pandas sample stats: quantile
 - ❌ HA / Kubernetes / Helm / horizontal worker scaling; no managed cloud
 
 **Observability/monitoring depth**
-- ❌ **Column-level lineage**; query-log/CTAS lineage; cross-connection federation
-- ❌ **Schema-change detection** as a first-class monitor
-- ❌ **SLA tracking/enforcement** with MTTR/incident dashboards
-- 🟡 **Unsupervised "watch everything, zero rules"** monitoring (Anomalo / Soda RAD) — we still need checks defined
+- ❌ **Query-log / CTAS lineage** and cross-connection federation (column-level lineage now exists, but only DDL/view-based)
+- 🟡 **Unsupervised "watch everything, zero rules"** monitoring (Anomalo / Soda RAD) — monitor packs auto-provision checks per dataset, but coverage is still rule-defined
 - ❌ Seasonality-aware / forecasting anomaly (Prophet-style)
 
 **Integrations & workflow**
-- ❌ Alerting beyond **Slack/Email** (no PagerDuty/Opsgenie/Teams/generic webhook), no digests/escalation/on-call
-- ❌ **Data contracts** / schema-evolution enforcement
+- 🟡 Alerting: Slack/Email/Teams/webhook/PagerDuty/Jira/ServiceNow ship, but no **Opsgenie**, no scheduled **digests**, no **on-call rotation**
 - ❌ **CI/CD PR gating & data diff** (Datafold-style)
 - ❌ Auto-triggered RCA on failure (on-demand only); DQ-S does not yet **expose its own** MCP server
 
@@ -190,30 +192,30 @@ Supporting machinery: a profiler (SQL aggregates + pandas sample stats: quantile
 DQ Sentinel sits at the **intersection of three categories**:
 
 - vs **OSS test libraries (GX / Soda Core / dbt)** — it *adds* the full product layer they lack: a UI, a scheduler, triage workflow, lineage, dashboards, and AI.
-- vs **commercial observability (Monte Carlo / Bigeye)** — it matches incident triage, anomaly/drift, and lineage-health, but trails on column-level/query-log lineage, SLAs, integrations, and zero-config auto-monitoring.
+- vs **commercial observability (Monte Carlo / Bigeye)** — it matches incident triage, anomaly/drift, lineage-health, SLA/error-budget tracking, and now data contracts, but trails on query-log lineage, on-call/digest alerting, and zero-config auto-monitoring.
 - vs **AI-native DQ (Anomalo / Soda AI)** — it is competitive (and on agentic RCA + bring-your-own-LLM + MCP, arguably ahead), while lacking their at-scale unsupervised "no rules" coverage and unstructured-data support.
 
 **Closest one-line analogue:** *a self-hostable, AI-agent-forward blend of Soda Cloud + a lightweight Monte Carlo, wearing a Metabase-style triage UI.*
 
 **Best fit:** mid-scale data teams (~10–200 datasets) on SQL warehouses who want open-source control, **data residency / no egress**, batteries-included ops, and modern **LLM-assisted diagnostics** without Monte-Carlo/Anomalo pricing — especially teams that need to run a **local model** for compliance.
 
-**Weakest fit:** large regulated enterprises needing SSO + multi-tenancy + column-level lineage + data contracts + PagerDuty/on-call + "monitor everything automatically," or shops whose data isn't primarily in SQL warehouses.
+**Weakest fit:** large regulated enterprises needing SSO + multi-tenancy + secrets-vault encryption + on-call/digest routing + "monitor everything automatically" at scale, or shops whose data isn't primarily in SQL warehouses.
 
 ---
 
 ## 10. Recommendations (highest-leverage gaps to close)
 
 **To become enterprise-credible (table-stakes):**
-1. SSO/OIDC + DSN encryption at rest (unblocks procurement).
-2. Alerting fan-out: PagerDuty/Opsgenie/Teams/generic webhook + digests/escalation.
-3. First-class **schema-change** monitor and **SLA tracking** dashboards.
-4. **Column-level lineage** (sqlglot already parses statements — extend to projections) and query-log lineage.
-5. **Data contracts** (schema + freshness + volume) with CI enforcement.
+1. SSO/OIDC + MFA, and DSN encryption at rest / secrets vault (unblocks procurement) — the top remaining gap.
+2. Multi-tenancy + per-connection / per-dataset RBAC; HA / Kubernetes / Helm.
+3. Round out alerting: Opsgenie, scheduled **digests**, and **on-call rotation** (the per-channel fan-out + incident escalation already ship).
+4. **Query-log / CTAS lineage** and cross-connection federation (column-level over view DDL already ships).
+5. **CI/CD PR gating & data diff** (Datafold-style).
 
 **To extend the AI lead (where we already win):**
 6. Auto-trigger RCA on failure and attach the report to the incident.
 7. NL→check authoring inside the chat assistant; expose DQ-S as its **own MCP server**.
-8. Seasonality-aware/forecasting anomaly; an Anomalo-style "auto-monitor every column" mode built on the existing profiler + drift engine.
+8. Seasonality-aware/forecasting anomaly; an Anomalo-style "auto-monitor every column" mode built on the existing profiler + drift engine + monitor packs.
 9. Unstructured/text DQ using the provider-agnostic LLM layer already in place.
 
 ---
@@ -231,4 +233,4 @@ Competitor capabilities cross-checked against public materials (mid-2026):
 - Enterprise governance — [Collibra](https://www.collibra.com/), [Ataccama/Informatica overview](https://www.alation.com/blog/data-management-software/)
 - Warehouse-native — [Snowflake DMFs](https://docs.snowflake.com/en/sql-reference/functions-data-metric), [Databricks/Snowflake DQ guide](https://atlan.com/know/data-observability-best-practices-snowflake/)
 
-> *DQ Sentinel column derived from source: `core/check_types.py`, `core/profiler.py`, `core/runner.py`, `core/scheduler.py`, `core/ml.py`, `core/lineage.py`, `connectors/{dialects,safety,sa}.py`, `llm/*`, `api/*`, `models.py`, `observability.py`, `frontend/src/`.*
+> *DQ Sentinel column derived from source: `core/check_types.py`, `core/profiler.py`, `core/runner.py`, `core/scheduler.py`, `core/ml.py`, `core/lineage.py`, `core/contracts.py`, `core/sla.py`, `core/incidents.py`, `core/notify.py`, `core/schema_monitor.py`, `connectors/{dialects,safety,sa}.py`, `llm/*`, `api/*`, `models.py`, `observability.py`, `frontend/src/`.*
