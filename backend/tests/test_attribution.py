@@ -9,11 +9,19 @@ App DB is session-shared → globally-unique connection names; the source table 
 conftest `people` fixture (status active/inactive + one "x"; emails null for rows 1-5).
 """
 
+from datetime import datetime
+
 from app.core.attribution import attribution_factors
 from app.db import session_factory
 from app.models import Check, CheckRun, Connection, Dataset, ExceptionRecord, TableKnowledge
 
 _Session = session_factory()
+
+# Backdate the committed exception rows well before any "recent/new exceptions"
+# window (e.g. the dashboard console's last-24h movers) so this attribution fixture
+# can't evict another test's dataset from a global top-N in the session-shared DB.
+# Attribution itself never filters on date, so this changes nothing it asserts.
+_OLD = datetime(2024, 1, 1)
 
 
 def _login(client, email, password):
@@ -46,7 +54,10 @@ def _setup(db, source_db, *, conn_name, col, check_type, params, fail_rows, pii=
     db.flush()
     excs = []
     for rd in fail_rows:
-        e = ExceptionRecord(run_id=run.id, check_id=chk.id, dataset_id=ds.id, row_data=rd, status="open")
+        e = ExceptionRecord(
+            run_id=run.id, check_id=chk.id, dataset_id=ds.id, row_data=rd, status="open",
+            first_seen_at=_OLD, last_seen_at=_OLD, created_at=_OLD,
+        )
         db.add(e)
         db.flush()
         excs.append(e.id)
