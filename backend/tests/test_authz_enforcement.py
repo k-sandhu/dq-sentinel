@@ -49,6 +49,24 @@ def _register_people(client, admin_headers, connection_id):
     ).json()[0]
 
 
+def _open_incident_on(client, admin_headers, connection_id, sfx):
+    """Register people + run a failing not_null check so an incident opens on this
+    connection; return (dataset_id, incident_id) looked up as admin."""
+    ds = _register_people(client, admin_headers, connection_id)
+    chk = client.post(
+        f"{QH}/checks",
+        json={"dataset_id": ds["id"], "check_type": "not_null", "column_name": "email",
+              "name": f"authz-inc-chk-{sfx}-{connection_id}"},
+        headers=admin_headers,
+    ).json()
+    assert client.post(f"{QH}/checks/{chk['id']}/run", headers=admin_headers).status_code in (200, 201)
+    incidents = client.get(
+        f"{QH}/incidents", params={"dataset_id": ds["id"]}, headers=admin_headers
+    ).json()
+    assert incidents, "running a failing check should open an incident"
+    return ds["id"], incidents[0]["id"]
+
+
 def test_grants_scope_connections_datasets_query_and_search(client, admin_headers, source_db):
     h = admin_headers
     sfx = uuid4().hex[:8]
@@ -152,6 +170,79 @@ def test_grants_scope_runs_and_exceptions(client, admin_headers, source_db):
     assert admin_sum["total_datasets"] >= a_sum["total_datasets"]
 
     # Clean up the failing check/run/exceptions so they don't skew global console counts.
+    for cid in (a["id"], b["id"]):
+        assert client.delete(f"{QH}/connections/{cid}", headers=h).status_code == 204
+
+
+def test_incident_read_scoped_to_grants(client, admin_headers, source_db):
+    """Incident READ endpoints are grant-scoped (#159/#179): a user granted editor on
+    connection A gets 404 on GET /incidents/{B's id} (existence not leaked) and never
+    sees B's incident in their list, while admin sees it."""
+    h = admin_headers
+    sfx = uuid4().hex[:8]
+    a = _conn(client, h, f"authz-inc-A-{sfx}", source_db)
+    b = _conn(client, h, f"authz-inc-B-{sfx}", source_db)
+    dsb_id, b_inc_id = _open_incident_on(client, h, b["id"], sfx)
+
+    alice = _mk_user(client, h, f"authz-inc-alice-{sfx}@x.com")  # granted A only
+    _grant(client, h, alice["id"], a["id"], "editor")
+    ah = _login(client, f"authz-inc-alice-{sfx}@x.com")
+
+    # by-id detail: 404 for B's incident, and INDISTINGUISHABLE from a missing id —
+    # identical status AND body, else sequential id probing reveals out-of-scope ids.
+    missing = client.get(f"{QH}/incidents/999999999", headers=ah)
+    invisible = client.get(f"{QH}/incidents/{b_inc_id}", headers=ah)
+    assert missing.status_code == invisible.status_code == 404
+    assert missing.json()["detail"] == invisible.json()["detail"]
+    assert client.get(f"{QH}/incidents/{b_inc_id}", headers=h).status_code == 200  # admin sees it
+
+    # list: B's incident is absent from alice's list, present in admin's (filter by
+    # B's dataset so the shared-DB page can't drop it).
+    assert b_inc_id not in {i["id"] for i in client.get(f"{QH}/incidents", headers=ah).json()}
+    admin_list = client.get(f"{QH}/incidents", params={"dataset_id": dsb_id}, headers=h).json()
+    assert b_inc_id in {i["id"] for i in admin_list}
+
+    for cid in (a["id"], b["id"]):
+        assert client.delete(f"{QH}/connections/{cid}", headers=h).status_code == 204
+
+
+def test_incident_mutation_scoped_to_grants(client, admin_headers, source_db):
+    """Incident WRITE endpoints (ack/resolve) gate on editor-ON-the-connection BEFORE
+    mutating (#72, PR #203 review): a global editor granted only on A cannot ack/resolve
+    B's incident (404, and nothing commits), a viewer-grant on B is 403, an editor-grant
+    on B succeeds. The core ack/resolve helpers commit, so the gate must run first."""
+    h = admin_headers
+    sfx = uuid4().hex[:8]
+    a = _conn(client, h, f"authz-incw-A-{sfx}", source_db)
+    b = _conn(client, h, f"authz-incw-B-{sfx}", source_db)
+    _, b_inc_id = _open_incident_on(client, h, b["id"], sfx)
+
+    alice = _mk_user(client, h, f"authz-incw-alice-{sfx}@x.com")  # global editor, granted A only
+    _grant(client, h, alice["id"], a["id"], "editor")
+    ah = _login(client, f"authz-incw-alice-{sfx}@x.com")
+    viewer = _mk_user(client, h, f"authz-incw-viewer-{sfx}@x.com")  # global editor, viewer grant on B
+    _grant(client, h, viewer["id"], b["id"], "viewer")
+    vh = _login(client, f"authz-incw-viewer-{sfx}@x.com")
+    editor = _mk_user(client, h, f"authz-incw-editor-{sfx}@x.com")  # editor grant on B
+    _grant(client, h, editor["id"], b["id"], "editor")
+    eh = _login(client, f"authz-incw-editor-{sfx}@x.com")
+
+    # A-only editor: 404 on B's incident, INDISTINGUISHABLE from a missing id (identical
+    # status + body) so a write probe can't reveal out-of-scope ids either.
+    miss = client.post(f"{QH}/incidents/999999999/resolve", headers=ah)
+    inv = client.post(f"{QH}/incidents/{b_inc_id}/resolve", headers=ah)
+    assert miss.status_code == inv.status_code == 404
+    assert miss.json()["detail"] == inv.json()["detail"]
+    assert client.post(f"{QH}/incidents/{b_inc_id}/ack", headers=ah).status_code == 404
+    # viewer-grant on B: visible but under-role -> 403.
+    assert client.post(f"{QH}/incidents/{b_inc_id}/ack", headers=vh).status_code == 403
+    # ...and none of the rejected writes committed: admin still sees the incident open.
+    assert client.get(f"{QH}/incidents/{b_inc_id}", headers=h).json()["status"] == "open"
+    # editor-grant on B: ack succeeds and persists.
+    ack = client.post(f"{QH}/incidents/{b_inc_id}/ack", json={"note": "mine"}, headers=eh)
+    assert ack.status_code == 200, ack.text
+    assert ack.json()["status"] == "acknowledged"
+
     for cid in (a["id"], b["id"]):
         assert client.delete(f"{QH}/connections/{cid}", headers=h).status_code == 204
 

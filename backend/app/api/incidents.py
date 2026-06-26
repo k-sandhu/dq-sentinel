@@ -6,7 +6,13 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from app.core.incidents import acknowledge_incident, resolve_incident
 from app.db import get_db
-from app.security import get_current_user, require_role
+from app.security import (
+    assert_connection_role,
+    assert_dataset_visible,
+    get_current_user,
+    require_role,
+    visible_dataset_ids,
+)
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
 
@@ -34,6 +40,38 @@ def _event_out(db: Session, ev: models.IncidentEvent) -> schemas.IncidentEventOu
     return out
 
 
+def _visible_incident_or_404(
+    db: Session, user: models.User, incident_id: int
+) -> models.Incident:
+    """Load an incident the caller may see, raising 404 with an IDENTICAL body for a
+    missing id AND one on an invisible connection — distinct detail strings would let
+    sequential id probing reveal which out-of-scope incidents exist (#72 review). The
+    visibility rule stays in assert_dataset_visible; here we only normalize its detail."""
+    incident = db.get(models.Incident, incident_id)
+    if incident is None:
+        raise HTTPException(404, "Incident not found")
+    try:
+        assert_dataset_visible(db, user, incident.dataset_id)
+    except HTTPException:
+        # Same body as the missing case: never reveal that this id exists elsewhere.
+        raise HTTPException(404, "Incident not found") from None
+    return incident
+
+
+def _load_incident_for_mutation(
+    db: Session, user: models.User, incident_id: int
+) -> models.Incident:
+    """Fetch an incident for a write (ack/resolve), enforcing grant scoping BEFORE the
+    mutation (the core helpers commit). A global editor must not change an incident on a
+    connection they can't see or only view (#72): 404 (indistinguishable from missing)
+    for invisible, 403 for a visible connection the caller lacks editor on. Mirrors
+    exceptions_api.py's editor-on-connection gate for triage/comments."""
+    incident = _visible_incident_or_404(db, user, incident_id)
+    ds = db.get(models.Dataset, incident.dataset_id)  # visibility-checked above; identity-mapped
+    assert_connection_role(db, user, ds.connection_id, "editor")  # 403 for a view-only grant
+    return incident
+
+
 @router.get("", response_model=list[schemas.IncidentOut])
 def list_incidents(
     response: Response,
@@ -44,9 +82,12 @@ def list_incidents(
     limit: int = 50,
     offset: int = 0,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
     query = db.query(models.Incident)
+    visible_ds = visible_dataset_ids(db, user)
+    if visible_ds is not None:  # restrict to incidents on granted connections (#159/#179)
+        query = query.filter(models.Incident.dataset_id.in_(visible_ds))
     if status:
         query = query.filter(models.Incident.status == status)
     if dataset_id is not None:
@@ -69,11 +110,9 @@ def list_incidents(
 def get_incident(
     incident_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
-    incident = db.get(models.Incident, incident_id)
-    if incident is None:
-        raise HTTPException(404, "Incident not found")
+    incident = _visible_incident_or_404(db, user, incident_id)
     out = schemas.IncidentDetailOut(**_incident_out(db, incident).model_dump())
     out.events = [_event_out(db, ev) for ev in incident.events]
     return out
@@ -86,9 +125,7 @@ def ack_incident(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role("editor")),
 ):
-    incident = db.get(models.Incident, incident_id)
-    if incident is None:
-        raise HTTPException(404, "Incident not found")
+    incident = _load_incident_for_mutation(db, user, incident_id)
     acknowledge_incident(db, incident, user, body.note if body else "")
     return get_incident(incident_id, db, user)
 
@@ -100,8 +137,6 @@ def resolve_incident_endpoint(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role("editor")),
 ):
-    incident = db.get(models.Incident, incident_id)
-    if incident is None:
-        raise HTTPException(404, "Incident not found")
+    incident = _load_incident_for_mutation(db, user, incident_id)
     resolve_incident(db, incident, user, body.note if body else "")
     return get_incident(incident_id, db, user)
