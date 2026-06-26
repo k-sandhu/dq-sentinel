@@ -6,7 +6,12 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from app.core.incidents import acknowledge_incident, resolve_incident
 from app.db import get_db
-from app.security import get_current_user, require_role
+from app.security import (
+    assert_dataset_visible,
+    get_current_user,
+    require_role,
+    visible_dataset_ids,
+)
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
 
@@ -44,9 +49,12 @@ def list_incidents(
     limit: int = 50,
     offset: int = 0,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
     query = db.query(models.Incident)
+    visible_ds = visible_dataset_ids(db, user)
+    if visible_ds is not None:  # restrict to incidents on granted connections (#159/#179)
+        query = query.filter(models.Incident.dataset_id.in_(visible_ds))
     if status:
         query = query.filter(models.Incident.status == status)
     if dataset_id is not None:
@@ -69,11 +77,12 @@ def list_incidents(
 def get_incident(
     incident_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
     incident = db.get(models.Incident, incident_id)
     if incident is None:
         raise HTTPException(404, "Incident not found")
+    assert_dataset_visible(db, user, incident.dataset_id)  # incident on a visible connection (#159/#179)
     out = schemas.IncidentDetailOut(**_incident_out(db, incident).model_dump())
     out.events = [_event_out(db, ev) for ev in incident.events]
     return out
