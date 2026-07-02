@@ -1,8 +1,11 @@
 # Full stack: PostgreSQL app DB + API + scheduler worker + nginx frontend.
 #   docker compose up --build      ->  UI on http://localhost:3000
+# The Prometheus/Grafana/Loki observability stack is opt-in:
+#   docker compose --profile monitoring up --build
 # Set ANTHROPIC_API_KEY in your shell or a .env file to enable AI features.
 # Mount your source databases (read-only) into the api+worker containers, e.g.
-# the bundled sample under ./samples (generate it first).
+# the bundled sample under ./samples (generate it first:
+#   python data/generate_sample_data.py).
 
 services:
   postgres:
@@ -76,8 +79,11 @@ services:
       - api
 
   # ---- observability (all open source: Prometheus / Grafana OSS / Loki) ----
+  # Opt-in via profile so a first demo is 4 containers, not 8:
+  #   docker compose --profile monitoring up --build
   prometheus:
     image: prom/prometheus:v3.4.0
+    profiles: ["monitoring"]
     restart: unless-stopped
     command: ["--config.file=/etc/prometheus/prometheus.yml"]
     volumes:
@@ -88,6 +94,7 @@ services:
 
   loki:
     image: grafana/loki:3.4.2
+    profiles: ["monitoring"]
     restart: unless-stopped
     command: ["-config.file=/etc/loki/config.yml"]
     volumes:
@@ -96,6 +103,7 @@ services:
 
   promtail:
     image: grafana/promtail:3.4.2
+    profiles: ["monitoring"]
     restart: unless-stopped
     command: ["-config.file=/etc/promtail/config.yml"]
     volumes:
@@ -107,6 +115,7 @@ services:
 
   grafana:
     image: grafana/grafana-oss:11.6.1
+    profiles: ["monitoring"]
     restart: unless-stopped
     environment:
       GF_SECURITY_ADMIN_USER: admin
