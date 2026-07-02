@@ -24,6 +24,20 @@ router = APIRouter(prefix="/docs", tags=["docs"])
 # below is the second).
 _SLUG_RE = re.compile(r"[A-Za-z0-9._-]+")
 
+# Internal engineering artifacts that live in docs/ for the repo/contributors but
+# are not end-user documentation — don't surface them in the in-app docs browser
+# (a demo user shouldn't land on the hardening backlog or a broken-flows triage
+# list). Slugs = filename without .md. Keep in sync with docs/ as it evolves.
+_INTERNAL_SLUGS = frozenset(
+    {
+        "codebase-deep-dive-action-plan",
+        "BROKEN-FLOWS",
+        "UI-GLOSSARY",
+        "ui-flow-glossary",
+        "test-report-2026-06",
+    }
+)
+
 
 def _docs_dir() -> Path:
     return get_settings().docs_path
@@ -56,7 +70,7 @@ def list_docs(_: models.User = Depends(get_current_user)) -> list[schemas.DocSum
         return []
     out: list[schemas.DocSummary] = []
     for path in root.glob("*.md"):
-        if not path.is_file():
+        if not path.is_file() or path.stem in _INTERNAL_SLUGS:
             continue
         try:
             out.append(_summary(path, path.read_text(encoding="utf-8"), path.stat()))
@@ -70,10 +84,12 @@ def list_docs(_: models.User = Depends(get_current_user)) -> list[schemas.DocSum
 def get_doc(slug: str, _: models.User = Depends(get_current_user)) -> schemas.DocContent:
     root = _docs_dir()
     path = root / f"{slug}.md"
-    # Reject anything that isn't a plain filename living directly in docs_dir.
+    # Reject anything that isn't a plain filename living directly in docs_dir, and
+    # internal engineering artifacts (not user docs — see _INTERNAL_SLUGS).
     if (
         not _SLUG_RE.fullmatch(slug)
         or ".." in slug
+        or slug in _INTERNAL_SLUGS
         or not root.is_dir()
         or path.resolve().parent != root.resolve()
         or not path.is_file()
