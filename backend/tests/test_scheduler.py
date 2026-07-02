@@ -65,6 +65,57 @@ def test_worker_claims_and_runs_due_check(source_db):
     assert runs == 1, f"check ran again unexpectedly (claimed={again})"
 
 
+def test_validate_schedule_rejects_unparseable_expr():
+    from app.core.check_authoring import validate_schedule
+
+    validate_schedule("interval", "60")  # ok
+    validate_schedule("cron", "0 6 * * *")  # ok
+    validate_schedule("interval", None)  # no schedule -> fine
+    for kind, expr in [("interval", "daily"), ("cron", "every day"), ("cron", "0 6 * *")]:
+        try:
+            validate_schedule(kind, expr)
+        except ValueError:
+            continue
+        raise AssertionError(f"validate_schedule accepted bad {kind} expr {expr!r}")
+
+
+def test_poisoned_schedule_expr_does_not_wedge_pass(source_db):
+    """A single unparseable schedule_expr (pre-validation legacy row) must be parked,
+    not abort the whole claim loop and starve every check behind it."""
+    init_db()
+    factory = session_factory()
+    with factory() as db:
+        conn = Connection(name="sched-poison", kind="sqlite", dsn=source_db)
+        db.add(conn)
+        db.flush()
+        ds = Dataset(connection_id=conn.id, table_name="people", display_name="people")
+        db.add(ds)
+        db.flush()
+        # The poisoned check is due earliest, so it sorts first in the `due` query —
+        # exactly the position that used to abort the pass before any sibling ran.
+        bad = Check(
+            dataset_id=ds.id, name="poison", check_type="not_null", column_name="email",
+            severity="warn", status="active", schedule_kind="cron", schedule_expr="not a cron",
+            next_run_at=datetime.now() - timedelta(minutes=10),
+        )
+        good = Check(
+            dataset_id=ds.id, name="good", check_type="not_null", column_name="email",
+            severity="warn", status="active", schedule_kind="interval", schedule_expr="60",
+            next_run_at=datetime.now() - timedelta(minutes=5),
+        )
+        db.add_all([bad, good])
+        db.commit()
+        bad_id, good_id = bad.id, good.id
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        claimed = poll_once(executor)
+    assert claimed >= 1  # the good check still ran despite the poisoned one sorting first
+
+    with factory() as db:
+        assert db.get(Check, bad_id).next_run_at is None  # parked, no longer blocking
+        assert db.query(CheckRun).filter(CheckRun.check_id == good_id).count() == 1
+
+
 def test_request_stop_sets_stop_event():
     from app.core import scheduler
 

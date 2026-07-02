@@ -49,6 +49,34 @@ def _validate_enum(field: str, value: Any, allowed: tuple[str, ...], *, allow_no
         raise ValueError(f"{field} must be one of {list(allowed)}{suffix}, got {value!r}")
 
 
+def validate_schedule(schedule_kind: str | None, schedule_expr: str | None) -> None:
+    """Reject a schedule the worker can't parse, at authoring time.
+
+    ``compute_next_run`` does ``int(float(expr))`` for intervals and
+    ``croniter(expr, now)`` for cron. Neither the REST Literal nor the enum
+    checks above cover ``schedule_expr``, so a value like ``interval``/``"daily"``
+    or ``cron``/``"every day"`` would persist and then raise inside the scheduler
+    loop every pass — wedging *all* scheduled checks (the poisoned row has the
+    oldest ``next_run_at`` and sorts first). Fail here with a 422 instead.
+    """
+    if not schedule_expr:
+        return  # no schedule -> compute_next_run returns None (never due); fine
+    kind = schedule_kind or "interval"
+    if kind == "interval":
+        try:
+            float(schedule_expr)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"schedule_expr for an interval schedule must be a number of minutes, "
+                f"got {schedule_expr!r}"
+            ) from None
+    elif kind == "cron":
+        from croniter import croniter
+
+        if not croniter.is_valid(schedule_expr):
+            raise ValueError(f"schedule_expr is not a valid cron expression: {schedule_expr!r}")
+
+
 def _definition_snapshot(check: Check) -> dict[str, Any]:
     snap = {f: getattr(check, f) for f in DEFINITION_FIELDS}
     snap["params"] = copy.deepcopy(snap.get("params") or {})
@@ -107,6 +135,7 @@ def create_check(
     _validate_enum("severity", severity, _SEVERITIES)
     _validate_enum("status", status, _STATUSES)
     _validate_enum("schedule_kind", schedule_kind, _SCHEDULE_KINDS, allow_none=True)
+    validate_schedule(schedule_kind, schedule_expr)
     normalized = validate_check(check_type, column_name, params or {})
     check = Check(
         dataset_id=ds.id,
@@ -160,6 +189,11 @@ def apply_update(db: Session, user: User | None, check: Check, changes: dict[str
     for field in ("name", "severity", "rationale", "schedule_kind", "schedule_expr"):
         if field in changes and changes[field] is not None:
             setattr(check, field, changes[field])
+    # Validate the *resulting* schedule (either field may have changed).
+    if ("schedule_kind" in changes and changes["schedule_kind"] is not None) or (
+        "schedule_expr" in changes and changes["schedule_expr"] is not None
+    ):
+        validate_schedule(check.schedule_kind, check.schedule_expr)
     if "status" in changes and changes["status"] is not None and changes["status"] != check.status:
         check.status = changes["status"]
         check.next_run_at = utcnow() if check.status == "active" else None

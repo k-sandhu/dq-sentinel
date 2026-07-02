@@ -159,7 +159,24 @@ def poll_once(executor: ThreadPoolExecutor) -> int:
             .all()
         )
         for check in due:
-            nxt = compute_next_run(check, now)
+            try:
+                nxt = compute_next_run(check, now)
+            except Exception:  # noqa: BLE001 - one bad schedule_expr must not wedge the pass
+                # Authoring now validates schedule_expr, but a row predating that
+                # (or hand-edited in the DB) could still be unparseable. Park it —
+                # clear next_run_at so it stops sorting first and blocking siblings —
+                # instead of raising and aborting every later check forever.
+                log.exception(
+                    "Check %s has an unparseable schedule (%s %r); parking it (next_run_at=NULL)",
+                    check.id, check.schedule_kind, check.schedule_expr,
+                )
+                db.execute(
+                    update(Check)
+                    .where(Check.id == check.id, Check.next_run_at == check.next_run_at)
+                    .values(next_run_at=None)
+                )
+                db.commit()
+                continue
             res = db.execute(
                 update(Check)
                 .where(Check.id == check.id, Check.next_run_at == check.next_run_at)

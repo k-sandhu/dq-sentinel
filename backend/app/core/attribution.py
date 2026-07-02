@@ -9,13 +9,14 @@ on a redacted column is dropped, so a redacted column never leaks via a value OR
 label (two independent gates).
 """
 
+import json
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.connectors.sa import connector_for
-from app.core.check_types import _lit
+from app.core.check_types import _char_length_fn
 from app.llm.client import redact_rows
 from app.models import utcnow
 
@@ -23,10 +24,21 @@ SAMPLE_ROWS = 10  # good_rows and bad_rows each capped here (a drawer, not an ex
 MAX_FACTORS = 8  # ranked attribution list cap
 
 
-def healthy_where(check: models.Check, col_sql: str) -> str | None:
-    """The passing-rows predicate = the exact negation of the check's violation WHERE,
-    for the column check types where it is well-defined; ``None`` => no per-row signal
-    (unique / regex / freshness / volume / custom).
+def _hashable(v: Any) -> Any:
+    """Make a JSON cell usable as a dict key / equality target. list/dict values
+    (from JSON/array source columns) are unhashable and would crash the factor
+    tally; collapse them to a stable string."""
+    if isinstance(v, (list, dict)):
+        return json.dumps(v, sort_keys=True, default=str)
+    return v
+
+
+def healthy_where(check: models.Check, col_sql: str, kind: str = "") -> tuple[str | None, dict[str, Any]]:
+    """The passing-rows predicate (with bound params) = the exact negation of the
+    check's violation WHERE, for the column check types where it is well-defined.
+    Returns ``(None, {})`` when there's no per-row signal (unique / regex / freshness
+    / volume / custom). Values are bound, not inlined, so the predicate is safe on
+    backslash-escaping dialects.
 
     NULLs count as PASSING for the value/range/length checks: their compilers flag only
     non-NULL violations (check_types.py ``{col} IS NOT NULL AND ...``), so a true
@@ -36,38 +48,45 @@ def healthy_where(check: models.Check, col_sql: str) -> str | None:
     p = check.params or {}
     t = check.check_type
     if t == "not_null":
-        return f"{col_sql} IS NOT NULL"
+        return f"{col_sql} IS NOT NULL", {}
     if t == "accepted_values":
         values = p.get("values") or []
-        if not values:
-            return None
+        if not isinstance(values, list) or not values:
+            return None, {}
         if p.get("case_sensitive", True):
-            in_set = f"{col_sql} IN ({', '.join(_lit(v) for v in values)})"
+            params = {f"h{i}": v for i, v in enumerate(values)}
+            placeholders = ", ".join(f":h{i}" for i in range(len(values)))
+            in_set = f"{col_sql} IN ({placeholders})"
         else:
-            lits = ", ".join(_lit(str(v).lower()) for v in values)
-            in_set = f"LOWER(CAST({col_sql} AS VARCHAR)) IN ({lits})"
-        return f"({col_sql} IS NULL OR {in_set})"
+            params = {f"h{i}": str(v).lower() for i, v in enumerate(values)}
+            placeholders = ", ".join(f":h{i}" for i in range(len(values)))
+            in_set = f"LOWER(CAST({col_sql} AS VARCHAR)) IN ({placeholders})"
+        return f"({col_sql} IS NULL OR {in_set})", params
     if t == "range":
         lo, hi = p.get("min"), p.get("max")
         if lo is None and hi is None:
-            return None
+            return None, {}
         parts = []
+        params = {}
         if lo is not None:
-            parts.append(f"{col_sql} >= {_lit(lo)}")
+            parts.append(f"{col_sql} >= :hmin")
+            params["hmin"] = lo
         if hi is not None:
-            parts.append(f"{col_sql} <= {_lit(hi)}")
-        return f"({col_sql} IS NULL OR ({' AND '.join(parts)}))"
+            parts.append(f"{col_sql} <= :hmax")
+            params["hmax"] = hi
+        return f"({col_sql} IS NULL OR ({' AND '.join(parts)}))", params
     if t == "string_length":
         lo, hi = p.get("min_len"), p.get("max_len")
         if lo is None and hi is None:
-            return None
+            return None, {}
+        length = _char_length_fn(kind)
         parts = []
         if lo is not None:
-            parts.append(f"LENGTH({col_sql}) >= {int(lo)}")
+            parts.append(f"{length}({col_sql}) >= {int(lo)}")
         if hi is not None:
-            parts.append(f"LENGTH({col_sql}) <= {int(hi)}")
-        return f"({col_sql} IS NULL OR ({' AND '.join(parts)}))"
-    return None
+            parts.append(f"{length}({col_sql}) <= {int(hi)}")
+        return f"({col_sql} IS NULL OR ({' AND '.join(parts)}))", {}
+    return None, {}
 
 
 def attribution_factors(
@@ -92,11 +111,12 @@ def attribution_factors(
             continue
         fail_counts: dict[Any, int] = {}
         for r in bad_rows:
-            v = r.get(c)
+            v = _hashable(r.get(c))
             fail_counts[v] = fail_counts.get(v, 0) + 1
+        good_vals = [_hashable(r.get(c)) for r in good_rows] if n_good else []
         for value, fcount in fail_counts.items():
             fail_pct = fcount / n_bad
-            hcount = sum(1 for r in good_rows if r.get(c) == value) if n_good else 0
+            hcount = sum(1 for gv in good_vals if gv == value) if n_good else 0
             healthy_pct = (hcount / n_good) if n_good else 0.0
             score = fail_pct * 0.6 + max(fail_pct - healthy_pct, 0.0) * 0.4
             label = f"{c} = {value!r}" if isinstance(value, str) else f"{c} = {value}"
@@ -168,11 +188,11 @@ def _healthy_sample(
     # bad source/check degrades to an honest reason instead of a 500.
     try:
         conn = connector_for(connection)
-        where = healthy_where(check, conn.quote(check.column_name))
+        where, params = healthy_where(check, conn.quote(check.column_name), conn.kind)
         if where is None:
             return [], "no_row_predicate"
         ref = conn.table_ref(dataset.table_name, dataset.schema_name)
-        res = conn.run_select(f"SELECT * FROM {ref} WHERE {where}", limit=SAMPLE_ROWS)
+        res = conn.run_select(f"SELECT * FROM {ref} WHERE {where}", params, limit=SAMPLE_ROWS)
         rows = [dict(zip(res.columns, r, strict=False)) for r in res.rows]
         return rows, ("no_healthy_rows" if not rows else "")
     except Exception:

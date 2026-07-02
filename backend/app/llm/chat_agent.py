@@ -244,6 +244,10 @@ _histories_lock = threading.Lock()
 def drop_history(session_id: int) -> None:
     with _histories_lock:
         _histories.pop(session_id, None)
+    # Evict the per-session turn lock too, else _turn_locks grows unbounded for the
+    # process lifetime (histories are LRU-capped; locks were not) (#B12).
+    with _turn_locks_guard:
+        _turn_locks.pop(session_id, None)
 
 
 def _history_for(db, session_id: int) -> list[dict[str, Any]]:
@@ -848,7 +852,14 @@ def _run_loop(
 
     if cancel.is_set():
         return final_text or "(stopped)"
-    return final_text or (
+    fallback = final_text or (
         "I could not finish answering within the investigation budget. "
         "Try a narrower question, or ask me to continue."
     )
+    # Never leave the cached history ending on tool_results: the next turn appends a
+    # user message, and Anthropic rejects two consecutive user-role messages
+    # (tool_results serialize as a user turn), 400-ing the turn right after any
+    # tool-budget-exhausted one. Cap it with a synthetic assistant turn (#B9).
+    if history and history[-1]["role"] == "tool_results":
+        history.append({"role": "assistant", "response": LlmResponse(text=fallback)})
+    return fallback

@@ -93,15 +93,6 @@ def _sample_where(ctx: CheckContext, where: str, params: dict[str, Any] | None =
     )
 
 
-def _lit(v: Any) -> str:
-    """Inline a value as a safe SQL literal (numbers as-is, strings escaped)."""
-    if isinstance(v, bool):
-        return "TRUE" if v else "FALSE"
-    if isinstance(v, (int, float)):
-        return repr(v)
-    return "'" + str(v).replace("'", "''") + "'"
-
-
 def _bool_param(value: Any, default: bool) -> bool:
     if value in (None, ""):
         return default
@@ -185,16 +176,22 @@ def _run_unique(ctx: CheckContext) -> CheckResult:
 # ---------------------------------------------------------------- accepted_values
 def _run_accepted_values(ctx: CheckContext) -> CheckResult:
     values = ctx.params.get("values") or []
-    if not values:
-        raise ValueError("accepted_values requires non-empty 'values'")
+    if not isinstance(values, list) or not values:
+        raise ValueError("accepted_values requires a non-empty list 'values'")
     case_sensitive = ctx.params.get("case_sensitive", True)
+    # Bind values as parameters rather than inlining literals: doubling quotes is
+    # not enough on backslash-escaping dialects (MySQL/MariaDB), where an inlined
+    # value ending in `\` breaks out of the string and past guard_sql. Binding is
+    # dialect-safe for every engine.
     if case_sensitive:
-        lits = ", ".join(_lit(v) for v in values)
-        where = f"{ctx.col} IS NOT NULL AND {ctx.col} NOT IN ({lits})"
+        params = {f"v{i}": v for i, v in enumerate(values)}
+        placeholders = ", ".join(f":v{i}" for i in range(len(values)))
+        where = f"{ctx.col} IS NOT NULL AND {ctx.col} NOT IN ({placeholders})"
     else:
-        lits = ", ".join(_lit(str(v).lower()) for v in values)
-        where = f"{ctx.col} IS NOT NULL AND LOWER(CAST({ctx.col} AS VARCHAR)) NOT IN ({lits})"
-    r = _sample_where(ctx, where)
+        params = {f"v{i}": str(v).lower() for i, v in enumerate(values)}
+        placeholders = ", ".join(f":v{i}" for i in range(len(values)))
+        where = f"{ctx.col} IS NOT NULL AND LOWER(CAST({ctx.col} AS VARCHAR)) NOT IN ({placeholders})"
+    r = _sample_where(ctx, where, params)
     r.reasons = [f"{ctx.column} = {row.get(ctx.column)!r} not in accepted set" for row in r.sample_rows]
     return r
 
@@ -205,15 +202,32 @@ def _run_range(ctx: CheckContext) -> CheckResult:
     if lo is None and hi is None:
         raise ValueError("range requires 'min' and/or 'max'")
     parts = []
+    params: dict[str, Any] = {}
     if lo is not None:
-        parts.append(f"{ctx.col} < {_lit(lo)}")
+        parts.append(f"{ctx.col} < :rmin")
+        params["rmin"] = lo
     if hi is not None:
-        parts.append(f"{ctx.col} > {_lit(hi)}")
+        parts.append(f"{ctx.col} > :rmax")
+        params["rmax"] = hi
     where = f"{ctx.col} IS NOT NULL AND (" + " OR ".join(parts) + ")"
-    r = _sample_where(ctx, where)
+    r = _sample_where(ctx, where, params)
     bounds = f"[{lo if lo is not None else '-inf'}, {hi if hi is not None else 'inf'}]"
     r.reasons = [f"{ctx.column} = {row.get(ctx.column)!r} outside {bounds}" for row in r.sample_rows]
     return r
+
+
+def _char_length_fn(kind: str) -> str:
+    """SQL function returning CHARACTER count (not bytes) for the dialect.
+
+    ``LENGTH`` counts bytes on MySQL/MariaDB, so a character-length bound would be
+    silently wrong for multibyte data; use ``CHAR_LENGTH`` there. MSSQL spells it
+    ``LEN``. Everywhere else ``LENGTH`` already returns characters.
+    """
+    if kind in ("mysql", "mariadb", "clickhouse"):
+        return "CHAR_LENGTH"
+    if kind == "mssql":
+        return "LEN"
+    return "LENGTH"
 
 
 # ---------------------------------------------------------------- string_length
@@ -221,11 +235,12 @@ def _run_string_length(ctx: CheckContext) -> CheckResult:
     lo, hi = ctx.params.get("min_len"), ctx.params.get("max_len")
     if lo is None and hi is None:
         raise ValueError("string_length requires 'min_len' and/or 'max_len'")
+    length = _char_length_fn(ctx.connector.kind)
     parts = []
     if lo is not None:
-        parts.append(f"LENGTH({ctx.col}) < {int(lo)}")
+        parts.append(f"{length}({ctx.col}) < {int(lo)}")
     if hi is not None:
-        parts.append(f"LENGTH({ctx.col}) > {int(hi)}")
+        parts.append(f"{length}({ctx.col}) > {int(hi)}")
     where = f"{ctx.col} IS NOT NULL AND (" + " OR ".join(parts) + ")"
     r = _sample_where(ctx, where)
     r.reasons = [
@@ -730,12 +745,21 @@ def _psi(expected: np.ndarray, actual: np.ndarray) -> float:
     return float(np.sum((a - e) * np.log(a / e)))
 
 
-def _decile_edges(quantiles: dict[str, Any]) -> np.ndarray | None:
-    """Build 9 inner decile edges (p10..p90) from a profile's stored quantiles.
+def _decile_edges(quantiles: dict[str, Any]) -> tuple[np.ndarray, np.ndarray] | None:
+    """Build histogram edges + the baseline probability of each bin from a profile's
+    stored quantiles.
 
     The profiler stores p1/p5/p25/p50/p75/p95/p99 (see profiler.py), not deciles,
-    so we interpolate the quantile function at the deciles. Edges are made strictly
-    increasing; degenerate (single-value) columns return None.
+    so we interpolate the quantile function at the deciles to get 10 equiprobable
+    (0.1 each) baseline bins. Returns ``(edges, expected)`` where ``expected`` sums
+    to 1; degenerate (single-value) columns return None.
+
+    Ties matter: a skewed / zero-inflated column collapses several deciles onto one
+    edge. Collapsing with ``np.unique`` alone and then assuming ``1/nbins`` per bin
+    (the old behaviour) understates a merged bin's true mass — e.g. a 70%-zero column
+    merges ~7 deciles into one bin that then carries 0.7 of the baseline but was
+    scored as 1/nbins, producing a huge PSI on data identical to the baseline. So we
+    distribute each decile's 0.1 into whichever surviving bin contains it.
     """
     pts = sorted(
         (float(k), float(v))
@@ -747,13 +771,26 @@ def _decile_edges(quantiles: dict[str, Any]) -> np.ndarray | None:
     probs = np.array([p for p, _ in pts])
     vals = np.array([v for _, v in pts])
     inner = np.interp(np.arange(1, 10) / 10.0, probs, vals)
-    edges = np.concatenate(([-np.inf], inner, [np.inf]))
-    # collapse ties so np.histogram gets monotonic edges; a near-constant column
-    # (all edges equal) can't form a distribution → signal "no usable baseline".
-    edges = np.unique(edges)
-    if edges.size < 3:
+    raw = np.concatenate(([-np.inf], inner, [np.inf]))  # 11 edges → 10 equiprobable deciles
+    edges = np.unique(raw)  # monotonic edges for np.histogram
+    if edges.size < 3:  # near-constant column → no usable distribution
         return None
-    return edges
+    nbins = edges.size - 1
+    # Assign each of the 10 baseline deciles' 0.1 mass to the surviving bin holding
+    # its representative point (midpoint, or the point value for a zero-width tie).
+    expected = np.zeros(nbins)
+    for k in range(raw.size - 1):
+        lo, hi = raw[k], raw[k + 1]
+        if lo == -np.inf:
+            idx = 0
+        elif hi == np.inf:
+            idx = nbins - 1
+        elif lo == hi:
+            idx = min(int(np.searchsorted(edges, lo, side="right")) - 1, nbins - 1)
+        else:
+            idx = min(int(np.searchsorted(edges, (lo + hi) / 2.0, side="right")) - 1, nbins - 1)
+        expected[max(idx, 0)] += 0.1
+    return edges, expected
 
 
 def _drift_pass_detail(
@@ -780,11 +817,11 @@ def _drift_pass_detail(
 
 def _numeric_drift(values: pd.Series, bcol: dict[str, Any], threshold: float) -> CheckResult | None:
     """PSI of current numeric values vs the baseline profile's decile distribution."""
-    edges = _decile_edges(bcol.get("quantiles") or {})
-    if edges is None:
+    built = _decile_edges(bcol.get("quantiles") or {})
+    if built is None:
         return None
+    edges, expected = built
     nbins = edges.size - 1
-    expected = np.full(nbins, 1.0 / nbins)  # deciles are equiprobable by construction
     nums = pd.to_numeric(values, errors="coerce").dropna().to_numpy()
     if nums.size == 0:
         return CheckResult(
@@ -828,14 +865,19 @@ def _edge(x: float) -> Any:
 
 
 def _categorical_drift(
-    values: pd.Series, bcol: dict[str, Any], sampled_rows: int, threshold: float
+    values: pd.Series, bcol: dict[str, Any], nonnull_total: int, threshold: float
 ) -> CheckResult:
-    """PSI of current category mix vs the baseline top_values (+ __other__)."""
+    """PSI of current category mix vs the baseline top_values (+ __other__).
+
+    ``top_values`` are *full-table* exact counts (profiler.py), so the baseline
+    denominator must be the full-table non-null count — NOT the pandas sample size.
+    Using the sample size made ``sum(top_counts) > total`` for columns with >10
+    distinct values, collapsing the ``__other__`` expected mass to ~0 and inflating
+    PSI on unchanged data (the 11–20-distinct band the generator targets)."""
     tops = bcol.get("top_values") or []
     cats = [str(t["value"]) for t in tops]
     base_counts = np.array([float(t["count"]) for t in tops])
-    base_total = float(sampled_rows) if sampled_rows else float(base_counts.sum())
-    base_total = max(base_total, base_counts.sum(), 1.0)
+    base_total = max(float(nonnull_total), float(base_counts.sum()), 1.0)
     expected = np.append(base_counts / base_total, max(0.0, 1.0 - base_counts.sum() / base_total))
 
     cur = values.dropna().astype(str)
@@ -962,7 +1004,10 @@ def _run_distribution_drift(ctx: CheckContext) -> CheckResult:
                 note="unusable numeric baseline",
             )
     elif bcol.get("top_values"):
-        result = _categorical_drift(values, bcol, profile.sampled_rows, threshold)
+        # Baseline denominator = full-table non-null count (top_values are full-table
+        # exact counts), not the pandas sample size.
+        nonnull_total = int(profile.row_count or 0) - int(bcol.get("null_count") or 0)
+        result = _categorical_drift(values, bcol, nonnull_total, threshold)
     else:
         return _drift_pass_detail(
             f"baseline profile #{profile.id} has neither quantiles nor categories for {ctx.column!r}",
@@ -1210,6 +1255,10 @@ def validate_check(check_type: str, column_name: str | None, params: dict[str, A
     for p in ct.params:
         if p["required"] and normalized.get(p["name"]) in (None, "", []):
             raise ValueError(f"Check type '{check_type}' requires param '{p['name']}'")
+    if check_type == "accepted_values":
+        values = normalized.get("values")
+        if not isinstance(values, list):
+            raise ValueError("accepted_values 'values' must be a list")
     if check_type == "custom_sql":
         guard_sql(normalized["sql"])
     if check_type == "regex_match":

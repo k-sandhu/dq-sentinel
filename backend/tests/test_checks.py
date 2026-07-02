@@ -4,10 +4,18 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from app.connectors.sa import Connector
-from app.core.check_types import CheckContext, run_check_type, validate_check
+from app.core.check_types import (
+    CheckContext,
+    _categorical_drift,
+    _decile_edges,
+    _numeric_drift,
+    run_check_type,
+    validate_check,
+)
 from tests.conftest import BAD_EMAILS, BAD_STATUS, HUGE_AGE, NULL_EMAILS, SOURCE_ROWS
 
 
@@ -46,6 +54,22 @@ def test_accepted_values(ctx_factory):
     assert r.sample_rows[0]["status"] == "x"
 
 
+def test_accepted_values_binds_special_chars(ctx_factory):
+    # A value containing a quote/backslash must not break the SQL or bypass the guard
+    # (values are bound, not inlined). The odd extra value simply matches nothing.
+    r = run_check_type(
+        ctx_factory("status", {"values": ["active", "inactive", "o'brien\\"]}),
+        "accepted_values",
+    )
+    assert r.violation_count == BAD_STATUS
+
+
+def test_validate_accepted_values_requires_list():
+    # a bare comma string used to iterate into IN ('a', ',', 'b', ...) — reject it
+    with pytest.raises(ValueError):
+        validate_check("accepted_values", "status", {"values": "active,inactive"})
+
+
 def test_range(ctx_factory):
     r = run_check_type(ctx_factory("age", {"min": 0, "max": 120}), "range")
     assert r.violation_count == HUGE_AGE
@@ -55,6 +79,38 @@ def test_range(ctx_factory):
 def test_string_length(ctx_factory):
     r = run_check_type(ctx_factory("email", {"min_len": 6}), "string_length")
     assert r.violation_count == 1  # "a@b"
+
+
+def test_decile_edges_distributes_mass_on_ties():
+    # zero-inflated baseline: p1..p50 all 0 -> several deciles collapse onto one edge.
+    # The merged bin must carry the deciles' pooled mass, not a flat 1/nbins (else PSI
+    # fires on data identical to the baseline).
+    q = {"0.01": 0, "0.05": 0, "0.25": 0, "0.5": 0, "0.75": 5, "0.95": 20, "0.99": 50}
+    edges, expected = _decile_edges(q)
+    assert abs(float(expected.sum()) - 1.0) < 1e-9
+    nbins = edges.size - 1
+    assert float(expected.max()) > 1.5 / nbins  # a collapsed bin holds many deciles
+
+
+def test_numeric_drift_matching_data_scores_below_shifted():
+    bcol = {"quantiles": {"0.01": 0, "0.05": 0, "0.25": 0, "0.5": 0, "0.75": 5, "0.95": 20, "0.99": 50}}
+    matching = pd.Series([0] * 70 + list(range(1, 31)))
+    shifted = pd.Series(list(range(100, 200)))
+    r_match = _numeric_drift(matching, bcol, 0.2)
+    r_shift = _numeric_drift(shifted, bcol, 0.2)
+    assert r_match.metrics["score"] < r_shift.metrics["score"]
+
+
+def test_categorical_drift_denominator_is_full_table_nonnull():
+    # 10 captured categories summing to 185; 35 rows live in the tail. __other__
+    # expected mass must reflect that (~0.16), not collapse to 0 as it did when the
+    # pandas sample size was used as the denominator.
+    tops = [{"value": f"c{i}", "count": c} for i, c in enumerate([50, 40, 30, 20, 10, 9, 8, 7, 6, 5])]
+    bcol = {"top_values": tops, "null_count": 0}
+    cur = pd.Series([t["value"] for t in tops for _ in range(2)])
+    r = _categorical_drift(cur, bcol, nonnull_total=220, threshold=0.2)
+    other = next(b for b in r.metrics["bins"] if b["category"] == "__other__")
+    assert other["expected_pct"] > 0.1
 
 
 def test_regex_python_fallback(ctx_factory):
