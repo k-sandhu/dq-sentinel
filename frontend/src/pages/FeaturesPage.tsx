@@ -59,18 +59,11 @@ export default function FeaturesPage() {
                     {item.ai && <span className="pill tone-accent pill-outline">AI</span>}
                   </div>
                   <p className="feature-item-desc">{item.description}</p>
-                  {(item.to || item.docSlug) && (
+                  {item.to && (
                     <div className="feature-item-links">
-                      {item.to && (
-                        <Link className="feature-link" to={item.to}>
-                          Open <Icon name="arrow-right" size={12} />
-                        </Link>
-                      )}
-                      {item.docSlug && (
-                        <Link className="feature-link" to={`/docs/${item.docSlug}`}>
-                          <Icon name="book" size={12} /> Docs
-                        </Link>
-                      )}
+                      <Link className="feature-link" to={item.to}>
+                        Open <Icon name="arrow-right" size={12} />
+                      </Link>
                     </div>
                   )}
                 </li>

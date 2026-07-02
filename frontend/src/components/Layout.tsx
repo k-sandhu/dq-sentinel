@@ -22,6 +22,7 @@ const NAV_GROUPS: {
       { to: "/", label: "Home", icon: "home", end: true },
       { to: "/my-work", label: "My work", icon: "check" },
       { to: "/dashboards", label: "Dashboards", icon: "grid" },
+      { to: "/status", label: "Status", icon: "activity" },
     ],
   },
   {
@@ -37,7 +38,7 @@ const NAV_GROUPS: {
       { to: "/checks", label: "Checks", icon: "shield" },
       { to: "/runs", label: "Runs", icon: "play" },
       { to: "/exceptions", label: "Exceptions", icon: "alert" },
-      { to: "/incidents", label: "Incidents", icon: "alert" },
+      { to: "/incidents", label: "Incidents", icon: "bell" },
       { to: "/reliability", label: "Reliability", icon: "bolt" },
     ],
   },

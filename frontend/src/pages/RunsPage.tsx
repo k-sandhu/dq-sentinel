@@ -104,6 +104,20 @@ export default function RunsPage() {
             </button>
           ))}
         </div>
+        <div className="right">
+          {/* The `since` param existed but nothing set it — expose it so older runs
+              beyond the latest-100 cap are reachable (#D7). */}
+          <select
+            aria-label="Time range"
+            value={since}
+            onChange={(e) => patchParams((p) => (e.target.value ? p.set("since", e.target.value) : p.delete("since")))}
+          >
+            <option value="">All time</option>
+            <option value="24h">Last 24h</option>
+            <option value="7d">Last 7 days</option>
+            <option value="14d">Last 14 days</option>
+          </select>
+        </div>
       </div>
       {activeFilters.length > 0 && (
         <div className="active-filters">
@@ -128,6 +142,11 @@ export default function RunsPage() {
       ) : (
         <div className="card">
           <RunsTable runs={data ?? []} />
+          {(data?.length ?? 0) >= 100 && (
+            <div className="sub" style={{ padding: "8px 12px", borderTop: "1px solid var(--border)" }}>
+              Showing the latest 100 runs. Narrow by status, dataset, or time range to see older runs.
+            </div>
+          )}
         </div>
       )}
     </div>

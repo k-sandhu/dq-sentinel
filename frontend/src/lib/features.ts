@@ -2,15 +2,13 @@
 // powers the standalone /features page (a quick "what have we built?" map).
 //
 // Keep it honest: only list capabilities that actually ship. When you build a
-// new feature, add it here; `to` deep-links into the app, `docSlug` points at a
-// matching doc in /docs (see backend docs/*.md), and `ai` flags LLM-backed
+// new feature, add it here; `to` deep-links into the app and `ai` flags LLM-backed
 // features (which degrade gracefully without a key).
 
 export interface FeatureItem {
   title: string;
   description: string;
   to?: string; // in-app route this feature lives at
-  docSlug?: string; // related doc slug under /docs
   ai?: boolean; // uses the optional LLM layer
 }
 

@@ -14,9 +14,16 @@ export function fmtValue(v: unknown): string {
   return String(v);
 }
 
+/** Parse an API timestamp as UTC. The backend stores naive-UTC and serializes
+ *  without an offset, so an ISO string lacking `Z`/`+hh:mm` must be treated as
+ *  UTC, not local. Single source of truth for all the relative/absolute helpers. */
+function parseUtc(iso: string): Date {
+  return new Date(iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z");
+}
+
 export function fmtDateTime(iso: string | null | undefined): string {
   if (!iso) return "—";
-  const d = new Date(iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z");
+  const d = parseUtc(iso);
   return d.toLocaleString(undefined, {
     month: "short",
     day: "numeric",
@@ -27,7 +34,7 @@ export function fmtDateTime(iso: string | null | undefined): string {
 
 export function timeAgo(iso: string | null | undefined): string {
   if (!iso) return "never";
-  const d = new Date(iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z");
+  const d = parseUtc(iso);
   const secs = Math.max(0, (Date.now() - d.getTime()) / 1000);
   if (secs < 60) return "just now";
   if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
@@ -39,7 +46,7 @@ export function timeAgo(iso: string | null | undefined): string {
  *  exceptions workspace "last seen" column (#63). UTC-normalized like the rest. */
 export function fmtRelative(iso: string | null | undefined): string {
   if (!iso) return "—";
-  const d = new Date(iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z");
+  const d = parseUtc(iso);
   const secs = Math.max(0, (Date.now() - d.getTime()) / 1000);
   if (secs < 45) return "now";
   if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
@@ -51,8 +58,7 @@ export function fmtRelative(iso: string | null | undefined): string {
 /** True when an ISO timestamp is within the last 24h (the "new" tint, #63). */
 export function isRecent(iso: string | null | undefined, hours = 24): boolean {
   if (!iso) return false;
-  const d = new Date(iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z");
-  return Date.now() - d.getTime() < hours * 3600 * 1000;
+  return Date.now() - parseUtc(iso).getTime() < hours * 3600 * 1000;
 }
 
 export function describeSchedule(kind: string | null, expr: string | null): string {

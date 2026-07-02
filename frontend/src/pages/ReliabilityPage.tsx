@@ -2,9 +2,11 @@
 // per-SLA attainment trend. Editors can define dataset SLAs and re-evaluate.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { Link } from "react-router";
 import { api } from "../api/client";
 import type { Dataset, Reliability, Sla, SlaDetail, SLAEvaluation } from "../api/types";
 import { canEdit, useAuth } from "../auth";
+import { useConfirm } from "../components/confirm";
 import { ErrorBox, Icon, Spinner } from "../components/ui";
 import { timeAgo } from "../lib/format";
 
@@ -47,6 +49,7 @@ function Sparkline({ evals, objective }: { evals: SLAEvaluation[]; objective: nu
 function SlaCard({ sla }: { sla: Sla }) {
   const { user } = useAuth();
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const [open, setOpen] = useState(false);
   const detail = useQuery({
     queryKey: ["sla", sla.id],
@@ -74,7 +77,15 @@ function SlaCard({ sla }: { sla: Sla }) {
         <div>
           <div style={{ fontWeight: 700, color: "var(--text-dark)" }}>{sla.name}</div>
           <div className="sub">
-            {sla.scope_label} · {sla.target_type} · {sla.window.replace("rolling_", "")} · objective {pct(sla.objective)}
+            {/* Link the scope out of the dead-end card to where you'd act on a breach (#D11). */}
+            {sla.scope === "dataset" ? (
+              <Link to={`/datasets/${sla.scope_id}`}>{sla.scope_label}</Link>
+            ) : sla.scope === "check" ? (
+              <Link to={`/checks/${sla.scope_id}`}>{sla.scope_label}</Link>
+            ) : (
+              sla.scope_label
+            )}{" "}
+            · {sla.target_type} · {sla.window.replace("rolling_", "")} · objective {pct(sla.objective)}
           </div>
         </div>
         <div style={{ textAlign: "right" }}>
@@ -99,6 +110,14 @@ function SlaCard({ sla }: { sla: Sla }) {
         <button className="btn small ghost" onClick={() => setOpen((v) => !v)}>
           <Icon name={open ? "up" : "down"} size={12} /> {open ? "Hide trend" : "Show trend"}
         </button>
+        {(sla.scope === "dataset" ? sla.scope_id : sla.dataset_id) != null && (
+          <Link
+            className="btn small ghost"
+            to={`/datasets/${sla.scope === "dataset" ? sla.scope_id : sla.dataset_id}/exceptions`}
+          >
+            <Icon name="alert" size={12} /> Exceptions
+          </Link>
+        )}
         <div className="right">
           {canEdit(user) && (
             <>
@@ -107,7 +126,17 @@ function SlaCard({ sla }: { sla: Sla }) {
               </button>
               <button
                 className="btn small ghost"
-                onClick={() => window.confirm(`Delete SLA “${sla.name}”?`) && remove.mutate()}
+                onClick={async () => {
+                  if (
+                    await confirm({
+                      title: "Delete SLA?",
+                      body: `“${sla.name}” and its evaluation history will be removed.`,
+                      confirmLabel: "Delete SLA",
+                      danger: true,
+                    })
+                  )
+                    remove.mutate();
+                }}
                 disabled={remove.isPending}
               >
                 <Icon name="x" size={12} /> Delete

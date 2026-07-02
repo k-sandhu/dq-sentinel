@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type MutableRefObject } from "react";
 import { Link } from "react-router";
 import { api, ApiError } from "../../api/client";
 import { qk } from "../../api/queryKeys";
@@ -92,11 +92,64 @@ function clauseTone(status: string) {
   return status === "pass" ? "ok" : status === "breached" ? "danger" : "neutral";
 }
 
+/** Params editor for one quality clause. Keeps a local text draft so intermediate
+ *  (not-yet-valid) keystrokes aren't eaten, parses on change, and commits parsed
+ *  params only when valid — showing an inline error otherwise. It never writes into
+ *  any other field (the old handler stuffed "Invalid params JSON" into `rationale`,
+ *  silently corrupting exported ODCS, #D3). */
+function QualityParamsInput({
+  value,
+  onChange,
+}: {
+  value: Record<string, unknown>;
+  onChange: (params: Record<string, unknown>) => void;
+}) {
+  const [text, setText] = useState(() => JSON.stringify(value ?? {}));
+  const [invalid, setInvalid] = useState(false);
+  // Re-seed from upstream only when it structurally differs from what we already
+  // hold (e.g. a contract reload / clause reset), never while the user is mid-edit.
+  useEffect(() => {
+    try {
+      if (JSON.stringify(JSON.parse(text || "{}")) !== JSON.stringify(value ?? {})) {
+        setText(JSON.stringify(value ?? {}));
+        setInvalid(false);
+      }
+    } catch {
+      /* keep the in-progress (invalid) text as-is */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+  return (
+    <input
+      className={invalid ? "input-error" : undefined}
+      value={text}
+      placeholder='{"values":[]}'
+      title={invalid ? "Invalid JSON — fix to save these params" : undefined}
+      onChange={(e) => {
+        const next = e.target.value;
+        setText(next);
+        try {
+          onChange(JSON.parse(next || "{}") as Record<string, unknown>);
+          setInvalid(false);
+        } catch {
+          setInvalid(true);
+        }
+      }}
+    />
+  );
+}
+
 function clauseLabel(clause: ContractClauseConformance) {
   return `${clause.kind}: ${clause.label}`;
 }
 
-export default function ContractTab({ dataset }: { dataset: Dataset }) {
+export default function ContractTab({
+  dataset,
+  dirtyRef,
+}: {
+  dataset: Dataset;
+  dirtyRef?: MutableRefObject<boolean>;
+}) {
   const { user } = useAuth();
   const editable = canEdit(user);
   const qc = useQueryClient();
@@ -158,6 +211,34 @@ export default function ContractTab({ dataset }: { dataset: Dataset }) {
   useEffect(() => {
     if (exportQuery.data?.yaml && !yamlText) setYamlText(exportQuery.data.yaml);
   }, [exportQuery.data, yamlText]);
+
+  // Report unsaved edits to the parent so a tab switch warns first, and guard a
+  // full page unload — the Contract tab holds as much typing as Knowledge (#D4).
+  const dirty = useMemo(() => {
+    if (!contract) return false;
+    return (
+      name !== contract.name ||
+      version !== contract.version ||
+      JSON.stringify(normalizeSpec(draft)) !== JSON.stringify(normalizeSpec(asSpec(contract.spec)))
+    );
+  }, [contract, name, version, draft]);
+
+  useEffect(() => {
+    if (dirtyRef) dirtyRef.current = dirty;
+    return () => {
+      if (dirtyRef) dirtyRef.current = false;
+    };
+  }, [dirty, dirtyRef]);
+
+  useEffect(() => {
+    if (!dirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirty]);
 
   const create = useMutation({
     mutationFn: () => api.post<DataContract>(`/datasets/${dataset.id}/contract`, {}),
@@ -361,7 +442,13 @@ export default function ContractTab({ dataset }: { dataset: Dataset }) {
             </fieldset>
           </div>
 
-          <ConformancePanel conformance={conformance} materializedCheckIds={materializedCheckIds} />
+          <ConformancePanel
+            conformance={conformance}
+            materializedCheckIds={materializedCheckIds}
+            isError={conformanceQuery.isError}
+            error={conformanceQuery.error}
+            onRetry={() => conformanceQuery.refetch()}
+          />
 
           <div className="card card-pad">
             <div className="section-title compact">
@@ -451,7 +538,7 @@ export default function ContractTab({ dataset }: { dataset: Dataset }) {
                       <option value="warn">warn</option>
                       <option value="error">error</option>
                     </select>
-                    <input value={JSON.stringify(q.params ?? {})} onChange={(e) => updateQualityParams(i, e.target.value)} placeholder='{"values":[]}' />
+                    <QualityParamsInput value={q.params ?? {}} onChange={(params) => updateQuality(i, { params })} />
                     <button className="ghost small" onClick={() => removeQuality(i)} aria-label="Remove quality clause"><Icon name="x" size={13} /></button>
                   </div>
                 ))}
@@ -541,14 +628,6 @@ export default function ContractTab({ dataset }: { dataset: Dataset }) {
     });
   }
 
-  function updateQualityParams(index: number, raw: string) {
-    try {
-      updateQuality(index, { params: JSON.parse(raw || "{}") as Record<string, unknown> });
-    } catch {
-      updateQuality(index, { rationale: "Invalid params JSON" });
-    }
-  }
-
   function removeQuality(index: number) {
     setDraft((spec) => ({ ...spec, quality: (spec.quality ?? []).filter((_, i) => i !== index) }));
   }
@@ -557,9 +636,15 @@ export default function ContractTab({ dataset }: { dataset: Dataset }) {
 function ConformancePanel({
   conformance,
   materializedCheckIds,
+  isError,
+  error,
+  onRetry,
 }: {
   conformance?: DataContractConformance;
   materializedCheckIds: Set<number>;
+  isError?: boolean;
+  error?: unknown;
+  onRetry?: () => void;
 }) {
   return (
     <div className="card card-pad">
@@ -567,7 +652,17 @@ function ConformancePanel({
         <h3>Conformance</h3>
         {conformance && <StatusPill value={conformance.status} />}
       </div>
-      {!conformance ? (
+      {isError && !conformance ? (
+        // Don't spin forever when the conformance query fails (#D19).
+        <div>
+          <ErrorBox error={error} />
+          {onRetry && (
+            <button className="btn small" onClick={onRetry}>
+              <Icon name="refresh" size={12} /> Retry
+            </button>
+          )}
+        </div>
+      ) : !conformance ? (
         <Spinner />
       ) : (
         <div className="contract-clause-list">
