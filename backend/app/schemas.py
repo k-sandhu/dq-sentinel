@@ -1530,3 +1530,30 @@ class DocSummary(BaseModel):
 
 class DocContent(DocSummary):
     markdown: str
+
+
+# --- built-in data catalog ---
+class CatalogTablePreview(BaseModel):
+    table_name: str
+    importance: str = "medium"
+    pii: bool = False
+    freshness_sla_hours: int | None = None
+
+
+class CatalogEntryOut(BaseModel):
+    key: str
+    title: str
+    description: str
+    domain: str
+    source_system: str
+    engine: str
+    tags: list[str] = []
+    connected: bool = False
+    connection_id: int | None = None
+    table_count: int = 0
+    check_count: int = 0
+    has_contract: bool = False
+    pii: bool = False
+    owner: str = ""
+    importance: str = "medium"
+    tables: list[CatalogTablePreview] = []
