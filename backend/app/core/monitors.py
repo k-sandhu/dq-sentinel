@@ -357,6 +357,17 @@ def _int_config(value: Any, default: int, *, min_value: int | None = None) -> in
     return parsed
 
 
+_VALID_SEVERITIES = ("info", "warn", "error")
+
+
+def _severity_config(value: Any, default: str) -> str:
+    """Clamp a user-supplied monitor-pack severity override to a valid Check severity.
+    A value like 'critical' otherwise 500s CheckOut serialization on the config PATCH
+    instead of returning a clean result (#A11)."""
+    v = str(value or default).strip().lower()
+    return v if v in _VALID_SEVERITIES else default
+
+
 def _kind_override(config: dict[str, Any], kind: str) -> dict[str, Any]:
     overrides = config.get("overrides") or {}
     direct = config.get(kind) or {}
@@ -445,7 +456,7 @@ def _volume_spec(dataset: models.Dataset, config: dict[str, Any]) -> MonitorSpec
         check_type="row_count_anomaly",
         column_name=None,
         params=params,
-        severity=str(override.get("severity", "warn")),
+        severity=_severity_config(override.get("severity"), "warn"),
         name=f"{dataset.table_name}: volume monitor",
         rationale="System monitor pack row-count anomaly check.",
         schedule_minutes=_schedule_minutes(config, "volume"),
@@ -471,7 +482,7 @@ def _schema_spec(
         check_type="schema_contract",
         column_name=None,
         params=params,
-        severity=str(override.get("severity", "warn")),
+        severity=_severity_config(override.get("severity"), "warn"),
         name=f"{dataset.table_name}: schema contract monitor",
         rationale="System monitor pack schema contract check.",
         schedule_minutes=_schedule_minutes(config, "schema"),
@@ -547,7 +558,7 @@ def _drift_specs(
                 check_type="distribution_drift",
                 column_name=name,
                 params={"method": "psi", "threshold": threshold},
-                severity=str(override.get("severity", "info")),
+                severity=_severity_config(override.get("severity"), "info"),
                 name=f"{dataset.table_name}: drift monitor on {name}",
                 rationale="System monitor pack distribution drift check.",
                 schedule_minutes=_schedule_minutes(config, "drift"),

@@ -159,6 +159,25 @@ def resolve_incident(db: Session, incident: Incident, user: User, note: str = ""
     return incident
 
 
+def resolve_incident_for_retired_check(db: Session, check: Check, reason: str) -> Incident | None:
+    """Resolve a check's active incident when the check is archived/disabled.
+
+    Recovery only fires on a ``pass`` run, but an archived/disabled check never runs
+    again — so without this its incident stays open forever and ``process_due_escalations``
+    keeps paging people about a check the team deliberately retired (#A6). Stages the
+    change on the caller's transaction (no commit) and sends NO notification (the check
+    didn't recover, it was retired)."""
+    key = dedupe_key_for(check)
+    incident = db.query(Incident).filter(Incident.dedupe_key == key).one_or_none()
+    if incident is None or incident.status not in ACTIVE_INCIDENT_STATUSES:
+        return None
+    incident.status = "resolved"
+    incident.resolved_at = utcnow()
+    incident.next_escalation_at = None
+    _event(db, incident, "resolved", reason=reason, retired=True)
+    return incident
+
+
 def process_due_escalations(db: Session, now: datetime | None = None) -> int:
     """Send due escalations and advance each incident's escalation state."""
     now = now or utcnow()

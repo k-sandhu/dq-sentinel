@@ -312,6 +312,10 @@ def test_crud_and_admin_only(client, admin_headers, source_db):
     rule = resp.json()
     assert rule["channel"] == "slack"
     assert rule["dataset_name"] == "people"
+    # The Slack webhook URL is a bearer credential — it must be masked in the API
+    # response, not returned verbatim to every viewer (#A3).
+    assert rule["target"] != "https://hook.example/abc"
+    assert "..." in rule["target"]
 
     # list (admin can read)
     listed = client.get("/api/v1/notifications/rules", headers=admin_headers)

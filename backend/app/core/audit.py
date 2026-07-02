@@ -29,7 +29,7 @@ def audit(
     or anything with an ``id`` attribute. ``detail`` keyword args become the JSON
     ``detail`` payload.
     """
-    from app.observability import request_id_var
+    from app.observability import client_ip_var, request_id_var
 
     rid = request_id_var.get()
     db.add(
@@ -40,5 +40,6 @@ def audit(
             entity_id=entity_id,
             detail=detail,
             request_id="" if rid == "-" else rid[:16],
+            client_ip=client_ip_var.get()[:45],  # populated by the request middleware (#A15)
         )
     )

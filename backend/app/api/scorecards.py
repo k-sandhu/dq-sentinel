@@ -131,7 +131,7 @@ def history(
     key: str | None = None,
     days: int = Query(90, ge=1, le=366),
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
     """Sparse daily scorecard points, ordered oldest first.
 
@@ -143,10 +143,26 @@ def history(
         history_key = "global"
     cutoff = utcnow().date() - timedelta(days=days - 1)
 
+    empty = schemas.ScorecardHistoryOut(grain=grain, key=history_key, days=days, sparse=True, points=[])
+
     query = db.query(models.ScorecardSnapshot).filter(
         models.ScorecardSnapshot.grain == grain,
         models.ScorecardSnapshot.snapshot_date >= cutoff,
     )
+    # Dataset-grain snapshots are keyed by dataset_id; scope them to the caller's
+    # connection grants so a limited-grant viewer can't enumerate ungranted datasets'
+    # scores/exception counts via history (parity with /summary, /rollups, /datasets).
+    if grain == "dataset":
+        vis = visible_dataset_ids(db, user)
+        if vis is not None:
+            allowed = {str(row[0]) for row in vis.all()}
+            if history_key is not None:
+                if history_key not in allowed:
+                    return empty
+            elif not allowed:
+                return empty
+            else:
+                query = query.filter(models.ScorecardSnapshot.key.in_(allowed))
     if history_key is not None:
         query = query.filter(models.ScorecardSnapshot.key == history_key)
     points = query.order_by(

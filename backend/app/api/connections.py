@@ -179,6 +179,14 @@ def delete_connection(
     db.query(models.ConnectionGrant).filter(
         models.ConnectionGrant.connection_id == connection_id
     ).delete(synchronize_session=False)
+    # Saved workbench queries reference the connection directly (no ORM relationship,
+    # no ondelete), so the dataset-scoped cleanup above misses them: on Postgres the
+    # dangling FK aborts the whole delete with a 500, on SQLite it leaves orphans that
+    # still list/search and 409 on run. A saved query without its source can't run, so
+    # remove them with the connection (#A4).
+    db.query(models.SavedQuery).filter(
+        models.SavedQuery.connection_id == connection_id
+    ).delete(synchronize_session=False)
     db.delete(conn)  # cascades to datasets/checks/profiles/knowledge via ORM relationships
     db.commit()
     dispose_connection(connection_id)

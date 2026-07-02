@@ -114,6 +114,49 @@ def default_contract_spec(db: Session, dataset: models.Dataset) -> dict[str, Any
     return normalize_spec(spec)
 
 
+_VALID_SEVERITIES = ("info", "warn", "error")
+
+
+def _coerce_int(value: Any, default: int) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_int_opt(value: Any) -> int | None:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_float(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_severity(value: Any, default: str) -> str:
+    """Clamp to a valid Check severity. An ODCS/UI spec may carry 'high'/'critical';
+    persisting those unvalidated later 500s CheckOut/IncidentOut serialization for
+    everyone and drops the check below 'info' in alert ranking (#A2)."""
+    v = str(value or default).strip().lower()
+    return v if v in _VALID_SEVERITIES else default
+
+
+def _coerce_interval_expr(value: Any, default: str) -> str:
+    """Contract checks run on interval (minutes) schedules. A non-numeric expr would
+    raise in the scheduler's compute_next_run and wedge the whole poll loop (#A1), so
+    fall back to the default rather than persist something unparseable."""
+    try:
+        int(float(value))
+        return str(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def normalize_spec(spec: dict[str, Any] | None) -> dict[str, Any]:
     """Return the normalized internal contract shape.
 
@@ -123,7 +166,7 @@ def normalize_spec(spec: dict[str, Any] | None) -> dict[str, Any]:
     """
     raw = copy.deepcopy(spec or {})
     out: dict[str, Any] = {
-        "version": int(raw.get("version") or CONTRACT_SPEC_VERSION),
+        "version": _coerce_int(raw.get("version") or CONTRACT_SPEC_VERSION, CONTRACT_SPEC_VERSION),
         "schema": {
             "columns": [],
             "allow_extra_columns": bool(raw.get("schema", {}).get("allow_extra_columns", True))
@@ -164,9 +207,11 @@ def normalize_spec(spec: dict[str, Any] | None) -> dict[str, Any]:
     if isinstance(freshness, dict) and freshness.get("column"):
         out["freshness"] = {
             "column": str(freshness["column"]),
-            "max_age_hours": float(freshness.get("max_age_hours") or freshness.get("threshold_hours") or 24),
-            "severity": freshness.get("severity") or "error",
-            "schedule_expr": str(freshness.get("schedule_expr") or "360"),
+            "max_age_hours": _coerce_float(
+                freshness.get("max_age_hours") or freshness.get("threshold_hours") or 24, 24.0
+            ),
+            "severity": _coerce_severity(freshness.get("severity"), "error"),
+            "schedule_expr": _coerce_interval_expr(freshness.get("schedule_expr"), "360"),
         }
 
     volume = raw.get("volume") or {}
@@ -174,13 +219,15 @@ def normalize_spec(spec: dict[str, Any] | None) -> dict[str, Any]:
         volume.get("min_rows") is not None or volume.get("baseline_rows") is not None
     ):
         normalized_volume: dict[str, Any] = {
-            "severity": volume.get("severity") or "warn",
-            "schedule_expr": str(volume.get("schedule_expr") or "1440"),
+            "severity": _coerce_severity(volume.get("severity"), "warn"),
+            "schedule_expr": _coerce_interval_expr(volume.get("schedule_expr"), "1440"),
         }
-        if volume.get("min_rows") is not None:
-            normalized_volume["min_rows"] = int(volume["min_rows"])
-        if volume.get("baseline_rows") is not None:
-            normalized_volume["baseline_rows"] = int(volume["baseline_rows"])
+        min_rows = _coerce_int_opt(volume.get("min_rows"))
+        if min_rows is not None:
+            normalized_volume["min_rows"] = min_rows
+        baseline_rows = _coerce_int_opt(volume.get("baseline_rows"))
+        if baseline_rows is not None:
+            normalized_volume["baseline_rows"] = baseline_rows
         out["volume"] = normalized_volume
 
     for idx, q in enumerate(raw.get("quality") or []):
@@ -197,8 +244,8 @@ def normalize_spec(spec: dict[str, Any] | None) -> dict[str, Any]:
                 "check_type": str(check_type),
                 "column": q.get("column") or q.get("column_name"),
                 "params": q.get("params") if isinstance(q.get("params"), dict) else {},
-                "severity": q.get("severity") or "error",
-                "schedule_expr": str(q.get("schedule_expr") or "1440"),
+                "severity": _coerce_severity(q.get("severity"), "error"),
+                "schedule_expr": _coerce_interval_expr(q.get("schedule_expr"), "1440"),
                 "rationale": q.get("rationale") or q.get("description") or "",
             }
         )
