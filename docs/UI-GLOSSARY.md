@@ -600,7 +600,7 @@ weaknesses are smaller: a few dead display surfaces and the global "New check" h
   filled.
 - **Schema-driven check forms**; **saved views + keyboard triage**; **data contracts**,
   **SLA/reliability**, and **incident** surfaces — commercial-grade workflow.
-- **Shared `confirm()` dialog** on every destructive action (typed confirmation for the
-  cascading connection delete).
+- **Shared `confirm()` dialog** on the high-stakes destructive actions (typed confirmation for
+  the cascading connection delete); a few lower-stakes prompts still fall back to the native dialog.
 - **SQL transparency everywhere** (DDL, panel SQL, RCA transcripts, contract conformance);
   sensible role gating; sensible empty states with a CTA to the next step.

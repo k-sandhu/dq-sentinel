@@ -65,7 +65,16 @@ export default function RcaTab({ datasetId }: { datasetId: number }) {
         <Spinner />
       ) : !sessions?.length ? (
         <div className="card">
-          <EmptyState title="No investigations yet" hint="Open a failed run and choose Start RCA, or ask a question above." />
+          <EmptyState
+            title="No investigations yet"
+            hint={
+              !llm
+                ? "Configure an LLM to enable root-cause analysis."
+                : canEdit(user)
+                  ? "Open a failed run and choose Start RCA, or ask a question above."
+                  : "An editor can start an investigation from a failed run or the question box above."
+            }
+          />
         </div>
       ) : (
         sessions.map((s) => <RcaReport key={s.id} session={s} />)

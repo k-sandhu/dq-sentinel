@@ -54,7 +54,9 @@ so the BF-N identifiers stay traceable.
   `useConfirm()` dialog (`confirm.tsx`) now backs check Archive / proposal Dismiss,
   dashboard Delete, chat Delete, MCP Delete, and user Deactivate; the **role `<select>`**
   confirms before mutating; **connection Delete** requires typing the connection name
-  (`typeToConfirm`) and spells out the cascade. The native `window.confirm` is gone.
+  (`typeToConfirm`) and spells out the cascade. *(A handful of lower-stakes prompts still use
+  the native `window.confirm` — SLA delete, saved-query delete, the Workbench history-clear /
+  query-replace guards, and the unsaved-changes discards on dashboards and the Knowledge tab.)*
 - **BF-5 · A run isn't a place you can stand on** — **fixed.** `/runs/:id`
   (`RunDetailPage.tsx`) shows metrics, the violation query (when persisted), exceptions, and
   a per-run **"Start RCA"**; `RunsTable` rows open it (success rows included).
@@ -186,6 +188,6 @@ URL-driven filters (deep-linkable); context-passing deep links (run/exception �
 suggestions; failure → RCA on the right dataset); dedicated run/check/connection **detail
 pages**; a real triage model with **saved views and keyboard triage**; schema-driven check
 forms; SQL transparency everywhere (DDL, panel SQL, RCA transcripts); a shared **confirm**
-dialog on every destructive action; sensible role gating; and mostly-handled LLM-disabled
+dialog on the high-stakes destructive actions; sensible role gating; and mostly-handled LLM-disabled
 states. The gaps above are now mostly **last-mile glue** — create-from-nav, actionable
 display surfaces, tab badges, and account polish — not spine.

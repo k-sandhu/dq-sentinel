@@ -32,7 +32,7 @@ Column headers used below: **DQ-S** = DQ Sentinel · **GX** = Great Expectations
 | Capability | DQ-S | GX | Soda | dbt+El | MC | Anom | Bigeye | Ent | Native |
 |---|---|---|---|---|---|---|---|---|---|
 | Self-hosted / open-source core | ✅ | ✅ | ✅ | ✅ | ❌ | 🟡¹ | ❌ | 🟡 | — |
-| Data stays in source (no egress; read-only) | ✅ | ✅ | ✅ | ✅ | 🟡 | ✅¹ | 🟡 | 🟡 | ✅ |
+| Data stays in source (read-only; no replication) | ✅⁴⁵ | ✅ | ✅ | ✅ | 🟡 | ✅¹ | 🟡 | 🟡 | ✅ |
 | Managed SaaS option | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Built-in web UI (no BYO BI) | ✅ | 🟡² | ✅ | 🟡 | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Built-in scheduler/worker (no external orchestrator) | ✅ | ❌ | ✅ | ❌³ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -45,7 +45,7 @@ Column headers used below: **DQ-S** = DQ Sentinel · **GX** = Great Expectations
 | Self-observability (Prometheus/Grafana/Loki) | ✅⁶ | ❌ | — | ❌ | — | — | — | — | — |
 | HA / Kubernetes / Helm | ❌ | 🟡 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
-¹ Anomalo offers in-VPC / Snowflake Native App deployment, so data can stay in your account. · ² GX ships static "Data Docs" HTML; the interactive UI is GX Cloud. · ³ dbt needs Airflow/Dagster/dbt Cloud to schedule. · ⁴ Three global roles (viewer/editor/admin). · ⁵ DSN stored plaintext today (encryption is on the backlog). · ⁶ Unusual for the category — first-class metrics/logs stack ships in compose.
+¹ Anomalo offers in-VPC / Snowflake Native App deployment, so data can stay in your account. · ² GX ships static "Data Docs" HTML; the interactive UI is GX Cloud. · ³ dbt needs Airflow/Dagster/dbt Cloud to schedule. · ⁴ Three global roles (viewer/editor/admin). · ⁵ DSN stored plaintext today (encryption is on the backlog). · ⁶ Unusual for the category — first-class metrics/logs stack ships in compose. · ⁴⁵ No source writes or warehouse replication; with remote AI enabled, bounded PII-redacted samples/aggregates go to the configured LLM provider — use a local OpenAI-compatible model for zero external egress.
 
 ---
 
@@ -107,7 +107,7 @@ Column headers used below: **DQ-S** = DQ Sentinel · **GX** = Great Expectations
 | Recurrence / identity tracking (dedup, auto-resolve, regression) | ✅³³ | ❌ | 🟡 | ❌ | ✅ | ✅ | ✅ | 🟡 | ❌ |
 | SLA tracking / enforcement | ✅³⁴ | ❌ | ✅ | 🟡 | ✅ | 🟡 | ✅ | ✅ | ❌ |
 | Alerting — Slack / Email | ✅ | 🟡 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 |
-| Alerting — PagerDuty/Opsgenie/Teams/webhook | ✅³⁵ | 🟡 | ✅ | 🟡 | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Alerting — PagerDuty/Teams/webhook | ✅³⁵ | 🟡 | ✅ | 🟡 | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Alert digests / escalation / on-call routing | 🟡⁴⁴ | ❌ | ✅ | 🟡 | ✅ | 🟡 | ✅ | ✅ | ❌ |
 | CI/CD PR gating / data diff | ❌³⁶ | ✅ | ✅ | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | Ad-hoc SQL workbench + saved queries | ✅³⁷ | ❌ | ❌ | ❌ | 🟡 | 🟡 | 🟡 | 🟡 | — |
@@ -156,10 +156,10 @@ Supporting machinery: a profiler (SQL aggregates + pandas sample stats: quantile
 8. **Knowledge base that feeds the AI** — business context, owner, SLA, importance, PII columns; "expected" markings loop back in.
 9. **Lineage with a live check-health overlay** — table-level always, **opt-in column-level**, with search/health/focus controls in the explorer.
 10. **Alerting fan-out** — Slack, Email, Microsoft Teams, generic webhook (HMAC), PagerDuty Events v2, plus Jira/ServiceNow ticketing, with incident escalation.
-11. **Strong, uniform safety** — `guard_sql()` on *every* query path including AI; PII redaction in prompts; read-only connections per driver; data never leaves the source.
+11. **Strong, uniform safety** — `guard_sql()` on *every* query path including AI; read-only connections per driver; **no source writes and no warehouse replication** — DQ Sentinel reads, it never copies your tables. With remote AI enabled, only bounded, **PII-redacted** samples/aggregates leave for the configured provider; point it at a local OpenAI-compatible model for **no external AI egress** at all.
 12. **Batteries-included ops** — built-in scheduler/worker (no Airflow needed), Prometheus + Grafana + Loki self-observability, structured logs with request-ID correlation, audit log, RBAC.
 13. **Analyst UX** — ad-hoc SQL workbench (query history + saved-query library), system + ad-hoc + custom drag-and-drop dashboards, global command-K search across datasets/checks/connections/queries.
-14. **Fully OSS / self-hosted** — no per-seat SaaS bill, no vendor lock-in, no data egress.
+14. **Fully OSS / self-hosted** — no per-seat SaaS bill, no vendor lock-in; runs entirely in your own infrastructure, and remote AI is optional (use a local model to keep external egress at zero).
 
 ## 8. What we **don't** have (gaps), roughly by impact
 
@@ -197,7 +197,7 @@ DQ Sentinel sits at the **intersection of three categories**:
 
 **Closest one-line analogue:** *a self-hostable, AI-agent-forward blend of Soda Cloud + a lightweight Monte Carlo, wearing a Metabase-style triage UI.*
 
-**Best fit:** mid-scale data teams (~10–200 datasets) on SQL warehouses who want open-source control, **data residency / no egress**, batteries-included ops, and modern **LLM-assisted diagnostics** without Monte-Carlo/Anomalo pricing — especially teams that need to run a **local model** for compliance.
+**Best fit:** mid-scale data teams (~10–200 datasets) on SQL warehouses who want open-source control, **data residency** (no source writes or warehouse replication; optional local-model AI for no external egress), batteries-included ops, and modern **LLM-assisted diagnostics** without Monte-Carlo/Anomalo pricing — especially teams that need to run a **local model** for compliance.
 
 **Weakest fit:** large regulated enterprises needing SSO + multi-tenancy + secrets-vault encryption + on-call/digest routing + "monitor everything automatically" at scale, or shops whose data isn't primarily in SQL warehouses.
 
