@@ -200,3 +200,30 @@ def test_disconnect_requires_admin_and_cleans_up(client, editor_headers, admin_h
     assert retail["connected"] is False and retail["connection_id"] is None
     # disconnect again is a no-op (still 204)
     assert client.delete(f"{API}/{ENTRY}/disconnect", headers=admin_headers).status_code == 204
+
+
+def test_name_collision_with_user_connection_is_never_adopted(client, editor_headers, admin_headers):
+    """A user connection that merely shares the entry's source-system name is not
+    the catalog's: connect must fail loudly (not report success against foreign
+    data) and disconnect must not cascade-delete it."""
+    decoy = client.post(
+        "/api/v1/connections",
+        json={"name": SOURCE_NAME, "dsn": "sqlite:///decoy-not-catalog.sqlite"},
+        headers=admin_headers,
+    ).json()
+    try:
+        # Catalog still reports the entry as disconnected (foreign conn not adopted).
+        retail = next(r for r in client.get(API, headers=admin_headers).json() if r["key"] == ENTRY)
+        assert retail["connected"] is False and retail["connection_id"] is None
+
+        # Connect refuses with a clear 422 instead of adopting or duplicating.
+        resp = client.post(f"{API}/{ENTRY}/connect", headers=editor_headers)
+        assert resp.status_code == 422, resp.text
+        assert "not created from the catalog" in resp.json()["detail"]
+
+        # Disconnect is a no-op 204 and the user's connection SURVIVES.
+        assert client.delete(f"{API}/{ENTRY}/disconnect", headers=admin_headers).status_code == 204
+        conns = client.get("/api/v1/connections", headers=admin_headers).json()
+        assert any(c["id"] == decoy["id"] for c in conns), "user connection must not be deleted"
+    finally:
+        client.delete(f"/api/v1/connections/{decoy['id']}", headers=admin_headers)

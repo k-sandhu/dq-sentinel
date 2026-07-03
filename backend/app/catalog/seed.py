@@ -13,8 +13,10 @@ and scheduled, but never executed here — operational metrics fill in once the
 worker runs them.
 
 Idempotent, keyed on ``Connection.name == entry.source_system`` (names are
-unique). Re-connecting an already-connected entry is a no-op that returns the
-existing connection.
+unique) *and* the catalog DSN: a same-named connection the catalog didn't create
+is never adopted (connect fails 422) and never deleted (disconnect no-ops).
+Re-connecting an already-connected entry is a no-op that returns the existing
+connection.
 """
 
 from __future__ import annotations
@@ -215,22 +217,38 @@ def _apply_slas(db: Session, ds: models.Dataset, table: CatalogTable, actor: mod
 
 # --- public API ------------------------------------------------------------- #
 
+def _connection_named(db: Session, name: str) -> models.Connection | None:
+    return db.query(models.Connection).filter(models.Connection.name == name).first()
+
+
 def find_connection(db: Session, entry: CatalogEntry) -> models.Connection | None:
-    return (
-        db.query(models.Connection)
-        .filter(models.Connection.name == entry.source_system)
-        .first()
-    )
+    """The entry's catalog-owned connection, or None. Ownership is verified by
+    DSN (the deterministic catalog backing-file path), not name alone, so a
+    user connection that happens to share the source-system name is never
+    adopted as "already connected" — and never deleted by disconnect."""
+    conn = _connection_named(db, entry.source_system)
+    if conn is not None and conn.dsn != dsn_for(entry):
+        return None
+    return conn
 
 
 def connect_entry(db: Session, entry: CatalogEntry, actor: models.User) -> models.Connection:
     """Materialize the whole governed dataset for ``entry``. Idempotent: returns
     the existing connection if already connected. Commits once; rolls back the
     entire estate on any failure (no partial catalog entry). Raises ValueError on
-    a generation/validation failure (the API surfaces it as 422)."""
+    a generation/validation failure or a connection-name collision (the API
+    surfaces it as 422)."""
     existing = find_connection(db, entry)
     if existing is not None:
         return existing
+    if _connection_named(db, entry.source_system) is not None:
+        # Same name, different DSN: a connection the catalog does not own.
+        # Fail loudly rather than adopting it (idempotent-reconnect would report
+        # success against foreign data, and disconnect would cascade-delete it).
+        raise ValueError(
+            f"Connection name '{entry.source_system}' is already in use by a connection "
+            "that was not created from the catalog. Rename or remove that connection first."
+        )
 
     dsn = dsn_for(entry)
     conn: models.Connection | None = None
