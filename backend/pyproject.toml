@@ -29,12 +29,6 @@ classifiers = [
     "Topic :: Database",
     "Topic :: Software Development :: Quality Assurance",
 ]
-
-[project.urls]
-Homepage = "https://github.com/k-sandhu/dq-sentinel"
-Repository = "https://github.com/k-sandhu/dq-sentinel"
-Issues = "https://github.com/k-sandhu/dq-sentinel/issues"
-Changelog = "https://github.com/k-sandhu/dq-sentinel/blob/main/CHANGELOG.md"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -57,6 +51,12 @@ dependencies = [
     "sqlglot>=26.0",
     "PyYAML>=6.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/k-sandhu/dq-sentinel"
+Repository = "https://github.com/k-sandhu/dq-sentinel"
+Issues = "https://github.com/k-sandhu/dq-sentinel/issues"
+Changelog = "https://github.com/k-sandhu/dq-sentinel/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.2"]
