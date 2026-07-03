@@ -1,6 +1,6 @@
 # DQ Sentinel — Unified Broken-Flows List
 
-Last reviewed: 2026-06-13
+Last reviewed: 2026-06-19 (prior review: 2026-06-13)
 
 This merges **two independent UI reviews** of `frontend/src` into one prioritized list of
 *broken flows* — journeys that fail, lose data/context, mislead, dead-end, or block the
@@ -8,9 +8,17 @@ user without a way forward. It is deliberately narrower than the per-element glo
 (see [`UI-GLOSSARY.md`](UI-GLOSSARY.md)): a missing-but-nice feature is not a broken flow;
 a journey that silently drops the user's work is.
 
+> **What changed since 2026-06-13.** The entire P0 fix-first shortlist (BF-1–BF-4) and much
+> of P1/P2 have shipped — breadcrumbs + a clickable logo, filter/param preservation, a
+> dirty-state guard, a shared typed-confirm dialog, dedicated **run / check / connection
+> detail pages**, schema-driven check forms, dialect-aware Workbench SQL, clickable Home
+> KPIs, and a rebuilt Exceptions workspace with saved views + keyboard triage. The
+> [✅ Resolved](#-resolved-since-the-last-review) section records those; the rest of the
+> document is the **narrowed list of what is still broken or thin**.
+
 **How to read the tags**
 
-- **[both]** — flagged independently by *both* reviews → high confidence, fix first.
+- **[both]** — flagged independently by *both* reviews → high confidence.
 - **[verified]** — confirmed against the actual code in this pass (real bug, not a guess).
 - **[analyst-bar]** — directly conflicts with the enterprise / analyst-first design bar.
 
@@ -25,203 +33,161 @@ a journey that silently drops the user's work is.
 
 ---
 
-## P0 — Critical: silent loss & pervasive wayfinding breaks
+## ✅ Resolved since the last review
 
-### BF-1 · You go deep and can't get back / lose where you came from  `[both]`
-**Flow that breaks:** enter a dataset from search, lineage, a run, an exception, or the
-assistant → land in a 9-tab workspace with **no breadcrumb and no back-link**. The only
-way "up" is the global sidebar, which forgets your origin. The logo (a natural "home"
-target) is an inert `<div>`, not a link.
-**Where:** `DatasetDetailPage.tsx` (header), `WorkbenchPage.tsx`, `RcaTab`, filtered
-`ExceptionsPage.tsx`; `Layout.tsx` (logo).
-**Fix:** add a compact breadcrumb (`Home / Connection / schema.table / tab`) to dataset
-detail, Workbench, RCA, and filtered Exceptions; preserve originating context where
-possible; make the logo link to `/`.
+Confirmed shipped against the current `frontend/src` (and backend where noted). Kept here
+so the BF-N identifiers stay traceable.
 
-### BF-2 · Switching the Exceptions dataset filter silently wipes the run filter  `[both] [verified]`
-**Flow that breaks:** open `/exceptions?run_id=42` (e.g. via a run's "N exceptions" link),
-then pick a dataset from the dropdown → the handler builds a **fresh** `URLSearchParams`
-and sets only `dataset_id`, so `run_id` is dropped. You're now looking at a *different,
-broader* set than you think, with no indication the run scope vanished.
-**Where:** `ExceptionsPage.tsx` (the `onChange` that calls `setParams(next)`).
-**Fix:** mutate the existing params (preserve `run_id`/others) instead of replacing them;
-show active filters as removable chips so scope is always visible.
-
-### BF-3 · Unsaved edits vanish with no warning  `[theirs] [verified]`
-**Flow that breaks:** fill in the Knowledge tab (business context, known issues, PII,
-SLA…) then click another tab → the tab is a router navigation that **unmounts the form**;
-all unsaved input is lost silently. Same class of loss on every modal: clicking the
-backdrop or **✕** on Add-Connection, New-Check, Edit-Check, and Add-MCP discards typed
-input with no "discard changes?" guard.
-**Where:** `KnowledgeTab.tsx` (local form state, no navigation guard); `ui.tsx` `Modal`
-(backdrop/✕ close); the four form modals.
-**Fix:** dirty-state guard — warn on tab-away / modal-close when the form is dirty; or
-autosave drafts. The Knowledge tab is the worst because it holds the most work.
-
-### BF-4 · Destructive actions fire on a single mis-click, no confirm, no undo  `[both]`
-**Flow that breaks:** one click permanently removes things, often with large blast radius
-and zero confirmation:
-- Check **Archive** and proposal **Dismiss** — `ChecksTable.tsx`.
-- Dashboard **Delete** — `DashboardsTab.tsx`.
-- Chat **Delete** (the ✕ on a session) — `AssistantPage.tsx`.
-- MCP server **Delete** — `SettingsPage.tsx`.
-- User **Deactivate** and **Role change** (mutates *on `<select>` change*, instantly
-  promoting/demoting) — `SettingsPage.tsx`.
-- Connection **Delete** — has a `window.confirm`, but it cascades datasets + checks +
-  history behind a tiny native dialog (`ConnectionsPage.tsx`).
-**Fix:** route all destructive actions through the app's own `Modal` confirm (kill the
-native `confirm`); add **undo** where cheap; require **typed confirmation** for the
-cascading connection delete; make the role `<select>` a deliberate "Save role" action,
-not an on-change mutation.
-
----
-
-## P1 — High: dead-end objects, fragile inputs, inconsistency
-
-### BF-5 · A run isn't a place you can stand on  `[both]`
-**Flow that breaks:** you see a failed run but **there is no run detail page/drawer**. The
-row is mostly inert — only "N exceptions" and "investigate →" are live; the **check name
-is dead text**; **successful runs have no drill-down**; and there's **no per-row "RCA this
-run."** Investigation lives only in the transient Workbench, so a failure never becomes a
-durable, linkable object.
-**Where:** `RunsTable.tsx`, `RunsPage.tsx`, `RunsTab.tsx`.
-**Fix:** add `/runs/:id` (or a drawer) with metrics, the violation SQL, its exceptions,
-RCA, and the investigate link; make the row open it; add "Start RCA for this run" per row.
-
-### BF-6 · Checks (and connections) are first-class objects with no home  `[mine]`
-**Flow that breaks:** a check is referenced everywhere as **plain text** (in runs,
-exceptions) but has **no detail page** — no run history, no violation trend, no permalink.
-The global `/checks` page can filter and manage but **can't create** (creation is hidden
-inside a dataset's Checks tab), so "I'll add a check" from the nav dead-ends. Connections
-similarly have no detail view (only browse + delete).
-**Where:** `ChecksPage.tsx`, `ChecksTable.tsx`, `RunsTable.tsx`, `ConnectionsPage.tsx`.
-**Fix:** add a check detail page and link every check reference to it; add "New check"
-(with a dataset picker) to `/checks`; consider a minimal connection detail (its datasets +
-health history + rename).
-
-### BF-7 · Check create/edit demands hand-written JSON  `[theirs] [analyst-bar]`
-**Flow that breaks:** the New-Check and Edit-Check modals expose **raw JSON params** in a
-textarea, only parsed/validated **on submit** — a malformed brace fails the whole save.
-For a product whose users are analysts, this is the sharpest mismatch with the
-analyst-first bar, and it quietly erodes trust in check setup.
-**Where:** `ChecksTab.tsx` (NewCheckModal), `ChecksTable.tsx` (EditCheckModal).
-**Fix:** schema-driven fields per check type (the registry already carries param schemas),
-inline validation, and a preview; keep raw JSON behind an "advanced" toggle.
-
-### BF-8 · "Open this table" and "investigate" mean different things in different places  `[both]`
-**Flow that breaks:** clicking a dataset in **lineage** has three destinations — a graph
-node → the *lineage* tab, a "needs attention" item → the *profile* tab, a relationship-row
-link → the *profile* tab — so the same intent lands you in different places. Separately,
-"**investigate**" means *Workbench* in some spots and the *RCA agent* in others. And
-whole-row click navigates on **Datasets** but is inert on **Connections / Checks / Runs**,
-breaking the pattern users just learned.
-**Where:** `LineageGraph.tsx`, `LineagePage.tsx`, `LineageTab.tsx`; `RunsTable.tsx` vs
-`RunsPage.tsx`; `DatasetsPage.tsx` vs `ConnectionsPage.tsx`/`ChecksPage.tsx`.
-**Fix:** one default destination per object (recommend: failing/warn nodes → *exceptions*;
-others → *profile*), with explicit "Open profile / Open lineage" when both matter;
-disambiguate the two "investigate" verbs; make row-click consistent everywhere.
-
-### BF-9 · Building a query by clicking the schema produces invalid SQL  `[theirs] [verified]`
-**Flow that breaks:** inserting a table/column from the schema browser appends a **raw,
-unquoted identifier** (`… colname`) and the first insert hard-codes `SELECT * FROM <table>
-LIMIT 50` **without the schema** — so reserved words, mixed-case, or special-char names
-break, and cross-schema tables resolve wrong. Also, **changing the connection leaves stale
-SQL/results** on screen, now pointed at the wrong source.
-**Where:** `WorkbenchPage.tsx` (`insert` helper; connection `onChange`).
-**Fix:** dialect-aware identifier quoting and schema-qualified inserts; clear or flag
-results when the connection changes.
+- **BF-1 · Wayfinding / no way back** — **fixed.** Dataset detail now renders a
+  `Breadcrumbs` row (`Datasets › schema.table`, `DatasetDetailPage.tsx`); the sidebar logo
+  is a `<Link to="/">` (`Layout.tsx`). *(Title + health pill themselves are still inert —
+  minor.)*
+- **BF-2 · Exceptions filter wipes the run filter** — **fixed.** The dataset `<select>` now
+  clones the existing params (`patchParams` → `new URLSearchParams(params)`), so `run_id`
+  survives and renders as a removable chip (`ExceptionsPage.tsx`).
+- **BF-3 · Unsaved Knowledge edits vanish** — **fixed** for the worst case: the Knowledge
+  tab raises a `dirty` flag and the shell intercepts tab-away with a confirm, plus a
+  `beforeunload` guard (`KnowledgeTab.tsx`, `DatasetDetailPage.tsx`). *(A dedicated
+  "discard changes?" guard on backdrop/✕ close of the form modals was not separately
+  re-verified this pass.)*
+- **BF-4 · Destructive actions, no confirm** — **fixed.** A shared promise-based
+  `useConfirm()` dialog (`confirm.tsx`) now backs check Archive / proposal Dismiss,
+  dashboard Delete, chat Delete, MCP Delete, and user Deactivate; the **role `<select>`**
+  confirms before mutating; **connection Delete** requires typing the connection name
+  (`typeToConfirm`) and spells out the cascade. *(A handful of lower-stakes prompts still use
+  the native `window.confirm` — SLA delete, saved-query delete, the Workbench history-clear /
+  query-replace guards, and the unsaved-changes discards on dashboards and the Knowledge tab.)*
+- **BF-5 · A run isn't a place you can stand on** — **fixed.** `/runs/:id`
+  (`RunDetailPage.tsx`) shows metrics, the violation query (when persisted), exceptions, and
+  a per-run **"Start RCA"**; `RunsTable` rows open it (success rows included).
+- **BF-6 · Checks/connections with no home** — **mostly fixed.** `/checks/:id`
+  (`CheckDetailPage.tsx`, with a violation-trend chart + run history) and `/connections/:id`
+  (`ConnectionDetailPage.tsx`, with its datasets + health timeline) now exist. **Still open:**
+  no global **"New check"** button, and connection detail can't rename / edit the DSN — see
+  **BF-6′** under *P1 — Still open* below.
+- **BF-7 · Check forms demand hand-written JSON** — **fixed.** `CheckParamsForm` renders
+  schema-driven, per-type fields with inline validation and a live "Effective params"
+  preview; raw JSON is behind an **Advanced** toggle.
+- **BF-8 · "Open this table" means different things** — **mostly fixed.** Lineage
+  destinations are centralized in `lib/lineageNav.ts` (fail/warn → exceptions, else profile;
+  external → none); whole-row click is now consistent across Datasets / Connections / Checks
+  / Runs.
+- **BF-9 · Clicking the schema produces invalid SQL** — **fixed.** Inserts route through
+  `lib/sqlIdent.ts` (dialect-aware quoting + schema-qualified refs); changing the connection
+  clears stale SQL/results.
+- **BF-10 · Most clickable-looking things aren't clickable** — **partially fixed.** Home was
+  rebuilt as a scorecard: KPI tiles and trend bars now deep-link to filtered lists. **Still
+  open:** profile column cards and dataset rows (see P2 below).
+- **BF-14 · Retrieval is thin** — **partially fixed.** Global search now spans
+  datasets / checks / connections / saved queries with arrow-key selection and ⌘K; the
+  Exceptions workspace gained **saved views**, a rich filter bar, and keyboard triage.
 
 ---
 
-## P2 — Medium: dead high-intent surfaces, silent blocks, missing feedback
+## P1 — Still open: dead-end create, fragile inputs, misleading affordances
 
-### BF-10 · The most clickable-looking things aren't clickable  `[both]`
-- Home **KPI stat cards** ("Open exceptions", "Failing checks", "Active checks / N
-  proposals awaiting review", "Datasets") — inert; should deep-link to their filtered
-  lists. Highest-traffic wasted clicks in the app.
-- Home **trend chart bars** — no day → runs drill-through.
+### BF-6′ · Checks still have no global *create*, and can't be reached from runs/exceptions  `[verified]`
+**Flow that breaks:** a user who thinks "I'll add a check" and clicks **Checks** in the nav
+finds search + status chips but **no "New check" button** — creation still lives only inside
+a dataset's Checks tab (`ChecksPage.tsx` vs `dataset/ChecksTab.tsx`). And although
+`/checks/:id` now exists, nothing links *to* it from the places a check is named: a
+`RunsTable` row's check name links to the **run**, and the exception detail panel's check
+name links to the dataset's **Checks tab**, not to `/checks/:id`.
+**Fix:** add "New check" (with a dataset picker) to `/checks`; point check-name references in
+`RunsTable` and `DetailPanel` at `/checks/:id`.
+
+### BF-7′ · Knowledge PII columns are unvalidated free text  `[verified] [analyst-bar]`
+**Flow that breaks:** the Knowledge tab's **PII columns** field is a comma-separated text
+input, never validated against the dataset's real columns (`KnowledgeTab.tsx`). A typo means
+a column the user *thinks* is redacted isn't — a redaction-correctness risk, since these
+names drive prompt redaction.
+**Fix:** validate / autocomplete PII columns against the profiled column list; warn on names
+that don't match.
+
+### BF-13′ · A running RCA can't be stopped  `[verified]`
+**Flow that breaks:** an **RCA session has no stop/cancel** — it just polls every 4s until
+done (`RcaTab.tsx`), even though the Assistant *can* stop mid-turn (an inconsistency).
+**Fix:** add a stop/cancel control to a running RCA session.
+
+> **Resolved 2026-06-19.** The RCA tab's tip used to claim you could "launch an RCA from any
+> failed run on the Runs tab," but the Runs-table row link opens the **Workbench**. The tip
+> (and the empty-state hint) now point to a run's **detail page** — open a failed run and
+> choose **Start RCA**, which is where per-run RCA actually lives (`RcaTab.tsx`,
+> `RunDetailPage.tsx`).
+
+---
+
+## P2 — Still open: dead high-intent surfaces, missing "what next"
+
+### BF-10′ · High-intent surfaces that still aren't actionable  `[both]`
 - Profile **column cards** and **PK / temporal badges** — pure display; should offer
-  "create unique / freshness check" and "chart this column."
-- **Dataset rows** offer no shortcut to their Checks / Runs / Exceptions.
-- Plain-text references (`run #N`, dataset name in exceptions) aren't links.
-**Where:** `HomePage.tsx`, `ProfileTab.tsx`, `DatasetsPage.tsx`, `ExceptionsTriage.tsx`.
+  "create unique / freshness / drift check" and "chart this column" (`ProfileTab.tsx`).
+- **Dataset rows** still navigate only to the overview — no shortcut to a dataset's Checks /
+  Runs / Exceptions, and the **connection cell isn't a link** (`DatasetsPage.tsx`).
 
-### BF-11 · You're blocked and the UI won't say why or how to recover  `[both]`
-**Flow that breaks:** "Generate checks / dashboard" is disabled until a profile exists; the
-**Assistant composer** is disabled until a session exists yet its placeholder says "Start a
-new conversation…" (implying you can just type); the Runs "Root-cause latest failure"
-button **disappears** entirely when the LLM is off or you're a viewer; "Save" on a failed
-connection test is enabled but unlabeled. None explain the fix.
-**Where:** `ChecksTab.tsx`, `DashboardsTab.tsx`, `AssistantPage.tsx`, `RunsPage.tsx`,
-`ConnectionsPage.tsx`.
-**Fix:** inline recovery hints next to the blocked control ("Profile first", "Create a
-conversation first", "Editor role required", "LLM required"); prefer *disabled-with-reason*
-over *hidden*; label the failed-test path "Save anyway."
-
-### BF-12 · After an action, the user doesn't know what happened or where it went  `[both]`
-- **Registering multiple datasets** drops you on the full `/datasets` list with no
-  "created just now" highlight or summary (`ConnectionBrowsePage.tsx`).
-- Newly registered datasets aren't auto-profiled and there's no guided next step.
-- Clicking a check's **Run** updates the table but doesn't route you to the resulting run.
-- The Dashboards tab doesn't auto-select an existing dashboard → the right pane looks
+### BF-12′ · After an action, the hand-off is still rough  `[both]`
+- **Registering datasets** does not auto-profile and offers no "Register & profile" — you
+  land on an empty Profile tab and must click "Profile this dataset" (`ConnectionBrowsePage.tsx`).
+- The **Dashboards tab** still doesn't auto-select an existing dashboard → the right pane is
   empty until you click one (`DashboardsTab.tsx`).
-- There's no **first-run onboarding** (Connect → Browse → Register → Profile → Generate)
-  even though that's the intended spine.
-**Fix:** post-action summaries/highlights, a "Register & profile" option, route-to-result
-after Run, auto-open the latest dashboard, and a dismissible first-run checklist on Home.
 
-### BF-13 · Long-running agent work has no controls or status  `[both]`
-**Flow that breaks:** an **RCA session has no stop/cancel** (while the Assistant *does* —
-an inconsistency); and the dataset **tab strip shows no state** (no "3 proposed", no "12
-open exceptions", no "RCA running"), so you must open each tab to discover there's work.
-**Where:** `RcaTab.tsx`, `DatasetDetailPage.tsx`.
-**Fix:** add stop to RCA; add count/status badges to the tabs.
+### BF-13″ · The dataset tab strip still carries no per-tab state  `[verified]`
+**Flow that breaks:** the tab buttons are label-only — no "3 proposed", no "12 open", no "RCA
+running" (`DatasetDetailPage.tsx`). Active-check and open-exception counts now appear in the
+header **sub-line**, but you still must open each tab to discover work inside it.
+**Fix:** add count/status badges to the tabs (the header already computes some of the counts).
+
+### BF-8′ · Lineage external nodes explain themselves but still dead-end  `[verified]`
+**Flow that breaks:** clicking an external / unregistered node now shows
+*"register it as a dataset to open it"* — better than the old silent inert node — but there
+is still **no one-click "register this table"** action from the graph (`LineageGraph.tsx`).
+**Fix:** add a "Register as dataset" button to the external-node detail panel.
+
+### BF-5′ · RCA on the Runs *page* still only targets the newest failure  `[verified]`
+**Flow that breaks:** RunsPage's "Root-cause latest failure" still acts on `failedRuns[0]`
+only, and is hidden entirely for viewers / when the LLM is off (`RunsPage.tsx`). The per-run
+"Start RCA" on `/runs/:id` mitigates this, but the page-level shortcut is unchanged.
+**Fix:** offer per-row RCA from the runs list, or a *disabled-with-reason* button when blocked.
 
 ---
 
-## P3 — Lower: search, account, layout, polish
+## P3 — Still open: account, layout, polish
 
-### BF-14 · Retrieval is thin  `[both]`
-Global search covers **datasets only** (not checks, runs, owners, exceptions, commands)
-and has **no arrow-key selection**; there are **no saved views** and few filters (checks:
-no severity/origin/failing/schedule; runs: no date-range or `running` filter; exceptions:
-no saved views). `Layout.tsx`, `ChecksPage.tsx`, `RunsPage.tsx`, `ExceptionsPage.tsx`.
-
-### BF-15 · Account & admin flows are incomplete  `[theirs]`
-No forgot/reset-password; **Invite user sets a raw password** with no invite/reset email;
-no show-password on login; dev credentials are shown on the login screen (must not ship);
-no audit/history for user, MCP, or knowledge changes; MCP has **no "test connection."**
+### BF-15′ · Account flows are incomplete  `[verified]`
+No forgot/reset-password; no show-password on login; **dev credentials are printed on the
+login screen** (`admin@example.com / admin123` — must not ship to prod). **Invite user sets a
+raw password** with no invite/reset email; **MCP "Add server" has no "test connection."**
 `LoginPage.tsx`, `SettingsPage.tsx`.
 
-### BF-16 · Validation & layout polish  `[mixed]`
-Knowledge **PII columns are free text**, not validated against the dataset's real columns
-(a redaction-correctness risk). Browse-tables filter ignores schema/kind and lacks
-"select all visible." Long DDL has no wrap/search. The Dashboards two-column layout needs a
-mobile pass. Connection health shows blank on a cold Connections load until the fleet pill's
-first poll (perceived inconsistency vs the auto-polling pill).
+### BF-16′ · Input & layout polish  `[mixed]`
+Browse-tables filter ignores **schema** and lacks **"select all visible."** Long DDL on the
+Code tab has **no wrap/search**, and the DDL card has no "Open in Workbench" (a *Pinned
+queries* card does offer per-query "Open in workbench →"). The Dashboards two-column layout
+still needs a mobile pass.
 
 ---
 
 ## Fix-first shortlist (maximum relief per unit work)
 
-1. **Breadcrumbs + clickable logo** (BF-1) — one shared component, every deep screen.
-2. **Stop wiping filters / unsaved work** (BF-2, BF-3) — preserve `URLSearchParams`; add a
-   dirty-state guard. Pure correctness, low risk.
-3. **Confirm/undo on all destructive actions** (BF-4) — and make role-change deliberate.
-4. **Run detail drawer** (BF-5) — turns failures into durable, linkable objects.
-5. **Schema-driven check forms** (BF-7) — the biggest analyst-first win.
-6. **Make Home KPIs + dataset rows actionable** (BF-10) — cheap, high-traffic payoff.
-7. **Standardize click destinations** (BF-8) — consistency users feel immediately.
+1. **Global "New check" + link check references to `/checks/:id`** (BF-6′) — closes the last
+   first-class-object gap now that the detail page exists.
+2. **Validate Knowledge PII columns** (BF-7′) — a correctness/redaction risk, cheap to fix.
+3. **Stop/cancel RCA** (BF-13′) — a running session still can't be cancelled.
+4. **Tab-strip state badges** (BF-13″) — counts are already computed in the header.
+5. **Make profile column cards + dataset rows actionable** (BF-10′) — high-traffic payoff.
+6. **Pull dev credentials off the login screen** (BF-15′) — must not ship.
 
 ---
 
 ## What's already good (don't regress it)
 
 Both reviews agree the **product spine is right** — `Connect → Browse → Register → Profile
-→ Generate checks → Runs → Exceptions → RCA/Workbench` — and these patterns are genuinely
-strong: clear sidebar IA; URL-routed tabs and URL-driven filters (deep-linkable);
-context-passing deep links (run/exception → Workbench suggestions; failure → RCA on the
-right dataset); a real triage model (acknowledge / expected / resolved / muted); SQL
-transparency everywhere (DDL, panel SQL, RCA transcripts); sensible role gating; and
-mostly-handled LLM-disabled states. The gaps above are **usability glue** — context,
-consistency, confirmation, and task-oriented next steps — not spine.
+→ Generate checks → Runs → Exceptions → RCA/Workbench` — and the patterns that were strong a
+review ago are now reinforced: breadcrumbs + a clickable logo; URL-routed tabs and
+URL-driven filters (deep-linkable); context-passing deep links (run/exception → Workbench
+suggestions; failure → RCA on the right dataset); dedicated run/check/connection **detail
+pages**; a real triage model with **saved views and keyboard triage**; schema-driven check
+forms; SQL transparency everywhere (DDL, panel SQL, RCA transcripts); a shared **confirm**
+dialog on the high-stakes destructive actions; sensible role gating; and mostly-handled LLM-disabled
+states. The gaps above are now mostly **last-mile glue** — create-from-nav, actionable
+display surfaces, tab badges, and account polish — not spine.

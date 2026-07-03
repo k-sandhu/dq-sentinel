@@ -43,7 +43,8 @@ export default function RcaTab({ datasetId }: { datasetId: number }) {
           <h3>Start an investigation</h3>
           <p style={{ fontSize: 12.5, color: "var(--text-light)", marginTop: 0 }}>
             The agent investigates with read-only SQL (PII columns redacted) and returns an
-            evidence-backed report. Tip: you can also launch an RCA from any failed run on the Runs tab.
+            evidence-backed report. Tip: you can also start an RCA from a run's detail page — open a
+            failed run and choose Start RCA.
           </p>
           <div style={{ display: "flex", gap: 8 }}>
             <input
@@ -65,7 +66,16 @@ export default function RcaTab({ datasetId }: { datasetId: number }) {
         <Spinner />
       ) : !sessions?.length ? (
         <div className="card">
-          <EmptyState title="No investigations yet" hint="Launch one from a failed run, or ask a question above." />
+          <EmptyState
+            title="No investigations yet"
+            hint={
+              !llm
+                ? "Configure an LLM to enable root-cause analysis."
+                : canEdit(user)
+                  ? "Open a failed run and choose Start RCA, or ask a question above."
+                  : "An editor can start an investigation from a failed run or the question box above."
+            }
+          />
         </div>
       ) : (
         sessions.map((s) => <RcaReport key={s.id} session={s} />)
