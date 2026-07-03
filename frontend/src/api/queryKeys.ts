@@ -209,6 +209,12 @@ export const qk = {
     detail: (id: Id | undefined) => ["incident-detail", id] as const,
   },
 
+  // === Built-in data catalog ===========================================
+  catalog: {
+    all: ["catalog"] as const,
+    list: () => ["catalog"] as const,
+  },
+
   // === Workbench: connections / schema / ddl / saved queries / suggest ==
   connections: {
     all: ["connections"] as const,

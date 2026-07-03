@@ -4,6 +4,7 @@ import { useAuth } from "./auth";
 import Layout from "./components/Layout";
 import { Spinner } from "./components/ui";
 import { getLanding } from "./lib/prefs";
+import CatalogPage from "./pages/CatalogPage";
 import CheckDetailPage from "./pages/CheckDetailPage";
 import ChecksPage from "./pages/ChecksPage";
 import ConnectionBrowsePage from "./pages/ConnectionBrowsePage";
@@ -101,6 +102,7 @@ export default function App() {
         <Route path="/my-work" element={<MyWorkPage />} />
         <Route path="/dashboards" element={<DashboardsListPage />} />
         <Route path="/dashboards/:id" element={<CustomDashboardPage />} />
+        <Route path="/catalog" element={<CatalogPage />} />
         <Route path="/connections" element={<ConnectionsPage />} />
         <Route path="/connections/:id" element={<ConnectionDetailPage />} />
         <Route path="/connections/:id/browse" element={<ConnectionBrowsePage />} />
