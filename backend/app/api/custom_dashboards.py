@@ -79,11 +79,33 @@ def _strip_snapshots(layout: schemas.DashboardLayout) -> dict:
     return data
 
 
-def _validate_for_role(layout: schemas.DashboardLayout, user: models.User) -> None:
-    """sql widgets require editor (422 otherwise — checked at validation time, so
-    the UI never offers the type to viewers and the API enforces it regardless)."""
-    if not _is_editor(user) and any(w.type == "sql" for w in layout.widgets):
-        raise HTTPException(422, "SQL widgets require the editor role")
+def _sql_widget_configs(widgets: list[dict]) -> dict[str, tuple]:
+    """Map widget id -> (sql, connection_id) for the sql widgets in a stored layout."""
+    out: dict[str, tuple] = {}
+    for w in widgets:
+        if w.get("type") == "sql":
+            cfg = w.get("config") or {}
+            out[w.get("id")] = (cfg.get("sql"), cfg.get("connection_id"))
+    return out
+
+
+def _validate_for_role(
+    layout: schemas.DashboardLayout,
+    user: models.User,
+    existing_sql: dict[str, tuple] | None = None,
+) -> None:
+    """Adding or changing a sql widget requires editor. A viewer who owns a board with
+    pre-existing sql widgets (e.g. a duplicated team board, #A10) may still move/keep/
+    remove them — only NEW or MODIFIED sql widgets are gated, so editing the layout
+    isn't blocked outright by widgets they didn't author."""
+    if _is_editor(user):
+        return
+    existing_sql = existing_sql or {}
+    for w in layout.widgets:
+        if w.type != "sql":
+            continue
+        if existing_sql.get(w.id) != (w.config.sql, w.config.connection_id):
+            raise HTTPException(422, "Adding or editing SQL widgets requires the editor role")
 
 
 def _validate_sql_widgets(db: Session, layout: schemas.DashboardLayout) -> None:
@@ -221,20 +243,26 @@ def update_dashboard(
         raise HTTPException(404 if not _can_view(dash, user) else 403, "Not allowed to edit this dashboard")
 
     if body.layout is not None:
-        _validate_for_role(body.layout, user)
+        existing_widgets = (dash.layout or {}).get("widgets", [])
+        existing_sql = _sql_widget_configs(existing_widgets)
+        _validate_for_role(body.layout, user, existing_sql)
         _validate_sql_widgets(db, body.layout)
         # Preserve existing server snapshots across a metadata/layout edit: the UI
         # round-trips snapshots back, but we never trust the client copy — re-attach
-        # ours by widget id where the sql config is unchanged.
+        # ours by widget id ONLY where the sql config is unchanged. Re-attaching by id
+        # alone would keep a stale result under a changed query, mislabeling data as
+        # something it isn't until the next refresh (#A9).
         prior = {
             w.get("id"): w.get("snapshot")
-            for w in (dash.layout or {}).get("widgets", [])
+            for w in existing_widgets
             if w.get("type") == "sql" and w.get("snapshot")
         }
         new_layout = _strip_snapshots(body.layout)
         for w in new_layout["widgets"]:
             if w.get("type") == "sql" and w["id"] in prior:
-                w["snapshot"] = prior[w["id"]]
+                cfg = w.get("config") or {}
+                if existing_sql.get(w["id"]) == (cfg.get("sql"), cfg.get("connection_id")):
+                    w["snapshot"] = prior[w["id"]]
         dash.layout = new_layout
     if body.name is not None:
         dash.name = body.name

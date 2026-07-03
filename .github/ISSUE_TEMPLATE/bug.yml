@@ -1,0 +1,90 @@
+name: Bug report
+description: Something is broken or behaving incorrectly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report! Environment details matter a lot for a tool that
+        talks to nine database engines — please fill in what you can.
+
+        **Security vulnerabilities: do NOT file a public issue.** Use
+        *Security → Report a vulnerability* instead (see SECURITY.md).
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Release version or `git rev-parse --short HEAD`
+      placeholder: v0.1.0 / 6fa25c5
+    validations:
+      required: true
+  - type: dropdown
+    id: deploy
+    attributes:
+      label: How are you running it?
+      options:
+        - Local dev (uvicorn + vite)
+        - docker compose
+        - Other (describe below)
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: Windows 11 / macOS 15 / Ubuntu 24.04
+  - type: dropdown
+    id: appdb
+    attributes:
+      label: App metadata database
+      options:
+        - SQLite (default)
+        - PostgreSQL
+        - Not sure
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Source database engine (if relevant)
+      options:
+        - Not relevant
+        - SQLite
+        - DuckDB
+        - PostgreSQL
+        - MySQL
+        - SQL Server
+        - Snowflake
+        - BigQuery
+        - Trino
+        - ClickHouse
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Add a connection to ...
+        2. Register dataset ...
+        3. Click ...
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / traceback
+      description: >-
+        API logs, worker logs, or browser console. **Redact DSNs, secrets, and
+        any real data rows before pasting.**
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for this problem
+          required: true
+        - label: I redacted secrets/DSNs/data from logs above
+          required: true

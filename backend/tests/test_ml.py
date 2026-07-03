@@ -21,6 +21,17 @@ def _frame_with_outliers() -> tuple[pd.DataFrame, list[int]]:
     return df, planted
 
 
+def test_detect_outliers_tolerates_infinity():
+    # ±inf (e.g. Postgres 'Infinity'::float8) is not NaN and used to raise inside
+    # StandardScaler/IsolationForest; it must be treated as missing, not crash.
+    df, planted = _frame_with_outliers()
+    df.loc[10, "amount"] = np.inf
+    df.loc[11, "quantity"] = -np.inf
+    result = detect_outliers(df, contamination=0.01)  # must not raise
+    assert result.rows_scored == len(df)
+    assert set(planted) <= set(result.indices)
+
+
 def test_isolation_forest_finds_planted():
     df, planted = _frame_with_outliers()
     result = detect_outliers(df, contamination=0.01)

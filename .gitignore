@@ -16,6 +16,12 @@ node_modules/
 frontend/dist/
 *.tsbuildinfo
 
+# Playwright e2e output (written on `npm run test:e2e`)
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+frontend/.playwright/
+
 # App & sample databases (regenerate with data/generate_sample_data.py)
 *.sqlite
 *.sqlite3

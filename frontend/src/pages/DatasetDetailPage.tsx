@@ -31,14 +31,21 @@ export default function DatasetDetailPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
   const active: Tab = TABS.includes(tab as Tab) ? (tab as Tab) : "profile";
-  // The Knowledge tab reports unsaved edits here so a tab switch can warn first (BF-3).
+  // Tabs with in-progress form state report unsaved edits here so a tab switch can
+  // warn first (BF-3 for Knowledge, #D4 for Contract — both hold a lot of typing).
   const knowledgeDirty = useRef(false);
+  const contractDirty = useRef(false);
 
   const goTab = (t: Tab) => {
+    const dirtyTab =
+      active === "knowledge" && knowledgeDirty.current
+        ? "knowledge"
+        : active === "contract" && contractDirty.current
+          ? "contract"
+          : null;
     if (
-      active === "knowledge" &&
-      knowledgeDirty.current &&
-      !window.confirm("You have unsaved changes to this table's knowledge. Leave without saving?")
+      dirtyTab &&
+      !window.confirm(`You have unsaved changes to this table's ${dirtyTab}. Leave without saving?`)
     )
       return;
     navigate(`/datasets/${datasetId}/${t}`);
@@ -138,7 +145,7 @@ export default function DatasetDetailPage() {
       {active === "code" && <CodeTab datasetId={datasetId} />}
       {active === "schema" && <SchemaTab datasetId={datasetId} />}
       {active === "lineage" && <LineageTab dataset={dataset} />}
-      {active === "contract" && <ContractTab dataset={dataset} />}
+      {active === "contract" && <ContractTab dataset={dataset} dirtyRef={contractDirty} />}
       {active === "monitors" && (
         <MonitorPackTab
           datasetId={datasetId}

@@ -22,15 +22,6 @@ const TOOLTIP_STYLE = {
 };
 const AXIS = { fontSize: 11, fill: "var(--text-light)" };
 
-const QUALITY_DIMENSIONS = [
-  "Completeness",
-  "Validity",
-  "Freshness",
-  "Uniqueness",
-  "Consistency",
-  "Accuracy",
-] as const;
-
 type Tone = "ok" | "warn" | "danger" | "neutral";
 
 function fmtScore(score: number | null | undefined): string {
@@ -160,7 +151,7 @@ function StatusTier({
         value={coverage == null ? "—" : fmtPct(coverage / 100)}
         foot={
           coverage == null
-            ? "pending (#116)"
+            ? "not yet scored"
             : `${fmtNum(summary?.scored_datasets)} / ${fmtNum(summary?.total_datasets)} datasets scored`
         }
         to="/datasets"
@@ -270,32 +261,6 @@ function IncidentHeatmap({
   );
 }
 
-/** Quality-by-dimension scorecard. No per-quality-dimension backend score exists yet
- *  (rollups are domain/team) — render an explicit empty state, tracked on #116. */
-function DimensionScorecard() {
-  return (
-    <div className="card card-pad">
-      <div className="section-title compact">
-        <h2>Quality by dimension</h2>
-        <span className="badge">pending #116</span>
-      </div>
-      <div className="dim-grid" aria-hidden="true">
-        {QUALITY_DIMENSIONS.map((d) => (
-          <div key={d} className="card dim-tile">
-            <div className="dn">{d}</div>
-            <div className="dv">—</div>
-            <div className="meter">
-              <span style={{ width: "0%" }} />
-            </div>
-          </div>
-        ))}
-      </div>
-      <div className="sub" style={{ marginTop: 10 }}>
-        Per-dimension quality scores aren&rsquo;t exposed by the scorecard API yet — tracked on #116.
-      </div>
-    </div>
-  );
-}
 
 function NeedsAttention({ console: c, summary }: { console: DashboardConsole | undefined; summary: ScorecardSummary | undefined }) {
   const items: { key: string; title: string; meta: string; to: string }[] = [];
@@ -485,8 +450,7 @@ export default function HomePage() {
           error={consoleQuery.error}
         />
       </div>
-      <div className="split" style={{ marginBottom: 16 }}>
-        <DimensionScorecard />
+      <div style={{ marginBottom: 16 }}>
         <NeedsAttention console={consoleData} summary={summary} />
       </div>
 

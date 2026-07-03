@@ -20,7 +20,10 @@ router = APIRouter(prefix="/notifications", tags=["notifications"])
 
 def _out(db: Session, rule: models.NotificationRule) -> schemas.NotificationRuleOut:
     out = schemas.NotificationRuleOut.model_validate(rule)
-    if rule.channel in {"webhook", "teams"} and rule.target:
+    # A Slack rule's target IS its incoming-webhook URL — a bearer credential, same
+    # class as webhook/teams. Mask it too, or any viewer could copy it and post to
+    # the org channel.
+    if rule.channel in {"slack", "webhook", "teams"} and rule.target:
         out.target = _mask_target(rule.target)
     if rule.dataset_id is not None:
         ds = db.get(models.Dataset, rule.dataset_id)
@@ -103,7 +106,10 @@ def update_rule(
         "max_escalation_level",
         "enabled",
     ):
-        if field == "escalation_delay_minutes" and field in data:
+        # dataset_id and escalation_delay_minutes accept an explicit null: it's how
+        # a scoped rule is widened back to "all datasets" / escalation is turned off.
+        # The other fields treat null as "leave unchanged".
+        if field in ("dataset_id", "escalation_delay_minutes") and field in data:
             setattr(rule, field, data[field])
         elif field in data and data[field] is not None:
             setattr(rule, field, data[field])

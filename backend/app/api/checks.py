@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from app.api.serialize import check_out, check_version_out, run_out
 from app.connectors.sa import connector_for
-from app.core import check_authoring
+from app.core import check_authoring, incidents
 from app.core.audit import audit
 from app.core.check_types import CHECK_TYPES
 from app.core.generator import heuristic_proposals
@@ -105,6 +105,10 @@ def update_check(
         check_authoring.apply_update(db, user, check, body.model_dump(exclude_unset=True))
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    # Disabling/archiving a check via PATCH must also silence its open incident (#A6),
+    # same as the DELETE/archive path.
+    if check.status in ("disabled", "archived"):
+        incidents.resolve_incident_for_retired_check(db, check, reason=f"check {check.status}")
     db.commit()
     db.refresh(check)
     return check_out(check)
@@ -186,6 +190,9 @@ def archive_check(
         raise HTTPException(404, "Check not found")
     check.status = "archived"
     check.next_run_at = None
+    # Retiring a check must silence its open incident too, else escalations keep
+    # paging for a check that will never run (and never recover) again (#A6).
+    incidents.resolve_incident_for_retired_check(db, check, reason="check archived")
     audit(db, user, "check.archive", "check", check.id, check_type=check.check_type)
     db.commit()
 

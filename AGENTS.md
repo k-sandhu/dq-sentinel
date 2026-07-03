@@ -119,6 +119,7 @@ The owner reviews by clicking through a live UI. Keep the compose stack up as th
 
 ```powershell
 docker compose up --build -d        # UI on http://localhost:3000 (Postgres-backed, auto-restarts)
+docker compose --profile monitoring up -d   # optionally add Prometheus/Grafana/Loki (opt-in profile)
 python scripts/e2e_smoke.py --base http://127.0.0.1:8000 --dsn sqlite:////data/samples/shopdb.sqlite
 #   ^ seeds connection/datasets/profiles/checks/runs/exceptions (4 slashes = container path)
 docker compose up --build -d api worker   # rebuild backend after changes (frontend analogous)
@@ -199,7 +200,8 @@ Push coherent checkpoints to `main` frequently (CI gates them) rather than batch
   `dq_llm_tokens_total`, `dq_worker_*`, `dq_sla_attainment{sla}`, `dq_sla_breaches_total{sla}`.
   Label cardinality discipline: route templates, engine
   names, providers — never raw paths/SQL/dataset names.
-- Stack (all OSS): Prometheus + Grafana OSS + Loki + Promtail in docker-compose; configs under
+- Stack (all OSS): Prometheus + Grafana OSS + Loki + Promtail in docker-compose behind the
+  opt-in `monitoring` profile (`docker compose --profile monitoring up`); configs under
   `monitoring/`. Grafana on :3001 (admin/admin) auto-provisions the "DQ Sentinel Overview"
   dashboard. New metrics belong on that dashboard (`monitoring/grafana/dashboards/dq-sentinel.json`).
 

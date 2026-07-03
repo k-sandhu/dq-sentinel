@@ -464,6 +464,7 @@ function displayTarget(rule: NotificationRule): string {
 
 function NotificationsCard() {
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const [adding, setAdding] = useState(false);
   const [datasetId, setDatasetId] = useState<string>(""); // "" = all datasets
   const [minSeverity, setMinSeverity] = useState<Severity>("error");
@@ -590,7 +591,22 @@ function NotificationsCard() {
                     {tested[r.id] && <span style={{ fontSize: 11, color: "var(--text-light)", marginRight: 6 }}>{tested[r.id]}</span>}
                     <button className="small" onClick={() => test.mutate(r.id)} disabled={test.isPending}>Test</button>{" "}
                     <button className="small" onClick={() => toggle.mutate(r)}>{r.enabled ? "Disable" : "Enable"}</button>{" "}
-                    <button className="small danger" onClick={() => remove.mutate(r.id)}>Delete</button>
+                    <button
+                      className="small danger"
+                      onClick={async () => {
+                        if (
+                          await confirm({
+                            title: "Delete notification rule?",
+                            body: `Failures matching this ${CHANNELS[r.channel]?.label ?? r.channel} rule will stop notifying anyone.`,
+                            confirmLabel: "Delete rule",
+                            danger: true,
+                          })
+                        )
+                          remove.mutate(r.id);
+                      }}
+                    >
+                      Delete
+                    </button>
                   </td>
                 </tr>
               ))}

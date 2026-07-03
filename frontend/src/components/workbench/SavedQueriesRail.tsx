@@ -5,6 +5,7 @@ import { api } from "../../api/client";
 import { qk } from "../../api/queryKeys";
 import type { SavedQuery } from "../../api/types";
 import { useAuth } from "../../auth";
+import { useConfirm } from "../confirm";
 import { ErrorBox, Icon, Spinner } from "../ui";
 import { canManageQuery } from "./shared";
 
@@ -23,6 +24,7 @@ export function SavedQueriesRail({
 }) {
   const { user } = useAuth();
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const [search, setSearch] = useState("");
   const [activeTag, setActiveTag] = useState<string | null>(null);
 
@@ -109,8 +111,16 @@ export function SavedQueriesRail({
                     className="ghost small danger"
                     title="Delete"
                     disabled={remove.isPending}
-                    onClick={() => {
-                      if (window.confirm(`Delete saved query "${q.name}"?`)) remove.mutate(q.id);
+                    onClick={async () => {
+                      if (
+                        await confirm({
+                          title: "Delete saved query?",
+                          body: `“${q.name}” will be removed for everyone who can see it.`,
+                          confirmLabel: "Delete",
+                          danger: true,
+                        })
+                      )
+                        remove.mutate(q.id);
                     }}
                   >
                     <Icon name="x" size={12} />

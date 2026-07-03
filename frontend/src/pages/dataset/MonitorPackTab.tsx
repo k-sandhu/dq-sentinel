@@ -116,11 +116,24 @@ function MonitorConfigModal({
     });
   };
 
+  // Only guard on close when something actually changed (#D15): passing `dirty`
+  // unconditionally warned even on an untouched open→Esc.
+  const dirty =
+    JSON.stringify(monitors) !== JSON.stringify(initial.monitors) ||
+    cadence.freshness !== String(initial.cadence.freshness_minutes ?? 360) ||
+    cadence.volume !== String(initial.cadence.volume_minutes ?? 1440) ||
+    cadence.schema !== String(initial.cadence.schema_minutes ?? 360) ||
+    cadence.drift !== String(initial.cadence.drift_minutes ?? 1440) ||
+    freshnessHours !== String(initial.sensitivity.freshness_max_age_hours ?? 48) ||
+    volumeSigma !== String(initial.sensitivity.volume_sigma ?? 3) ||
+    driftThreshold !== String(initial.sensitivity.drift_threshold ?? 0.2) ||
+    maxDriftChecks !== String((initial.limits ?? {}).max_drift_checks ?? 4);
+
   return (
     <Modal
       title="Configure monitor pack"
       onClose={onClose}
-      dirty
+      dirty={dirty}
       footer={
         <>
           <button onClick={onClose}>Cancel</button>

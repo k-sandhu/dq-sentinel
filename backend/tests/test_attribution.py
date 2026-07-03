@@ -156,18 +156,21 @@ def test_attribution_not_computable_without_predicate(client, admin_headers, sou
 def test_healthy_where_treats_nulls_as_passing():
     # value/range/length checks only flag NON-null rows, so NULLs are passing and the
     # healthy predicate must include them (else an all-NULL column reports no_healthy_rows).
+    # healthy_where returns (predicate, bound_params) — values are bound, never inlined.
     av = SimpleNamespace(check_type="accepted_values", params={"values": ["active", "inactive"]}, column_name="status")
-    w = healthy_where(av, '"status"')
+    w, params = healthy_where(av, '"status"')
     assert "IS NULL OR" in w and "IN (" in w
+    assert params == {"h0": "active", "h1": "inactive"}  # bound, not inlined
     rng = SimpleNamespace(check_type="range", params={"min": 0, "max": 10}, column_name="age")
-    assert "IS NULL OR" in healthy_where(rng, '"age"')
+    w_rng, p_rng = healthy_where(rng, '"age"')
+    assert "IS NULL OR" in w_rng and p_rng == {"hmin": 0, "hmax": 10}
     sl = SimpleNamespace(check_type="string_length", params={"min_len": 2}, column_name="name")
-    assert "IS NULL OR" in healthy_where(sl, '"name"')
+    assert "IS NULL OR" in healthy_where(sl, '"name"')[0]
     # not_null: the NULL *is* the violation, so it stays excluded
     nn = SimpleNamespace(check_type="not_null", params={}, column_name="email")
-    assert healthy_where(nn, '"email"') == '"email" IS NOT NULL'
+    assert healthy_where(nn, '"email"') == ('"email" IS NOT NULL', {})
     # no per-row predicate -> None
-    assert healthy_where(SimpleNamespace(check_type="unique", params={}, column_name="x"), '"x"') is None
+    assert healthy_where(SimpleNamespace(check_type="unique", params={}, column_name="x"), '"x"')[0] is None
 
 
 def test_attribution_factors_pure():

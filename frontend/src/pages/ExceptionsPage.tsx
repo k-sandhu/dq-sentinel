@@ -55,7 +55,8 @@ export default function ExceptionsPage() {
             <option value="">All datasets</option>
             {datasets?.map((d) => (
               <option key={d.id} value={d.id}>
-                {d.table_name}
+                {(d.schema_name ? `${d.schema_name}.${d.table_name}` : d.table_name) +
+                  ` · ${d.connection_name}`}
               </option>
             ))}
           </select>

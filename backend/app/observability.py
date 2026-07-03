@@ -28,6 +28,9 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 request_id_var: ContextVar[str] = ContextVar("request_id", default="-")
+# Client IP for the in-flight request, for audit forensics (#A15). Set by the
+# request middleware; read by core.audit.audit(). Empty when off-request (worker).
+client_ip_var: ContextVar[str] = ContextVar("client_ip", default="")
 
 # ---------------------------------------------------------------- metrics
 HTTP_REQUESTS = Counter(
@@ -130,6 +133,12 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         rid = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
         token = request_id_var.set(rid)
+        # First hop of X-Forwarded-For (proxy-set), else the socket peer. Trust of the
+        # header is a deployment concern; capturing it is strictly better than the ""
+        # the audit log stored before (#A15).
+        fwd = request.headers.get("X-Forwarded-For")
+        client_ip = fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "")
+        ip_token = client_ip_var.set(client_ip)
         start = time.perf_counter()
         status = 500
         try:
@@ -159,6 +168,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                     },
                 )
             request_id_var.reset(token)
+            client_ip_var.reset(ip_token)
 
 
 def metrics_endpoint() -> Response:

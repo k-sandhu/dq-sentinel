@@ -81,9 +81,17 @@ def _reconcile_exceptions(
     new_count = 0
     suppressed = 0
     regressed = 0
+    seen_this_run: set[str] = set()
 
     for i, row in enumerate(result.sample_rows):
         fp = fps[i]
+        # One sighting per fingerprint per run. Without PK candidates the fingerprint
+        # is a whole-row hash, so byte-identical violating rows (common for NULL/enum
+        # violations) collapse to one fingerprint; processing each would bump
+        # occurrence_count N times for a single run and inflate the "recurring" signal.
+        if fp in seen_this_run:
+            continue
+        seen_this_run.add(fp)
         reason = result.reasons[i] if i < len(result.reasons) else (result.detail or check.name)
         score = result.scores[i] if i < len(result.scores) else None
         match = existing.get(fp)
@@ -216,13 +224,19 @@ def run_check(db: Session, check: Check, triggered_by: str = "manual") -> CheckR
         # so an overlapping run can double-bump a count but never lose a flip).
         db.add(run)
         db.flush()
-        new_records = _reconcile_exceptions(db, check, run, result, metrics)
 
-        # Auto-resolve remaining open exceptions only when the check passes and
-        # actually evaluated rows. NEVER auto-resolve on fail runs from a missing
-        # fingerprint — sample_rows is capped, a fail run sees only a sample.
-        if run.status == "pass" and result.rows_evaluated is not None:
-            _auto_resolve_passing(db, check, run)
+        if run.status == "pass":
+            # A pass means violations are within tolerance; those rows are acceptable,
+            # so do NOT record them as exceptions. Recording-then-auto-resolving
+            # tolerated rows made every run thrash them open->resolved->reopen and
+            # spam regression events. Just auto-resolve any lingering open records.
+            new_records = 0
+            if result.rows_evaluated is not None:
+                _auto_resolve_passing(db, check, run)
+        else:
+            # NEVER auto-resolve on fail runs from a missing fingerprint — sample_rows
+            # is capped, a fail run sees only a sample.
+            new_records = _reconcile_exceptions(db, check, run, result, metrics)
 
         run.metrics = metrics
     except Exception as exc:  # noqa: BLE001 - run must record any failure

@@ -237,7 +237,9 @@ function ActionsList({ actions, session }: { actions: RcaAction[]; session: RcaS
     <div className="rca-action-list">
       {actions.map((item, index) => (
         <div className="rca-action-row" key={`${item.kind}-${item.action}-${index}`}>
-          <input type="checkbox" disabled aria-label={`Recommended action: ${item.action}`} />
+          {/* A bullet, not a disabled checkbox: these are recommendations to read,
+              not an interactive task list (#D16). */}
+          <span className="rca-action-bullet" aria-hidden="true">•</span>
           <span className="badge kind">{item.kind}</span>
           <span className="rca-action-text">{item.action}</span>
           {item.kind === "adjust_check" && session.check_run_id && (

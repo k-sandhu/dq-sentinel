@@ -39,6 +39,10 @@ def detect_outliers(
                 if coerced.notna().mean() > 0.95:
                     numeric[col] = coerced
 
+    # ±inf (e.g. Postgres 'Infinity'::float8, or derived/ratio columns) is not NaN,
+    # so it survives the median-fill below and then makes StandardScaler /
+    # IsolationForest raise "Input contains infinity". Treat it as missing.
+    numeric = numeric.replace([np.inf, -np.inf], np.nan)
     numeric = numeric.dropna(axis=1, how="all")
     # constant columns carry no signal
     numeric = numeric.loc[:, numeric.nunique(dropna=True) > 1]

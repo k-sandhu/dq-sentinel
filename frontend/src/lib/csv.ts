@@ -56,7 +56,9 @@ export function rowsToJson(columns: string[], rows: readonly unknown[][]): strin
 /** Tab-separated text for clipboard copy (pastes cleanly into Excel/Sheets).
  *  Tabs/newlines inside values are flattened to spaces so the grid shape holds. */
 export function rowsToTsv(columns: string[], rows: readonly unknown[][]): string {
-  const clean = (v: unknown) => cellText(v).replace(/[\t\r\n]+/g, " ");
+  // Apply the same formula-injection guard as CSV: a TSV pasted into Excel/Sheets
+  // evaluates leading =,+,-,@ just the same.
+  const clean = (v: unknown) => csvSafeCell(cellText(v).replace(/[\t\r\n]+/g, " "));
   const line = (cells: readonly unknown[]) => cells.map(clean).join("\t");
   return [line(columns), ...rows.map(line)].join("\n");
 }

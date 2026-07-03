@@ -122,6 +122,15 @@ export function Icon({ name, size = 16 }: { name: string; size?: number }) {
       </>
     ),
     rows: <path d="M4 6h16M4 12h16M4 18h16" />,
+    // Incidents get a bell (distinct from the exceptions "alert" triangle, #D20).
+    bell: (
+      <>
+        <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+        <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+      </>
+    ),
+    // Status page: a pulse/heartbeat line.
+    activity: <path d="M3 12h4l3 8 4-16 3 8h4" />,
     // Personalization (#59): outline + filled star for favorites toggles.
     star: <path d="M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.6 9.7l5.8-.8L12 3.6z" />,
     "star-filled": (

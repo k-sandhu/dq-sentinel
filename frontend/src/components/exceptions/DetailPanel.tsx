@@ -207,7 +207,7 @@ export default function DetailPanel({
         <div className="xw-panel-section">
           <div className="xw-panel-label">Check</div>
           <div className="xw-check-card">
-            <Link to={`/datasets/${exc.dataset_id}/checks`} className="xw-check-name">
+            <Link to={`/checks/${exc.check_id}`} className="xw-check-name">
               {exc.check_name}
             </Link>
             <div className="xw-check-meta">
@@ -273,7 +273,7 @@ export default function DetailPanel({
           <Link to={`/workbench?dataset_id=${exc.dataset_id}&exception_id=${exc.id}`} className="btn small">
             Investigate in workbench →
           </Link>
-          <Link to={`/datasets/${exc.dataset_id}?tab=rca`} className="btn small">
+          <Link to={`/datasets/${exc.dataset_id}/rca`} className="btn small">
             RCA
           </Link>
         </div>

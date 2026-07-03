@@ -93,6 +93,29 @@ def test_recurring_row_updates_in_place(source_db):
         assert all(r.last_seen_at >= r.first_seen_at for r in recs)
 
 
+def test_tolerated_violations_do_not_record_or_thrash(source_db):
+    # 5 NULL emails, tolerance 10 -> the run PASSES. Tolerated rows must not be
+    # recorded as exceptions and then auto-resolved every run (open->resolved churn).
+    init_db()
+    factory = session_factory()
+    with factory() as db:
+        check = _setup(db, source_db, params={"tolerance": 10})
+        check_id = check.id
+        # Baseline event count (the app DB is session-shared, so measure the delta).
+        events_before = db.query(ExceptionEvent).count()
+        run1 = run_check(db, check, triggered_by="manual")
+        assert run1.status == "pass"
+        assert db.query(ExceptionRecord).filter(ExceptionRecord.check_id == check_id).count() == 0
+
+    with factory() as db:
+        check = db.get(Check, check_id)
+        run_check(db, check, triggered_by="schedule")
+        # Still nothing recorded, and crucially no regression/resolve event churn:
+        # the two runs must not have created a single exception event.
+        assert db.query(ExceptionRecord).filter(ExceptionRecord.check_id == check_id).count() == 0
+        assert db.query(ExceptionEvent).count() == events_before
+
+
 def test_expected_row_is_suppressed_not_reinserted(source_db):
     init_db()
     factory = session_factory()

@@ -12,6 +12,7 @@ import type {
   IncidentStatus,
 } from "../api/types";
 import { canEdit, useAuth } from "../auth";
+import { useConfirm } from "../components/confirm";
 import { Breadcrumbs, EmptyState, ErrorBox, Modal, SeverityBadge, Spinner, StatusPill } from "../components/ui";
 import { fmtDateTime, fmtNum, timeAgo } from "../lib/format";
 
@@ -225,6 +226,7 @@ export default function IncidentsPage() {
   const { user } = useAuth();
   const editable = canEdit(user);
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const [sp, setSp] = useSearchParams();
   const [qDraft, setQDraft] = useState(sp.get("q") ?? "");
   const [selected, setSelected] = useState<IncidentRecord | null>(null);
@@ -280,6 +282,20 @@ export default function IncidentsPage() {
       qc.invalidateQueries({ queryKey: ["dashboard"] });
     },
   });
+
+  // Resolving is a one-way door that stops escalation/paging, so confirm it (#D6).
+  // (It reopens automatically only if the check fails again.)
+  const doAction = async (incident: IncidentRecord, kind: "ack" | "resolve") => {
+    if (kind === "resolve") {
+      const ok = await confirm({
+        title: "Resolve incident?",
+        body: "Resolving stops escalations and paging for this incident. It reopens automatically only if the check fails again.",
+        confirmLabel: "Resolve",
+      });
+      if (!ok) return;
+    }
+    action.mutate({ incident, kind });
+  };
 
   const serverRows = incidents.data ?? [];
   const rows = q
@@ -437,7 +453,7 @@ export default function IncidentsPage() {
                         {incident.status === "open" && (
                           <button
                             className="small"
-                            onClick={() => action.mutate({ incident, kind: "ack" })}
+                            onClick={() => doAction(incident, "ack")}
                             disabled={action.isPending}
                           >
                             Ack
@@ -446,7 +462,7 @@ export default function IncidentsPage() {
                         {incident.status !== "resolved" && (
                           <button
                             className="small primary"
-                            onClick={() => action.mutate({ incident, kind: "resolve" })}
+                            onClick={() => doAction(incident, "resolve")}
                             disabled={action.isPending}
                           >
                             Resolve
@@ -492,7 +508,7 @@ export default function IncidentsPage() {
           error={detail.error}
           editable={editable}
           acting={action.isPending}
-          onAction={(incident, kind) => action.mutate({ incident, kind })}
+          onAction={(incident, kind) => doAction(incident, kind)}
           onClose={() => setSelected(null)}
         />
       )}
