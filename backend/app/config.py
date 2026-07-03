@@ -107,6 +107,11 @@ class Settings(BaseSettings):
                 }
         return None
 
+    # Built-in data catalog (one-click sample datasets, see app/catalog/). The
+    # backing SQLite/DuckDB files are generated lazily on connect under this dir,
+    # which is gitignored. Empty -> <repo>/samples/catalog.
+    catalog_data_dir: str = ""
+
     # Profiling / execution limits
     profile_sample_rows: int = 50_000
     exception_sample_rows: int = 50
@@ -175,6 +180,11 @@ class Settings(BaseSettings):
     def docs_path(self) -> Path:
         """Directory the in-app docs browser reads markdown from."""
         return Path(self.docs_dir) if self.docs_dir else (REPO_DIR / "docs")
+
+    @property
+    def catalog_path(self) -> Path:
+        """Directory the built-in data catalog generates its backing DB files in."""
+        return Path(self.catalog_data_dir) if self.catalog_data_dir else (REPO_DIR / "samples" / "catalog")
 
     @property
     def is_production(self) -> bool:

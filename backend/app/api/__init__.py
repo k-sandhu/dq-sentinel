@@ -4,6 +4,7 @@ from app.api import (
     adhoc_dashboards,
     audit,
     auth,
+    catalog,
     chat,
     checks,
     connections,
@@ -31,6 +32,7 @@ from app.api import (
 
 api_router = APIRouter()
 api_router.include_router(auth.router)
+api_router.include_router(catalog.router)
 api_router.include_router(chat.router)
 api_router.include_router(connections.router)
 api_router.include_router(datasets.router)

@@ -1241,3 +1241,30 @@ export interface DocSummary {
 export interface DocContent extends DocSummary {
   markdown: string;
 }
+
+// --- built-in data catalog ---
+export interface CatalogTablePreview {
+  table_name: string;
+  importance: string;
+  pii: boolean;
+  freshness_sla_hours: number | null;
+}
+
+export interface CatalogEntry {
+  key: string;
+  title: string;
+  description: string;
+  domain: string;
+  source_system: string;
+  engine: string;
+  tags: string[];
+  connected: boolean;
+  connection_id: number | null;
+  table_count: number;
+  check_count: number;
+  has_contract: boolean;
+  pii: boolean;
+  owner: string;
+  importance: string;
+  tables: CatalogTablePreview[];
+}

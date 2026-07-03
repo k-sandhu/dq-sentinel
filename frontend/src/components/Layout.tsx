@@ -28,6 +28,7 @@ const NAV_GROUPS: {
   {
     label: "Sources",
     items: [
+      { to: "/catalog", label: "Data catalog", icon: "book" },
       { to: "/connections", label: "Connections", icon: "db" },
       { to: "/datasets", label: "Datasets", icon: "table" },
     ],
