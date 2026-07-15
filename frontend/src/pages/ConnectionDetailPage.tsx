@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api } from "../api/client";
 import type { Connection, ConnectionTest, Dataset } from "../api/types";
-import { EmptyState, ErrorBox, Icon, Spinner, StatCard, StatusPill } from "../components/ui";
+import { EmptyState, ErrorBox, Icon, NotFoundState, Spinner, StatCard, StatusPill } from "../components/ui";
 import { fmtDateTime, fmtNum, timeAgo } from "../lib/format";
 
 type HealthEvent = ConnectionTest & { checked_at: string };
@@ -36,13 +36,7 @@ export default function ConnectionDetailPage() {
   if (connectionsQuery.isLoading) return <Spinner label="Loading connection..." />;
   if (connectionsQuery.error) return <div className="page"><ErrorBox error={connectionsQuery.error} /></div>;
   if (!connection) {
-    return (
-      <div className="page">
-        <div className="card">
-          <EmptyState title="Connection not found" hint="It may have been deleted." />
-        </div>
-      </div>
-    );
+    return <NotFoundState what="Connection" backTo="/connections" backLabel="Back to connections" />;
   }
 
   const latest = history[0];

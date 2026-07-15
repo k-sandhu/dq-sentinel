@@ -6,7 +6,7 @@ import type { Check, Run } from "../api/types";
 import { canEdit, useAuth } from "../auth";
 import CheckHistory from "../components/CheckHistory";
 import RunsTable from "../components/RunsTable";
-import { EmptyState, ErrorBox, Icon, SeverityBadge, Spinner, StatCard, StatusPill } from "../components/ui";
+import { EmptyState, ErrorBox, Icon, NotFoundState, SeverityBadge, Spinner, StatCard, StatusPill } from "../components/ui";
 import { checkTypeLabel, originLabel } from "../lib/checkMeta";
 import { describeSchedule, fmtDateTime, fmtNum, timeAgo } from "../lib/format";
 
@@ -59,13 +59,7 @@ export default function CheckDetailPage() {
   if (checksQuery.isLoading) return <Spinner label="Loading check..." />;
   if (checksQuery.error) return <div className="page"><ErrorBox error={checksQuery.error} /></div>;
   if (!check) {
-    return (
-      <div className="page">
-        <div className="card">
-          <EmptyState title="Check not found" hint="It may have been archived or deleted." />
-        </div>
-      </div>
-    );
+    return <NotFoundState what="Check" backTo="/checks" backLabel="Back to checks" />;
   }
 
   const runs = runsQuery.data ?? [];

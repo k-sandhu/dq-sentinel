@@ -250,6 +250,34 @@ export function EmptyState({ title, hint, children }: { title: string; hint?: st
   );
 }
 
+/** Full-page designed not-found for detail routes — a stale or mistyped link
+ *  must land on an explanation with a way back, never a spinner or blank pane
+ *  (UX benchmark P2). `what` is the entity label ("Dataset", "Run #42"). */
+export function NotFoundState({
+  what,
+  backTo,
+  backLabel,
+}: {
+  what: string;
+  backTo: string;
+  backLabel: string;
+}) {
+  return (
+    <div className="page">
+      <div className="card">
+        <EmptyState
+          title={`${what} not found`}
+          hint="It may have been deleted, or the link may be stale."
+        >
+          <Link className="btn primary" to={backTo}>
+            {backLabel}
+          </Link>
+        </EmptyState>
+      </div>
+    </div>
+  );
+}
+
 export function Modal({
   title,
   onClose,

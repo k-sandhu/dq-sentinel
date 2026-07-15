@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router";
-import { api } from "../api/client";
+import { api, ApiError } from "../api/client";
 import type { Check, ExceptionRecord, Health, RcaSession, Run } from "../api/types";
 import { canEdit, useAuth } from "../auth";
 import { checkTypeLabel } from "../lib/checkMeta";
 import { fmtDateTime, fmtNum, fmtValue } from "../lib/format";
-import { EmptyState, ErrorBox, Icon, Spinner, StatCard, StatusPill } from "../components/ui";
+import { EmptyState, ErrorBox, Icon, NotFoundState, Spinner, StatCard, StatusPill } from "../components/ui";
 
 function metricValue(value: unknown): string {
   if (value === null || value === undefined) return "NULL";
@@ -100,8 +100,12 @@ export default function RunDetailPage() {
   });
 
   if (runQuery.isLoading) return <Spinner label="Loading run..." />;
+  if (runQuery.error instanceof ApiError && runQuery.error.status === 404)
+    return <NotFoundState what={`Run #${id}`} backTo="/runs" backLabel="Back to runs" />;
   if (runQuery.error) return <div className="page"><ErrorBox error={runQuery.error} /></div>;
-  if (!run) return null;
+  // Settled with no data and no error (e.g. non-numeric id disables the query):
+  // never render a blank page.
+  if (!run) return <NotFoundState what={`Run #${id}`} backTo="/runs" backLabel="Back to runs" />;
 
   const metrics = Object.entries(run.metrics ?? {});
   const customSql = typeof check?.params?.sql === "string" ? check.params.sql : null;

@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { api } from "../api/client";
+import { api, ApiError } from "../api/client";
 import { qk } from "../api/queryKeys";
 import type { Dataset, Profile } from "../api/types";
 import { canEdit, useAuth } from "../auth";
-import { Breadcrumbs, ErrorBox, Icon, Spinner, StatusPill } from "../components/ui";
+import { Breadcrumbs, ErrorBox, Icon, NotFoundState, Spinner, StatusPill } from "../components/ui";
 import { fmtNum, timeAgo } from "../lib/format";
 import { isFavorite, pushRecent, subscribePrefs, toggleFavorite } from "../lib/prefs";
 import ChecksTab from "./dataset/ChecksTab";
@@ -51,15 +51,21 @@ export default function DatasetDetailPage() {
     navigate(`/datasets/${datasetId}/${t}`);
   };
 
+  // A mistyped link ("/datasets/not-a-number") must land on the designed
+  // not-found, not a 422 error box — and must not fire /datasets/NaN requests.
+  const validId = Number.isInteger(datasetId) && datasetId > 0;
+
   const { data: dataset, error } = useQuery({
     queryKey: qk.datasets.detail(datasetId),
     queryFn: () => api.get<Dataset>(`/datasets/${datasetId}`),
+    enabled: validId,
   });
 
   const profileQuery = useQuery({
     queryKey: qk.profile.detail(datasetId),
     queryFn: () => api.get<Profile>(`/datasets/${datasetId}/profile`),
     retry: false, // 404 until first profiling
+    enabled: validId,
   });
 
   const runProfile = useMutation({
@@ -80,6 +86,8 @@ export default function DatasetDetailPage() {
   useEffect(() => setFav(isFavorite(datasetId)), [datasetId]);
   useEffect(() => subscribePrefs(() => setFav(isFavorite(datasetId))), [datasetId]);
 
+  if (!validId || (error instanceof ApiError && error.status === 404))
+    return <NotFoundState what="Dataset" backTo="/datasets" backLabel="Back to datasets" />;
   if (error) return <div className="page"><ErrorBox error={error} /></div>;
   if (!dataset) return <Spinner label="Loading dataset…" />;
 
