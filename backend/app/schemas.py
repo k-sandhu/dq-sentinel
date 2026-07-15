@@ -556,6 +556,24 @@ class GenerateChecksOut(BaseModel):
     checks: list[CheckOut]
 
 
+class CheckBulkTransitionIn(BaseModel):
+    """Bulk activate/dismiss for PROPOSED checks (review remediation on the
+    proposal-wall PR): the transition is conditional on each row still being
+    status='proposed' server-side, so concurrent editors can't be clobbered."""
+
+    ids: Annotated[list[int], Field(min_length=1, max_length=500)]
+    action: Literal["activate", "dismiss"]
+
+
+class CheckBulkTransitionOut(BaseModel):
+    # id -> activated | dismissed | skipped_not_proposed | not_found
+    outcomes: dict[int, str]
+    activated: int = 0
+    dismissed: int = 0
+    skipped_not_proposed: int = 0
+    not_found: int = 0
+
+
 class CheckTypeInfo(BaseModel):
     key: str
     label: str
