@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { api } from "../api/client";
+import { api, ApiError } from "../api/client";
 import { qk } from "../api/queryKeys";
 import type { Dataset, Profile } from "../api/types";
 import { canEdit, useAuth } from "../auth";
-import { Breadcrumbs, ErrorBox, Icon, Spinner, StatusPill } from "../components/ui";
+import { Breadcrumbs, ErrorBox, Icon, NotFoundState, Spinner, StatusPill } from "../components/ui";
 import { fmtNum, timeAgo } from "../lib/format";
 import { isFavorite, pushRecent, subscribePrefs, toggleFavorite } from "../lib/prefs";
 import ChecksTab from "./dataset/ChecksTab";
@@ -80,6 +80,8 @@ export default function DatasetDetailPage() {
   useEffect(() => setFav(isFavorite(datasetId)), [datasetId]);
   useEffect(() => subscribePrefs(() => setFav(isFavorite(datasetId))), [datasetId]);
 
+  if (error instanceof ApiError && error.status === 404)
+    return <NotFoundState what="Dataset" backTo="/datasets" backLabel="Back to datasets" />;
   if (error) return <div className="page"><ErrorBox error={error} /></div>;
   if (!dataset) return <Spinner label="Loading dataset…" />;
 
