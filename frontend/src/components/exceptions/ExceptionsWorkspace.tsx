@@ -154,6 +154,7 @@ export default function ExceptionsWorkspace({
       }
       qc.invalidateQueries({ queryKey: qk.exceptions.all });
       qc.invalidateQueries({ queryKey: qk.exceptionsFacets.all });
+      qc.invalidateQueries({ queryKey: qk.exceptionViewCounts.all });
       qc.invalidateQueries({ queryKey: qk.dashboard.all });
       qc.invalidateQueries({ queryKey: qk.datasets.all });
     },
@@ -283,7 +284,7 @@ export default function ExceptionsWorkspace({
   return (
     <div className={`xw-root${panelOpen ? " xw-panel-open" : ""}`}>
       <div className="xw-main">
-        <SavedViews currentParams={sp.toString()} facets={facetsQ.data} onApply={applyViewParams} />
+        <SavedViews currentParams={sp.toString()} onApply={applyViewParams} />
         <FilterBar
           filters={filters}
           facets={facetsQ.data}

@@ -3,6 +3,7 @@ import { Navigate, Outlet, Route, Routes, useLocation } from "react-router";
 import { useAuth } from "./auth";
 import Layout from "./components/Layout";
 import { Spinner } from "./components/ui";
+import { safeInternalPath } from "./lib/postLogin";
 import { getLanding } from "./lib/prefs";
 import CatalogPage from "./pages/CatalogPage";
 import CheckDetailPage from "./pages/CheckDetailPage";
@@ -35,6 +36,26 @@ const LineagePage = lazy(() => import("./pages/LineagePage"));
 const WorkbenchPage = lazy(() => import("./pages/WorkbenchPage"));
 
 const SESSION_LANDED_KEY = "dq_landed";
+
+/**
+ * Deep-link preservation through login (UX benchmark P1). Logged-out visits to
+ * any app URL redirect to /login carrying the intended location in router
+ * state; after auth, PostLoginRedirect sends the user there instead of "/".
+ * The target is validated by safeInternalPath so it can't become an open
+ * redirect. State survives the auth re-render because it lives on the /login
+ * history entry itself.
+ */
+function LoginRedirect() {
+  const location = useLocation();
+  const from = location.pathname + location.search + location.hash;
+  return <Navigate to="/login" replace state={{ from }} />;
+}
+
+function PostLoginRedirect() {
+  const location = useLocation();
+  const from = (location.state as { from?: unknown } | null)?.from;
+  return <Navigate to={safeInternalPath(from)} replace />;
+}
 
 /**
  * Default-landing redirect (#59) wrapping the index route. On the FIRST visit to
@@ -76,14 +97,14 @@ export default function App() {
     return (
       <Routes>
         <Route path="/login" element={<LoginPage />} />
-        <Route path="*" element={<Navigate to="/login" replace />} />
+        <Route path="*" element={<LoginRedirect />} />
       </Routes>
     );
   }
 
   return (
     <Routes>
-      <Route path="/login" element={<Navigate to="/" replace />} />
+      <Route path="/login" element={<PostLoginRedirect />} />
       {/* Standalone reference pages — separate from the main app shell (no
           sidebar), reachable via the floating launcher. Static paths outrank
           the Layout group's "*" catch-all. */}

@@ -192,6 +192,32 @@ def test_facets_exclude_own_dimension(client, seeded):
     assert facets["total"] == open_total
 
 
+def test_view_counts_match_their_views(client, seeded):
+    """Each built-in saved-view badge must equal the total its click produces —
+    the chip replaces the filters, so the two can never legitimately diverge
+    (UX benchmark P1: 'New today' advertised the all-open count, clicking gave 0)."""
+    h = seeded["h"]
+    counts = client.get("/api/v1/exceptions/view-counts", headers=h)
+    assert counts.status_code == 200, counts.text
+    counts = counts.json()
+
+    view_params = {
+        "my_open": "assignee=me&status=open",
+        "new_today": "recurrence=new&status=open",
+        "high_severity": "severity=error&status=open",
+        "recurring": "recurrence=recurring&status=open",
+        "unassigned": "assignee=none&status=open",
+        "expected": "status=expected",
+    }
+    for key, params in view_params.items():
+        total = client.get(f"/api/v1/exceptions?{params}", headers=h).json()["total"]
+        assert counts[key] == total, f"{key}: badge {counts[key]} != view total {total}"
+
+    # Sanity on the seeded data itself: the recurring record (occurrence_count=5,
+    # still open) must be visible to the badge.
+    assert counts["recurring"] >= 1
+
+
 def test_export_csv(client, seeded):
     h = seeded["h"]
     resp = client.get(f"/api/v1/exceptions/export.csv?dataset_id={seeded['dataset_id']}", headers=h)

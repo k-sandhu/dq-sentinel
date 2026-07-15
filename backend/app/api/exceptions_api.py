@@ -211,6 +211,30 @@ def exception_facets(
     )
 
 
+@router.get("/view-counts", response_model=schemas.ExceptionViewCounts)
+def exception_view_counts(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Counts for the built-in saved-view chips. Unlike /facets (filter-relative,
+    single-dimension), each of these is the absolute row count of the view's exact
+    param set — a chip click replaces the filters, so its badge must equal the
+    total the user will see after clicking (UX benchmark P1: the "New today" chip
+    previously advertised the all-open facet count while its filters returned 0)."""
+
+    def n(**kw) -> int:
+        return _filtered(db, current_user=user, **kw).count()
+
+    return schemas.ExceptionViewCounts(
+        my_open=n(assignee="me", status=["open"]),
+        new_today=n(recurrence="new", status=["open"]),
+        high_severity=n(severity=["error"], status=["open"]),
+        recurring=n(recurrence="recurring", status=["open"]),
+        unassigned=n(assignee="none", status=["open"]),
+        expected=n(status=["expected"]),
+    )
+
+
 def _csv_safe(value) -> str:
     """Neutralize spreadsheet formula injection: prefix a leading '=','+','-','@',
     tab or CR with a single quote before Excel/Sheets can evaluate it (#57)."""

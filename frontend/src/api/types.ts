@@ -495,6 +495,17 @@ export interface ExceptionFacets {
   total: number;
 }
 
+/** Absolute result counts for the built-in saved-view chips — each field equals
+ *  the `total` the list endpoint returns for that view's exact params. */
+export interface ExceptionViewCounts {
+  my_open: number;
+  new_today: number;
+  high_severity: number;
+  recurring: number;
+  unassigned: number;
+  expected: number;
+}
+
 export interface ExceptionPage {
   items: ExceptionRecord[];
   total: number;
