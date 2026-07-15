@@ -402,7 +402,9 @@ export function StatCard({
   }
 
   return (
-    <div className="card stat-card">
+    // `title` applies here too — callers rely on it for hover detail on
+    // non-link cards (e.g. the overdue next-run card's absolute timestamp).
+    <div className="card stat-card" title={title}>
       {body}
     </div>
   );

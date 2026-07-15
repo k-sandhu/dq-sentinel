@@ -188,10 +188,12 @@ export default function RunDetailPage() {
                     <td style={{ fontWeight: 700 }}>Error</td>
                     <td style={{ color: "var(--danger-dark)" }}>
                       {run.error_message}
-                      {/* An errored run means the check never evaluated — offer
-                          the likeliest next step instead of a bare driver error. */}
+                      {/* status="error" covers the whole pipeline (evaluation OR
+                          post-evaluation persistence/reconcile failures) — say
+                          "did not complete", and keep the connectivity hint
+                          conditional (codex review). */}
                       <div style={{ color: "var(--text-light)", marginTop: 6, fontSize: 12.5 }}>
-                        The check could not be evaluated. If this looks like a connectivity or
+                        This run did not complete. If the error looks like a connectivity or
                         missing-file problem,{" "}
                         {datasetQuery.data ? (
                           <Link to={`/connections/${datasetQuery.data.connection_id}`}>
