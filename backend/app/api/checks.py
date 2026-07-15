@@ -91,6 +91,55 @@ def create_check(
     return check_out(check)
 
 
+@router.post("/bulk-transition", response_model=schemas.CheckBulkTransitionOut)
+def bulk_transition_proposals(
+    body: schemas.CheckBulkTransitionIn,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_role("editor")),
+):
+    """Bulk activate/dismiss of PROPOSED checks in one transaction (review
+    remediation on the proposal-wall PR). Per-id outcomes are authoritative:
+    a row transitions only while still status='proposed' at this moment, so a
+    concurrent single-item action can't be resurrected or clobbered — ids that
+    changed under the reviewer come back as skipped_not_proposed. Side effects
+    match the single-item endpoints (apply_update versioning/audit on activate;
+    archive + incident resolve + audit on dismiss). Per-connection editor
+    scoping as in restore_version (#159); invisible rows report not_found."""
+    ids = list(dict.fromkeys(body.ids))  # dedupe, preserve order
+    checks_by_id = {
+        c.id: c for c in db.query(models.Check).filter(models.Check.id.in_(ids)).all()
+    }
+    outcomes: dict[int, str] = {}
+    for cid in ids:
+        check = checks_by_id.get(cid)
+        if check is None:
+            outcomes[cid] = "not_found"
+            continue
+        ds = db.get(models.Dataset, check.dataset_id)
+        try:
+            assert_connection_role(db, user, ds.connection_id, "editor")
+        except HTTPException:
+            # 404-parity with the read paths: don't leak existence across grants.
+            outcomes[cid] = "not_found"
+            continue
+        if check.status != "proposed":
+            outcomes[cid] = "skipped_not_proposed"
+            continue
+        if body.action == "activate":
+            check_authoring.apply_update(db, user, check, {"status": "active"})
+            outcomes[cid] = "activated"
+        else:
+            check.status = "archived"
+            check.next_run_at = None
+            incidents.resolve_incident_for_retired_check(db, check, reason="check archived")
+            audit(db, user, "check.archive", "check", check.id, check_type=check.check_type)
+            outcomes[cid] = "dismissed"
+    db.commit()
+    tally = {k: sum(1 for v in outcomes.values() if v == k) for k in
+             ("activated", "dismissed", "skipped_not_proposed", "not_found")}
+    return schemas.CheckBulkTransitionOut(outcomes=outcomes, **tally)
+
+
 @router.patch("/{check_id}", response_model=schemas.CheckOut)
 def update_check(
     check_id: int,

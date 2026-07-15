@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { api } from "../api/client";
-import type { Check, CheckTypeInfo, Run } from "../api/types";
+import type { Check, CheckBulkTransitionOut, CheckTypeInfo, Run } from "../api/types";
 import { canEdit, useAuth } from "../auth";
 import { checkTypeLabel, originLabel } from "../lib/checkMeta";
 import { describeSchedule, timeAgo } from "../lib/format";
@@ -122,9 +122,6 @@ function EditCheckModal({ check, onClose }: { check: Check; onClose: () => void 
 // rules the page exists to show (UX benchmark P2: 133 proposals pushed the
 // checks table ~15 screens down).
 const PROPOSALS_COLLAPSE_THRESHOLD = 5;
-// Bulk activate/dismiss reuses the per-check endpoints (same authz/audit path),
-// a few at a time.
-const BULK_CHUNK = 8;
 
 export default function ChecksTable({
   checks,
@@ -146,8 +143,9 @@ export default function ChecksTable({
   // null = automatic (collapse only when the wall would bury the checks table);
   // true/false = the user's explicit toggle for this visit.
   const [proposalsToggled, setProposalsToggled] = useState<boolean | null>(null);
-  const [bulk, setBulk] = useState<{ verb: string; done: number; total: number } | null>(null);
+  const [bulk, setBulk] = useState<{ verb: string; total: number } | null>(null);
   const [bulkError, setBulkError] = useState<string | null>(null);
+  const [bulkNotice, setBulkNotice] = useState<string | null>(null);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["checks"] });
@@ -178,11 +176,13 @@ export default function ChecksTable({
 
   const proposed = checks.filter((c) => c.status === "proposed");
   const rest = checks.filter((c) => c.status !== "proposed");
-  // Auto-collapse only when proposals share the page with real checks; a
-  // proposals-only view (e.g. the "proposed" filter) always shows them.
+  // Auto-collapse only when proposals share the page with real checks. When the
+  // view is proposals-only (the "proposed" filter, a fresh dataset tab), force
+  // the panel open regardless of any earlier Collapse click — a persisted
+  // override must never hide the only rows on screen (codex review).
   const collapseByDefault =
     proposed.length > PROPOSALS_COLLAPSE_THRESHOLD && rest.length > 0;
-  const showProposals = proposalsToggled ?? !collapseByDefault;
+  const showProposals = collapseByDefault ? (proposalsToggled ?? false) : true;
 
   async function runBulk(verb: "activate" | "dismiss") {
     const ids = proposed.map((c) => c.id);
@@ -205,24 +205,29 @@ export default function ChecksTable({
     });
     if (!ok) return;
     setBulkError(null);
-    setBulk({ verb, done: 0, total: ids.length });
-    let failed = 0;
-    for (let i = 0; i < ids.length; i += BULK_CHUNK) {
-      const slice = ids.slice(i, i + BULK_CHUNK);
-      const results = await Promise.allSettled(
-        slice.map((id) =>
-          verb === "activate"
-            ? api.patch<Check>(`/checks/${id}`, { status: "active" })
-            : api.del(`/checks/${id}`),
-        ),
+    setBulkNotice(null);
+    setBulk({ verb, total: ids.length });
+    try {
+      // One atomic request; the server transitions only rows still 'proposed'
+      // and reports per-id outcomes, so counts here are authoritative even if
+      // another editor was working the same list (codex review).
+      const res = await api.post<CheckBulkTransitionOut>("/checks/bulk-transition", {
+        ids,
+        action: verb,
+      });
+      const changed = verb === "activate" ? res.activated : res.dismissed;
+      const skipped = res.skipped_not_proposed + res.not_found;
+      setBulkNotice(
+        skipped > 0
+          ? `${changed} ${verb === "activate" ? "activated" : "dismissed"} · ${skipped} skipped (changed or removed while you reviewed) — list refreshed.`
+          : `${changed} proposal${changed === 1 ? "" : "s"} ${verb === "activate" ? "activated" : "dismissed"}.`,
       );
-      failed += results.filter((r) => r.status === "rejected").length;
-      setBulk({ verb, done: Math.min(i + BULK_CHUNK, ids.length), total: ids.length });
+    } catch (e) {
+      setBulkError(e instanceof Error ? e.message : "Bulk action failed — list refreshed.");
+    } finally {
+      setBulk(null);
+      invalidate();
     }
-    setBulk(null);
-    if (failed > 0)
-      setBulkError(`${failed} of ${ids.length} proposals could not be ${verb === "activate" ? "activated" : "dismissed"} — they remain in the list.`);
-    invalidate();
   }
 
   if (!checks.length) {
@@ -237,9 +242,20 @@ export default function ChecksTable({
   return (
     <>
       <ErrorBox error={setStatus.error || runNow.error || archive.error} />
-      {bulkError && <div className="error-box">{bulkError}</div>}
+      {bulkError && <div className="error-box" role="alert">{bulkError}</div>}
+      {/* Live region: progress + authoritative outcome, announced to screen
+          readers (button-label changes inside a disabled control are not). */}
+      <div role="status" aria-live="polite">
+        {bulk && (
+          <div className="info-box">
+            {bulk.verb === "activate" ? "Activating" : "Dismissing"} {bulk.total} proposal
+            {bulk.total === 1 ? "" : "s"}…
+          </div>
+        )}
+        {!bulk && bulkNotice && <div className="info-box">{bulkNotice}</div>}
+      </div>
       {proposed.length > 0 && (
-        <div className="card" style={{ marginBottom: 16, borderColor: "#e0d2ef" }}>
+        <div className="card" style={{ marginBottom: 16, borderColor: "#e0d2ef" }} aria-busy={bulk !== null}>
           <div
             className="card-pad"
             style={{
@@ -263,18 +279,14 @@ export default function ChecksTable({
                     disabled={bulk !== null}
                     onClick={() => runBulk("activate")}
                   >
-                    {bulk?.verb === "activate"
-                      ? `Activating ${bulk.done}/${bulk.total}…`
-                      : `Activate all (${proposed.length})`}
+                    {bulk?.verb === "activate" ? "Activating…" : `Activate all (${proposed.length})`}
                   </button>
                   <button
                     className="small danger"
                     disabled={bulk !== null}
                     onClick={() => runBulk("dismiss")}
                   >
-                    {bulk?.verb === "dismiss"
-                      ? `Dismissing ${bulk.done}/${bulk.total}…`
-                      : `Dismiss all (${proposed.length})`}
+                    {bulk?.verb === "dismiss" ? "Dismissing…" : `Dismiss all (${proposed.length})`}
                   </button>
                 </>
               )}
@@ -327,8 +339,12 @@ export default function ChecksTable({
                     </td>
                     {editable && (
                       <td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
+                        {/* Row actions pause while a bulk transition is in
+                            flight — racing the bulk snapshot invites double
+                            transitions (codex review). */}
                         <button
                           className="primary small"
+                          disabled={bulk !== null}
                           onClick={(e) => {
                             e.stopPropagation();
                             setStatus.mutate({ id: c.id, status: "active" });
@@ -338,6 +354,7 @@ export default function ChecksTable({
                         </button>{" "}
                         <button
                           className="small"
+                          disabled={bulk !== null}
                           onClick={(e) => {
                             e.stopPropagation();
                             setEditing(c);
@@ -347,6 +364,7 @@ export default function ChecksTable({
                         </button>{" "}
                         <button
                           className="small danger"
+                          disabled={bulk !== null}
                           onClick={async (e) => {
                             e.stopPropagation();
                             if (

@@ -487,6 +487,16 @@ export interface FacetEntry {
   count: number;
 }
 
+/** Per-id results of POST /checks/bulk-transition — authoritative outcomes so
+ *  the UI never guesses what "failed" means (codex review on the bulk PR). */
+export interface CheckBulkTransitionOut {
+  outcomes: Record<number, string>;
+  activated: number;
+  dismissed: number;
+  skipped_not_proposed: number;
+  not_found: number;
+}
+
 export interface ExceptionFacets {
   status: Record<string, number>;
   severity: Record<string, number>;
