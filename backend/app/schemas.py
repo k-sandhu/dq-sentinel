@@ -847,6 +847,20 @@ class ExceptionFacets(BaseModel):
     total: int
 
 
+class ExceptionViewCounts(BaseModel):
+    """Absolute result counts for the built-in saved-view chips. Each chip
+    REPLACES the current filters when clicked, so its badge must be
+    filter-independent — every field equals the `total` the list endpoint
+    would return for that view's exact params."""
+
+    my_open: int
+    new_today: int
+    high_severity: int
+    recurring: int
+    unassigned: int
+    expected: int
+
+
 class ExceptionPage(BaseModel):
     items: list[ExceptionOut]
     total: int

@@ -186,6 +186,10 @@ export const qk = {
     all: ["exceptions-facets"] as const,
     list: (apiParams: string) => ["exceptions-facets", apiParams] as const,
   },
+  exceptionViewCounts: {
+    all: ["exception-view-counts"] as const,
+    get: (pinnedParams: string) => ["exception-view-counts", pinnedParams] as const,
+  },
   exceptionEvents: {
     all: ["exception-events"] as const,
     detail: (exceptionId: Id) => ["exception-events", exceptionId] as const,

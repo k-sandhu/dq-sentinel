@@ -48,7 +48,14 @@ async function parseErrorMessage(resp: Response): Promise<string> {
 async function ensureOk(resp: Response, path: string): Promise<void> {
   if (resp.status === 401 && !path.startsWith("/auth/login")) {
     setToken(null);
-    window.location.href = "/login";
+    // Hard navigation can't carry router state — pass the intended location as
+    // ?from= so PostLoginRedirect can restore it after re-auth (deep links must
+    // survive an expired token too, not just a cold logged-out visit).
+    const from = window.location.pathname + window.location.search + window.location.hash;
+    window.location.href =
+      from && from !== "/" && !from.startsWith("/login")
+        ? `/login?from=${encodeURIComponent(from)}`
+        : "/login";
     throw new ApiError(401, "Session expired");
   }
   if (!resp.ok) {

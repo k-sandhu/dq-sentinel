@@ -1,34 +1,31 @@
-// Saved-view chips: built-ins + user-saved (localStorage). Status/severity-based
-// chips show facet-count badges computed client-side from the facet response;
-// other chips (e.g. assignee=me) omit a count in v1 (#63).
+// Saved-view chips: built-ins + user-saved (localStorage). A built-in chip
+// REPLACES the current filters when clicked, so its badge must be the absolute
+// count of the view's own params — GET /exceptions/view-counts serves exactly
+// that. (Deriving badges from the filter-relative /facets response showed
+// numbers the click didn't reproduce — UX benchmark P1.)
 
+import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import type { ExceptionFacets } from "../../api/types";
+import { api } from "../../api/client";
+import { qk } from "../../api/queryKeys";
+import type { ExceptionViewCounts } from "../../api/types";
 import { getPref, PREF_KEYS, setPref } from "../../lib/prefs";
 import type { SavedView } from "../../lib/prefs";
 
 interface BuiltIn {
   name: string;
   params: string;
-  /** how to derive a count from facets, or null when not derivable in v1 */
-  count?: (f: ExceptionFacets) => number | null;
+  /** field of GET /exceptions/view-counts holding this view's absolute count */
+  countKey: keyof ExceptionViewCounts;
 }
 
 const BUILTINS: BuiltIn[] = [
-  { name: "My open", params: "assignee=me&status=open" }, // needs its own call; omit count v1
-  {
-    name: "New today",
-    params: "recurrence=new&status=open",
-    count: (f) => f.status.open ?? null,
-  },
-  {
-    name: "High severity",
-    params: "severity=error&status=open",
-    count: (f) => f.severity.error ?? null,
-  },
-  { name: "Recurring", params: "recurrence=recurring&status=open" },
-  { name: "Unassigned", params: "assignee=none&status=open" },
-  { name: "Expected", params: "status=expected", count: (f) => f.status.expected ?? null },
+  { name: "My open", params: "assignee=me&status=open", countKey: "my_open" },
+  { name: "New today", params: "recurrence=new&status=open", countKey: "new_today" },
+  { name: "High severity", params: "severity=error&status=open", countKey: "high_severity" },
+  { name: "Recurring", params: "recurrence=recurring&status=open", countKey: "recurring" },
+  { name: "Unassigned", params: "assignee=none&status=open", countKey: "unassigned" },
+  { name: "Expected", params: "status=expected", countKey: "expected" },
 ];
 
 /** Two param-strings represent the same view if their sorted entries match. */
@@ -44,16 +41,36 @@ function sameView(a: string, b: string): boolean {
 
 export default function SavedViews({
   currentParams,
-  facets,
+  pinned,
   onApply,
 }: {
   currentParams: string;
-  facets: ExceptionFacets | undefined;
+  /** Workspace embedding scope (dataset tab pins these outside the URL) —
+   *  badges must count within it or they stop matching what a click shows. */
+  pinned?: { datasetId?: number; runId?: number; checkId?: number };
   onApply: (params: string) => void;
 }) {
   const [views, setViews] = useState<SavedView[]>(() =>
     getPref<SavedView[]>(PREF_KEYS.views, []),
   );
+
+  const pinnedQs = new URLSearchParams();
+  if (pinned?.datasetId != null) pinnedQs.set("dataset_id", String(pinned.datasetId));
+  if (pinned?.runId != null) pinnedQs.set("run_id", String(pinned.runId));
+  if (pinned?.checkId != null) pinnedQs.set("check_id", String(pinned.checkId));
+  const pinnedParams = pinnedQs.toString();
+
+  // Absolute per-view counts within the pinned scope. Triage in this tab
+  // invalidates the key; the 30s poll matches the list/facets queries so
+  // worker- and teammate-made changes update the badges too (codex review).
+  const { data: counts } = useQuery({
+    queryKey: qk.exceptionViewCounts.get(pinnedParams),
+    queryFn: () =>
+      api.get<ExceptionViewCounts>(
+        `/exceptions/view-counts${pinnedParams ? `?${pinnedParams}` : ""}`,
+      ),
+    refetchInterval: 30_000,
+  });
 
   function persist(next: SavedView[]) {
     setViews(next);
@@ -77,7 +94,7 @@ export default function SavedViews({
     <div className="xw-views" role="tablist" aria-label="Saved views">
       {BUILTINS.map((b) => {
         const active = sameView(b.params, currentParams);
-        const count = facets && b.count ? b.count(facets) : null;
+        const count = counts ? counts[b.countKey] : null;
         return (
           <button
             key={b.name}
