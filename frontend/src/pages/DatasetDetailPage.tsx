@@ -51,15 +51,21 @@ export default function DatasetDetailPage() {
     navigate(`/datasets/${datasetId}/${t}`);
   };
 
+  // A mistyped link ("/datasets/not-a-number") must land on the designed
+  // not-found, not a 422 error box — and must not fire /datasets/NaN requests.
+  const validId = Number.isInteger(datasetId) && datasetId > 0;
+
   const { data: dataset, error } = useQuery({
     queryKey: qk.datasets.detail(datasetId),
     queryFn: () => api.get<Dataset>(`/datasets/${datasetId}`),
+    enabled: validId,
   });
 
   const profileQuery = useQuery({
     queryKey: qk.profile.detail(datasetId),
     queryFn: () => api.get<Profile>(`/datasets/${datasetId}/profile`),
     retry: false, // 404 until first profiling
+    enabled: validId,
   });
 
   const runProfile = useMutation({
@@ -80,7 +86,7 @@ export default function DatasetDetailPage() {
   useEffect(() => setFav(isFavorite(datasetId)), [datasetId]);
   useEffect(() => subscribePrefs(() => setFav(isFavorite(datasetId))), [datasetId]);
 
-  if (error instanceof ApiError && error.status === 404)
+  if (!validId || (error instanceof ApiError && error.status === 404))
     return <NotFoundState what="Dataset" backTo="/datasets" backLabel="Back to datasets" />;
   if (error) return <div className="page"><ErrorBox error={error} /></div>;
   if (!dataset) return <Spinner label="Loading dataset…" />;
