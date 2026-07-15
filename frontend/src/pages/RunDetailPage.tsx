@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router";
 import { api, ApiError } from "../api/client";
-import type { Check, ExceptionRecord, Health, RcaSession, Run } from "../api/types";
+import { qk } from "../api/queryKeys";
+import type { Check, Dataset, ExceptionRecord, Health, RcaSession, Run } from "../api/types";
 import { canEdit, useAuth } from "../auth";
 import { checkTypeLabel } from "../lib/checkMeta";
 import { fmtDateTime, fmtNum, fmtValue } from "../lib/format";
@@ -91,6 +92,14 @@ export default function RunDetailPage() {
 
   const health = useQuery({ queryKey: ["health"], queryFn: () => api.get<Health>("/health") });
 
+  // Errored runs point the analyst at the likeliest remedy (test the source);
+  // the dataset is only fetched to resolve its connection id (UX P2).
+  const datasetQuery = useQuery({
+    queryKey: qk.datasets.detail(run?.dataset_id ?? "none"),
+    queryFn: () => api.get<Dataset>(`/datasets/${run!.dataset_id}`),
+    enabled: !!run && run.status === "error",
+  });
+
   const startRca = useMutation({
     mutationFn: () => api.post<RcaSession>("/rca/start", { check_run_id: runId }),
     onSuccess: (session) => {
@@ -177,7 +186,23 @@ export default function RunDetailPage() {
                 {run.error_message && (
                   <tr>
                     <td style={{ fontWeight: 700 }}>Error</td>
-                    <td style={{ color: "var(--danger-dark)" }}>{run.error_message}</td>
+                    <td style={{ color: "var(--danger-dark)" }}>
+                      {run.error_message}
+                      {/* An errored run means the check never evaluated — offer
+                          the likeliest next step instead of a bare driver error. */}
+                      <div style={{ color: "var(--text-light)", marginTop: 6, fontSize: 12.5 }}>
+                        The check could not be evaluated. If this looks like a connectivity or
+                        missing-file problem,{" "}
+                        {datasetQuery.data ? (
+                          <Link to={`/connections/${datasetQuery.data.connection_id}`}>
+                            test the source connection
+                          </Link>
+                        ) : (
+                          <Link to={`/datasets/${run.dataset_id}`}>check the dataset's source</Link>
+                        )}{" "}
+                        and re-run.
+                      </div>
+                    </td>
                   </tr>
                 )}
               </tbody>

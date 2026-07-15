@@ -61,6 +61,14 @@ export function isRecent(iso: string | null | undefined, hours = 24): boolean {
   return Date.now() - parseUtc(iso).getTime() < hours * 3600 * 1000;
 }
 
+/** True when a scheduled timestamp is already in the past — a "next run" that
+ *  never happened must read as overdue, not as a plain date (UX benchmark P2:
+ *  "NEXT RUN Jul 5" shown 10 days later with no cue the scheduler was idle). */
+export function isOverdue(iso: string | null | undefined): boolean {
+  if (!iso) return false;
+  return parseUtc(iso).getTime() < Date.now();
+}
+
 export function describeSchedule(kind: string | null, expr: string | null): string {
   if (!kind || !expr) return "manual";
   if (kind === "cron") return `cron ${expr}`;

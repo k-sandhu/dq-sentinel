@@ -8,7 +8,7 @@ import CheckHistory from "../components/CheckHistory";
 import RunsTable from "../components/RunsTable";
 import { EmptyState, ErrorBox, Icon, NotFoundState, SeverityBadge, Spinner, StatCard, StatusPill } from "../components/ui";
 import { checkTypeLabel, originLabel } from "../lib/checkMeta";
-import { describeSchedule, fmtDateTime, fmtNum, timeAgo } from "../lib/format";
+import { describeSchedule, fmtDateTime, fmtNum, isOverdue, timeAgo } from "../lib/format";
 
 const TOOLTIP_STYLE = {
   fontSize: 12,
@@ -109,7 +109,19 @@ export default function CheckDetailPage() {
         <StatCard label="Latest status" value={<StatusPill value={check.last_status ?? "unknown"} />} hint={timeAgo(check.last_run_at)} />
         <StatCard label="Runs loaded" value={fmtNum(runs.length)} />
         <StatCard label="Latest violations" value={fmtNum(latest?.violation_count)} tone={latest?.violation_count ? "danger" : "ok"} />
-        <StatCard label="Next run" value={<span style={{ fontSize: 18 }}>{fmtDateTime(check.next_run_at)}</span>} />
+        {/* A "next run" in the past means the scheduler is idle or behind —
+            say so instead of presenting a stale date as a plan (UX P2). */}
+        {check.status === "active" && isOverdue(check.next_run_at) ? (
+          <StatCard
+            label="Next run"
+            value={<span style={{ fontSize: 18 }}>overdue</span>}
+            tone="danger"
+            hint={`was due ${timeAgo(check.next_run_at)} — scheduler idle or behind`}
+            title={fmtDateTime(check.next_run_at)}
+          />
+        ) : (
+          <StatCard label="Next run" value={<span style={{ fontSize: 18 }}>{fmtDateTime(check.next_run_at)}</span>} />
+        )}
       </div>
 
       <div className="split" style={{ marginBottom: 16 }}>

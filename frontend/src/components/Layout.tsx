@@ -6,6 +6,7 @@ import { qk } from "../api/queryKeys";
 import type { ConnectionHealth, Dataset, SearchHit, SearchOut } from "../api/types";
 import { useAuth } from "../auth";
 import { applyAppearance, applyMode, getAxis } from "../lib/appearance";
+import { fmtRelative } from "../lib/format";
 import { FAVORITES_SIDEBAR_CAP, getFavorites, getRecents, pruneStalePrefs, subscribePrefs } from "../lib/prefs";
 import { AppearanceButton } from "./AppearanceDrawer";
 import DocsLauncher from "./DocsLauncher";
@@ -57,7 +58,7 @@ const NAV_GROUPS: {
  *  "fleet-health" cache key with ConnectionsPage's on-demand probe). */
 function FleetHealthPill() {
   const navigate = useNavigate();
-  const { data } = useQuery({
+  const { data, dataUpdatedAt } = useQuery({
     queryKey: qk.fleetHealth.list(),
     queryFn: () => api.get<ConnectionHealth[]>("/connections/health"),
     refetchInterval: 60_000,
@@ -77,12 +78,16 @@ function FleetHealthPill() {
       label = "Sources healthy";
     }
   }
+  // The pill polls once a minute — carry the probe age so the count is never
+  // mistaken for a live reading (UX P2).
+  const checkedAgo =
+    data && dataUpdatedAt > 0 ? ` — checked ${fmtRelative(new Date(dataUpdatedAt).toISOString())}` : "";
   return (
     <button
       type="button"
       className="environment-pill"
       onClick={() => navigate("/connections")}
-      title="Connection fleet health — click to manage sources"
+      title={`Connection fleet health${checkedAgo} — click to manage sources`}
     >
       <span className={`env-dot ${dot}`} />
       {label}
