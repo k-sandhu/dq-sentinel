@@ -5,7 +5,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app import models, schemas
-from app.api.serialize import exception_out, run_out, warm_exception_refs
+from app.api.serialize import ExceptionRefs, exception_out, run_out
 from app.db import get_db
 from app.models import utcnow
 from app.security import assert_dataset_visible, get_current_user, visible_dataset_ids
@@ -105,5 +105,5 @@ def run_exceptions(
         .order_by(models.ExceptionRecord.id)
         .all()
     )
-    warm_exception_refs(db, excs)
-    return [exception_out(db, e) for e in excs]
+    refs = ExceptionRefs(db, excs)
+    return [exception_out(db, e, refs) for e in excs]

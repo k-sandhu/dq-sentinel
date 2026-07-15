@@ -10,7 +10,7 @@ from sqlalchemy.orm import Query as SAQuery
 from sqlalchemy.orm import Session
 
 from app import models, schemas
-from app.api.serialize import exception_event_out, exception_out, warm_exception_refs
+from app.api.serialize import ExceptionRefs, exception_event_out, exception_out
 from app.core.attribution import build_attribution
 from app.core.audit import audit
 from app.core.events import record_event
@@ -158,9 +158,9 @@ def list_exceptions(
     total = query.count()
     limit = min(max(limit, 1), 500)
     excs = _apply_sort(query, sort).offset(offset).limit(limit).all()
-    warm_exception_refs(db, excs)  # 3 batched lookups instead of up to 4 per row (perf)
+    refs = ExceptionRefs(db, excs)  # 3 batched lookups instead of up to 4 per row (perf)
     return schemas.ExceptionPage(
-        items=[exception_out(db, e) for e in excs], total=total, limit=limit, offset=offset
+        items=[exception_out(db, e, refs) for e in excs], total=total, limit=limit, offset=offset
     )
 
 
@@ -485,8 +485,8 @@ def triage(
     # One audit row per batch (#30); ExceptionEvent has the per-row record (#56).
     audit(db, user, "exception.triage", "exception", None, count=len(excs), status=body.status)
     db.commit()
-    warm_exception_refs(db, excs)  # bulk triage returns up to 1000 rows (perf)
-    return [exception_out(db, e) for e in excs]
+    refs = ExceptionRefs(db, excs)  # bulk triage returns up to 1000 rows (perf)
+    return [exception_out(db, e, refs) for e in excs]
 
 
 def _display_name_for(db: Session, user_id: int) -> str:

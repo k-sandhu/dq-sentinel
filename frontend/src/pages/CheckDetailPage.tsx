@@ -38,7 +38,7 @@ export default function CheckDetailPage() {
   // Single-check fetch (perf): this page previously downloaded the full checks
   // list — hundreds of rows with params JSON — just to find one row.
   const checksQuery = useQuery({
-    queryKey: qk.checkDetail.detail(checkId),
+    queryKey: qk.checks.detail(checkId),
     queryFn: () => api.get<Check>(`/checks/${checkId}`),
     enabled: Number.isFinite(checkId),
   });
@@ -54,8 +54,7 @@ export default function CheckDetailPage() {
   const runNow = useMutation({
     mutationFn: () => api.post<Run>(`/checks/${checkId}/run`),
     onSuccess: (run) => {
-      qc.invalidateQueries({ queryKey: ["checks"] });
-      qc.invalidateQueries({ queryKey: qk.checkDetail.all });
+      qc.invalidateQueries({ queryKey: ["checks"] }); // prefix covers the detail key
       qc.invalidateQueries({ queryKey: ["runs"] });
       navigate(`/runs/${run.id}`);
     },

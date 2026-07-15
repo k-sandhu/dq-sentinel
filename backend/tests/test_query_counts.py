@@ -13,6 +13,9 @@ import pytest
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 
+from app.db import session_factory
+from app.models import ExceptionRecord, utcnow
+
 
 @contextmanager
 def count_statements():
@@ -52,6 +55,31 @@ def perf_seeded(client, admin_headers, source_db):
     for _ in range(12):
         r = client.post(f"/api/v1/checks/{check['id']}/run", headers=h)
         assert r.status_code == 200, r.text
+
+    # Re-running the same check RECONCILES the same five NULL-email fingerprints
+    # (occurrence_count bumps, no new rows) — codex review: a five-row page can't
+    # distinguish the batched path from the old ~3+2/row N+1. Insert 25 distinct
+    # synthetic exceptions so the exceptions budget genuinely bites.
+    factory = session_factory()
+    with factory() as db:
+        template = db.query(ExceptionRecord).filter_by(check_id=check["id"]).first()
+        assert template is not None
+        run_id = template.run_id
+        for i in range(25):
+            db.add(
+                ExceptionRecord(
+                    dataset_id=ds["id"],
+                    check_id=check["id"],
+                    run_id=run_id,
+                    fingerprint=f"qc-synth-{i}",
+                    reason=f"synthetic row {i} for query-budget coverage",
+                    row_data={"email": None, "i": i},
+                    status="open",
+                    first_seen_at=utcnow(),
+                    last_seen_at=utcnow(),
+                )
+            )
+        db.commit()
     return {"h": h, "dataset_id": ds["id"], "check_id": check["id"]}
 
 
@@ -86,9 +114,10 @@ def test_exceptions_list_query_budget(client, perf_seeded):
             f"/api/v1/exceptions?dataset_id={perf_seeded['dataset_id']}&limit=50", headers=h
         )
     assert resp.status_code == 200
-    assert resp.json()["total"] >= 1
-    # ~15 statements today (auth + grants + count + page + 3 warm batches +
-    # session bookkeeping) for a 50-row page; an N+1 would be 60+.
+    body = resp.json()
+    # The page must actually be large enough that a per-row N+1 blows the
+    # budget: 30 rows -> the old path issued ~2 lookups per row (60+).
+    assert len(body["items"]) >= 30
     assert counter["n"] <= 18, f"/exceptions issued {counter['n']} queries for one page"
 
 
