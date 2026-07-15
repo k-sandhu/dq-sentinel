@@ -2,7 +2,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app import models, schemas
 from app.api.serialize import dataset_out
@@ -45,7 +45,27 @@ def list_datasets(
             func.lower(models.Dataset.table_name).like(needle)
             | func.lower(models.Dataset.display_name).like(needle)
         )
-    return [dataset_out(db, d) for d in query.order_by(models.Dataset.table_name).all()]
+    datasets = (
+        query.options(
+            selectinload(models.Dataset.checks),
+            selectinload(models.Dataset.knowledge),
+            selectinload(models.Dataset.connection),
+        )
+        .order_by(models.Dataset.table_name)
+        .all()
+    )
+    # One GROUP BY replaces a COUNT per row (perf: the datasets page issued one
+    # open-exceptions count per dataset before this).
+    open_counts: dict[int, int] = dict(
+        db.query(models.ExceptionRecord.dataset_id, func.count(models.ExceptionRecord.id))
+        .filter(
+            models.ExceptionRecord.dataset_id.in_([d.id for d in datasets]),
+            models.ExceptionRecord.status == "open",
+        )
+        .group_by(models.ExceptionRecord.dataset_id)
+        .all()
+    ) if datasets else {}
+    return [dataset_out(db, d, open_exceptions=open_counts.get(d.id, 0)) for d in datasets]
 
 
 @router.post("/register", response_model=list[schemas.DatasetOut], status_code=201)

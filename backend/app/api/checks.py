@@ -62,6 +62,21 @@ def list_checks(
     return [check_out(c) for c in query.order_by(models.Check.dataset_id, models.Check.id).all()]
 
 
+@router.get("/{check_id}", response_model=schemas.CheckOut)
+def get_check(
+    check_id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Single-check fetch (perf: the check detail page previously downloaded the
+    full checks list to find one row). Scoped to visible connections (#159)."""
+    check = db.get(models.Check, check_id)
+    if check is None or check.status == "archived":
+        raise HTTPException(404, "Check not found")
+    assert_dataset_visible(db, user, check.dataset_id)
+    return check_out(check)
+
+
 @router.post("", response_model=schemas.CheckOut, status_code=201)
 def create_check(
     body: schemas.CheckIn,

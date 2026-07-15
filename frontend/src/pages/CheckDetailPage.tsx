@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router";
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { api } from "../api/client";
+import { api, ApiError } from "../api/client";
+import { qk } from "../api/queryKeys";
 import type { Check, Run } from "../api/types";
 import { canEdit, useAuth } from "../auth";
 import CheckHistory from "../components/CheckHistory";
@@ -34,11 +35,14 @@ export default function CheckDetailPage() {
   const qc = useQueryClient();
   const editable = canEdit(user);
 
+  // Single-check fetch (perf): this page previously downloaded the full checks
+  // list — hundreds of rows with params JSON — just to find one row.
   const checksQuery = useQuery({
-    queryKey: ["checks"],
-    queryFn: () => api.get<Check[]>("/checks"),
+    queryKey: qk.checks.detail(checkId),
+    queryFn: () => api.get<Check>(`/checks/${checkId}`),
+    enabled: Number.isFinite(checkId),
   });
-  const check = checksQuery.data?.find((c) => c.id === checkId) ?? null;
+  const check = checksQuery.data ?? null;
 
   const runsQuery = useQuery({
     queryKey: ["runs", { checkId }],
@@ -50,14 +54,19 @@ export default function CheckDetailPage() {
   const runNow = useMutation({
     mutationFn: () => api.post<Run>(`/checks/${checkId}/run`),
     onSuccess: (run) => {
-      qc.invalidateQueries({ queryKey: ["checks"] });
+      qc.invalidateQueries({ queryKey: ["checks"] }); // prefix covers the detail key
       qc.invalidateQueries({ queryKey: ["runs"] });
       navigate(`/runs/${run.id}`);
     },
   });
 
+  // The detail endpoint 404s for archived/deleted ids — same "not found" render
+  // the list-scan produced before, not a raw error box.
+  const notFound =
+    checksQuery.error instanceof ApiError && checksQuery.error.status === 404;
   if (checksQuery.isLoading) return <Spinner label="Loading check..." />;
-  if (checksQuery.error) return <div className="page"><ErrorBox error={checksQuery.error} /></div>;
+  if (checksQuery.error && !notFound)
+    return <div className="page"><ErrorBox error={checksQuery.error} /></div>;
   if (!check) {
     return <NotFoundState what="Check" backTo="/checks" backLabel="Back to checks" />;
   }

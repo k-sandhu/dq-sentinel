@@ -1,8 +1,42 @@
 """Shared ORM -> schema serializers that need joined display fields."""
 
+from collections.abc import Iterable
+
 from sqlalchemy.orm import Session
 
 from app import models, schemas
+
+
+class ExceptionRefs:
+    """Batch-loaded checks / datasets / users for serializing a page of
+    exceptions: one IN(...) query per entity type instead of up to 4 lookups
+    per row. Holds STRONG references and passes them to `exception_out`
+    explicitly — merely warming the session's identity map is not enough, its
+    entries are weak and can be collected before serialization (codex review
+    reproduced per-row queries with the warm-up approach)."""
+
+    def __init__(self, db: Session, excs: Iterable[models.ExceptionRecord]):
+        excs = list(excs)
+        check_ids = {e.check_id for e in excs}
+        dataset_ids = {e.dataset_id for e in excs}
+        user_ids = {e.marked_by_id for e in excs if e.marked_by_id} | {
+            e.assigned_to_id for e in excs if e.assigned_to_id
+        }
+        self.checks: dict[int, models.Check] = (
+            {c.id: c for c in db.query(models.Check).filter(models.Check.id.in_(check_ids))}
+            if check_ids
+            else {}
+        )
+        self.datasets: dict[int, models.Dataset] = (
+            {d.id: d for d in db.query(models.Dataset).filter(models.Dataset.id.in_(dataset_ids))}
+            if dataset_ids
+            else {}
+        )
+        self.users: dict[int, models.User] = (
+            {u.id: u for u in db.query(models.User).filter(models.User.id.in_(user_ids))}
+            if user_ids
+            else {}
+        )
 
 
 def mask_dsn(dsn: str) -> str:
@@ -38,7 +72,11 @@ def check_version_out(
     return out
 
 
-def run_out(db: Session, run: models.CheckRun) -> schemas.RunOut:
+def run_out(
+    db: Session, run: models.CheckRun, exception_count: int | None = None
+) -> schemas.RunOut:
+    """Pass `exception_count` when serializing a page of runs — the list endpoint
+    precomputes all counts in one GROUP BY instead of one COUNT per row (perf)."""
     out = schemas.RunOut.model_validate(run)
     check = run.check
     if check:
@@ -46,7 +84,11 @@ def run_out(db: Session, run: models.CheckRun) -> schemas.RunOut:
         out.check_type = check.check_type
         out.dataset_name = check.dataset.table_name if check.dataset else ""
     out.exception_count = (
-        db.query(models.ExceptionRecord).filter(models.ExceptionRecord.run_id == run.id).count()
+        exception_count
+        if exception_count is not None
+        else db.query(models.ExceptionRecord)
+        .filter(models.ExceptionRecord.run_id == run.id)
+        .count()
     )
     return out
 
@@ -60,22 +102,29 @@ def _display_name(user: models.User | None) -> str | None:
     return f"{name} (inactive)" if not user.is_active else name
 
 
-def exception_out(db: Session, exc: models.ExceptionRecord) -> schemas.ExceptionOut:
+def exception_out(
+    db: Session, exc: models.ExceptionRecord, refs: ExceptionRefs | None = None
+) -> schemas.ExceptionOut:
+    """Pass `refs` (ExceptionRefs over the whole page) when serializing lists —
+    the display fields then come from the prefetched maps with zero queries."""
     out = schemas.ExceptionOut.model_validate(exc)
-    check = db.get(models.Check, exc.check_id)
+    check = refs.checks.get(exc.check_id) if refs else db.get(models.Check, exc.check_id)
     if check:
         out.check_name = check.name
         out.check_type = check.check_type
         out.check_severity = check.severity
         out.column_name = check.column_name
-    dataset = db.get(models.Dataset, exc.dataset_id)
+    dataset = refs.datasets.get(exc.dataset_id) if refs else db.get(models.Dataset, exc.dataset_id)
     if dataset:
         out.dataset_name = dataset.table_name
     if exc.marked_by_id:
-        user = db.get(models.User, exc.marked_by_id)
+        user = refs.users.get(exc.marked_by_id) if refs else db.get(models.User, exc.marked_by_id)
         out.marked_by = user.name or user.email if user else None
     if exc.assigned_to_id:
-        out.assigned_to = _display_name(db.get(models.User, exc.assigned_to_id))
+        assignee = (
+            refs.users.get(exc.assigned_to_id) if refs else db.get(models.User, exc.assigned_to_id)
+        )
+        out.assigned_to = _display_name(assignee)
     return out
 
 
@@ -104,13 +153,19 @@ def custom_dashboard_meta(
     return out
 
 
-def dataset_out(db: Session, ds: models.Dataset) -> schemas.DatasetOut:
+def dataset_out(
+    db: Session, ds: models.Dataset, open_exceptions: int | None = None
+) -> schemas.DatasetOut:
+    """Pass `open_exceptions` when serializing a list — the list endpoint
+    precomputes all counts in one GROUP BY instead of one COUNT per row (perf)."""
     out = schemas.DatasetOut.model_validate(ds)
     out.connection_name = ds.connection.name if ds.connection else ""
     active = [c for c in ds.checks if c.status == "active"]
     out.active_checks = len(active)
     out.open_exceptions = (
-        db.query(models.ExceptionRecord)
+        open_exceptions
+        if open_exceptions is not None
+        else db.query(models.ExceptionRecord)
         .filter(models.ExceptionRecord.dataset_id == ds.id, models.ExceptionRecord.status == "open")
         .count()
     )

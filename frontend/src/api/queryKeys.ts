@@ -84,6 +84,10 @@ export const qk = {
     byDatasetId: (datasetId: Id) => ["checks", datasetId] as const,
     byFilter: (filter: unknown) => ["checks", { filter }] as const,
     active: () => ["checks", "active"] as const,
+    // Single-check fetch for the detail page. Deliberately INSIDE the "checks"
+    // prefix: every existing mutation (edit, restore, run, archive) invalidates
+    // ["checks"], and a sibling family would silently miss those (codex review).
+    detail: (checkId: Id) => ["checks", "detail", checkId] as const,
   },
   checkTypes: {
     all: ["check-types"] as const,
