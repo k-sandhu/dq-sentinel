@@ -117,6 +117,15 @@ function EditCheckModal({ check, onClose }: { check: Check; onClose: () => void 
   );
 }
 
+// Above this many pending proposals, the panel starts collapsed when it shares
+// the page with real checks — a wall of proposals must never bury the active
+// rules the page exists to show (UX benchmark P2: 133 proposals pushed the
+// checks table ~15 screens down).
+const PROPOSALS_COLLAPSE_THRESHOLD = 5;
+// Bulk activate/dismiss reuses the per-check endpoints (same authz/audit path),
+// a few at a time.
+const BULK_CHUNK = 8;
+
 export default function ChecksTable({
   checks,
   showDataset = true,
@@ -134,6 +143,11 @@ export default function ChecksTable({
   const [editing, setEditing] = useState<Check | null>(null);
   const [historyFor, setHistoryFor] = useState<Check | null>(null);
   const [runningId, setRunningId] = useState<number | null>(null);
+  // null = automatic (collapse only when the wall would bury the checks table);
+  // true/false = the user's explicit toggle for this visit.
+  const [proposalsToggled, setProposalsToggled] = useState<boolean | null>(null);
+  const [bulk, setBulk] = useState<{ verb: string; done: number; total: number } | null>(null);
+  const [bulkError, setBulkError] = useState<string | null>(null);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["checks"] });
@@ -164,6 +178,52 @@ export default function ChecksTable({
 
   const proposed = checks.filter((c) => c.status === "proposed");
   const rest = checks.filter((c) => c.status !== "proposed");
+  // Auto-collapse only when proposals share the page with real checks; a
+  // proposals-only view (e.g. the "proposed" filter) always shows them.
+  const collapseByDefault =
+    proposed.length > PROPOSALS_COLLAPSE_THRESHOLD && rest.length > 0;
+  const showProposals = proposalsToggled ?? !collapseByDefault;
+
+  async function runBulk(verb: "activate" | "dismiss") {
+    const ids = proposed.map((c) => c.id);
+    const ok = await confirm({
+      title: verb === "activate" ? "Activate all proposals" : "Dismiss all proposals",
+      danger: verb === "dismiss",
+      confirmLabel: verb === "activate" ? `Activate ${ids.length}` : `Dismiss ${ids.length}`,
+      body:
+        verb === "activate" ? (
+          <>
+            Activate all <strong>{ids.length}</strong> proposed checks? They start running on
+            their listed schedules. You can pause or archive any of them later.
+          </>
+        ) : (
+          <>
+            Dismiss all <strong>{ids.length}</strong> proposed checks? They are removed from
+            proposals; generating checks again can re-propose them.
+          </>
+        ),
+    });
+    if (!ok) return;
+    setBulkError(null);
+    setBulk({ verb, done: 0, total: ids.length });
+    let failed = 0;
+    for (let i = 0; i < ids.length; i += BULK_CHUNK) {
+      const slice = ids.slice(i, i + BULK_CHUNK);
+      const results = await Promise.allSettled(
+        slice.map((id) =>
+          verb === "activate"
+            ? api.patch<Check>(`/checks/${id}`, { status: "active" })
+            : api.del(`/checks/${id}`),
+        ),
+      );
+      failed += results.filter((r) => r.status === "rejected").length;
+      setBulk({ verb, done: Math.min(i + BULK_CHUNK, ids.length), total: ids.length });
+    }
+    setBulk(null);
+    if (failed > 0)
+      setBulkError(`${failed} of ${ids.length} proposals could not be ${verb === "activate" ? "activated" : "dismissed"} — they remain in the list.`);
+    invalidate();
+  }
 
   if (!checks.length) {
     return (
@@ -177,14 +237,64 @@ export default function ChecksTable({
   return (
     <>
       <ErrorBox error={setStatus.error || runNow.error || archive.error} />
+      {bulkError && <div className="error-box">{bulkError}</div>}
       {proposed.length > 0 && (
         <div className="card" style={{ marginBottom: 16, borderColor: "#e0d2ef" }}>
-          <div className="card-pad" style={{ paddingBottom: 8 }}>
-            <h3>
+          <div
+            className="card-pad"
+            style={{
+              paddingBottom: 8,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+              flexWrap: "wrap",
+            }}
+          >
+            <h3 style={{ margin: 0 }}>
               <span style={{ color: "var(--purple)" }}>●</span> Proposed checks ({proposed.length}) — review
               and activate
             </h3>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              {editable && (
+                <>
+                  <button
+                    className="small"
+                    disabled={bulk !== null}
+                    onClick={() => runBulk("activate")}
+                  >
+                    {bulk?.verb === "activate"
+                      ? `Activating ${bulk.done}/${bulk.total}…`
+                      : `Activate all (${proposed.length})`}
+                  </button>
+                  <button
+                    className="small danger"
+                    disabled={bulk !== null}
+                    onClick={() => runBulk("dismiss")}
+                  >
+                    {bulk?.verb === "dismiss"
+                      ? `Dismissing ${bulk.done}/${bulk.total}…`
+                      : `Dismiss all (${proposed.length})`}
+                  </button>
+                </>
+              )}
+              {collapseByDefault && (
+                <button
+                  className="small ghost"
+                  aria-expanded={showProposals}
+                  onClick={() => setProposalsToggled(!showProposals)}
+                >
+                  {showProposals ? "Collapse" : `Review proposals (${proposed.length})`}
+                </button>
+              )}
+            </div>
           </div>
+          {!showProposals && (
+            <div className="card-pad" style={{ paddingTop: 0, color: "var(--text-light)", fontSize: 12.5 }}>
+              Collapsed so your active checks stay in reach — nothing is activated without review.
+            </div>
+          )}
+          {showProposals && (
           <div className="table-wrap">
             <table className="data">
               <tbody>
@@ -270,6 +380,7 @@ export default function ChecksTable({
               </tbody>
             </table>
           </div>
+          )}
         </div>
       )}
 
