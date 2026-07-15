@@ -85,6 +85,10 @@ export const qk = {
     byFilter: (filter: unknown) => ["checks", { filter }] as const,
     active: () => ["checks", "active"] as const,
   },
+  checkDetail: {
+    all: ["check-detail"] as const,
+    detail: (checkId: Id) => ["check-detail", checkId] as const,
+  },
   checkTypes: {
     all: ["check-types"] as const,
     list: () => ["check-types"] as const,

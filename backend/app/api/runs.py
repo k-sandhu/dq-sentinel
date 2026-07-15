@@ -1,10 +1,11 @@
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from sqlalchemy.orm import Session
+from sqlalchemy import func
+from sqlalchemy.orm import Session, joinedload
 
 from app import models, schemas
-from app.api.serialize import exception_out, run_out
+from app.api.serialize import exception_out, run_out, warm_exception_refs
 from app.db import get_db
 from app.models import utcnow
 from app.security import assert_dataset_visible, get_current_user, visible_dataset_ids
@@ -61,8 +62,22 @@ def list_runs(
             raise HTTPException(422, "since must be one of: 24h, 7d, 14d")
         q = q.filter(models.CheckRun.started_at >= utcnow() - delta)
     response.headers["X-Total-Count"] = str(q.count())
-    runs = q.order_by(models.CheckRun.id.desc()).offset(offset).limit(min(limit, 200)).all()
-    return [run_out(db, r) for r in runs]
+    runs = (
+        q.options(joinedload(models.CheckRun.check).joinedload(models.Check.dataset))
+        .order_by(models.CheckRun.id.desc())
+        .offset(offset)
+        .limit(min(limit, 200))
+        .all()
+    )
+    # One GROUP BY replaces a COUNT per row (perf: a 100-run page issued 100
+    # counts plus lazy check/dataset loads before this).
+    counts: dict[int, int] = dict(
+        db.query(models.ExceptionRecord.run_id, func.count(models.ExceptionRecord.id))
+        .filter(models.ExceptionRecord.run_id.in_([r.id for r in runs]))
+        .group_by(models.ExceptionRecord.run_id)
+        .all()
+    ) if runs else {}
+    return [run_out(db, r, exception_count=counts.get(r.id, 0)) for r in runs]
 
 
 @router.get("/{run_id}", response_model=schemas.RunOut)
@@ -90,4 +105,5 @@ def run_exceptions(
         .order_by(models.ExceptionRecord.id)
         .all()
     )
+    warm_exception_refs(db, excs)
     return [exception_out(db, e) for e in excs]

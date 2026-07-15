@@ -18,13 +18,16 @@ export default function ConnectionDetailPage() {
     queryKey: ["connections"],
     queryFn: () => api.get<Connection[]>("/connections"),
   });
+  // Scoped fetch (perf): ?connection_id= filters server-side instead of
+  // downloading every dataset in the estate and filtering client-side.
   const datasetsQuery = useQuery({
-    queryKey: ["datasets"],
-    queryFn: () => api.get<Dataset[]>("/datasets"),
+    queryKey: ["datasets", { connectionId }],
+    queryFn: () => api.get<Dataset[]>(`/datasets?connection_id=${connectionId}`),
+    enabled: Number.isFinite(connectionId),
   });
 
   const connection = connectionsQuery.data?.find((c) => c.id === connectionId) ?? null;
-  const datasets = (datasetsQuery.data ?? []).filter((d) => d.connection_id === connectionId);
+  const datasets = datasetsQuery.data ?? [];
 
   const testConnection = useMutation({
     mutationFn: () => api.post<ConnectionTest>(`/connections/${connectionId}/test`),

@@ -1,8 +1,29 @@
 """Shared ORM -> schema serializers that need joined display fields."""
 
+from collections.abc import Iterable
+
 from sqlalchemy.orm import Session
 
 from app import models, schemas
+
+
+def warm_exception_refs(db: Session, excs: Iterable[models.ExceptionRecord]) -> None:
+    """Batch-load the checks / datasets / users that `exception_out` resolves per
+    row via db.get(). One IN(...) query per entity type warms the session's
+    identity map, so the per-row gets never touch the database (perf: the
+    exceptions list page previously issued up to 4 lookups per row)."""
+    excs = list(excs)
+    check_ids = {e.check_id for e in excs}
+    dataset_ids = {e.dataset_id for e in excs}
+    user_ids = {e.marked_by_id for e in excs if e.marked_by_id} | {
+        e.assigned_to_id for e in excs if e.assigned_to_id
+    }
+    if check_ids:
+        db.query(models.Check).filter(models.Check.id.in_(check_ids)).all()
+    if dataset_ids:
+        db.query(models.Dataset).filter(models.Dataset.id.in_(dataset_ids)).all()
+    if user_ids:
+        db.query(models.User).filter(models.User.id.in_(user_ids)).all()
 
 
 def mask_dsn(dsn: str) -> str:
@@ -38,7 +59,11 @@ def check_version_out(
     return out
 
 
-def run_out(db: Session, run: models.CheckRun) -> schemas.RunOut:
+def run_out(
+    db: Session, run: models.CheckRun, exception_count: int | None = None
+) -> schemas.RunOut:
+    """Pass `exception_count` when serializing a page of runs — the list endpoint
+    precomputes all counts in one GROUP BY instead of one COUNT per row (perf)."""
     out = schemas.RunOut.model_validate(run)
     check = run.check
     if check:
@@ -46,7 +71,11 @@ def run_out(db: Session, run: models.CheckRun) -> schemas.RunOut:
         out.check_type = check.check_type
         out.dataset_name = check.dataset.table_name if check.dataset else ""
     out.exception_count = (
-        db.query(models.ExceptionRecord).filter(models.ExceptionRecord.run_id == run.id).count()
+        exception_count
+        if exception_count is not None
+        else db.query(models.ExceptionRecord)
+        .filter(models.ExceptionRecord.run_id == run.id)
+        .count()
     )
     return out
 
@@ -104,13 +133,19 @@ def custom_dashboard_meta(
     return out
 
 
-def dataset_out(db: Session, ds: models.Dataset) -> schemas.DatasetOut:
+def dataset_out(
+    db: Session, ds: models.Dataset, open_exceptions: int | None = None
+) -> schemas.DatasetOut:
+    """Pass `open_exceptions` when serializing a list — the list endpoint
+    precomputes all counts in one GROUP BY instead of one COUNT per row (perf)."""
     out = schemas.DatasetOut.model_validate(ds)
     out.connection_name = ds.connection.name if ds.connection else ""
     active = [c for c in ds.checks if c.status == "active"]
     out.active_checks = len(active)
     out.open_exceptions = (
-        db.query(models.ExceptionRecord)
+        open_exceptions
+        if open_exceptions is not None
+        else db.query(models.ExceptionRecord)
         .filter(models.ExceptionRecord.dataset_id == ds.id, models.ExceptionRecord.status == "open")
         .count()
     )

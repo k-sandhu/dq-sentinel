@@ -18,7 +18,22 @@ export default defineConfig(({ mode }) => ({
       },
     },
   },
-  build: { outDir: "dist", sourcemap: mode !== "production" },
+  build: {
+    outDir: "dist",
+    sourcemap: mode !== "production",
+    rollupOptions: {
+      output: {
+        // Split the biggest stable vendors out of the entry chunk (it exceeded
+        // 500 kB): they download in parallel and, being content-hashed, stay
+        // browser-cached across app deploys that don't bump them.
+        manualChunks: {
+          "vendor-react": ["react", "react-dom", "react-router"],
+          "vendor-charts": ["recharts"],
+          "vendor-query": ["@tanstack/react-query"],
+        },
+      },
+    },
+  },
   test: {
     // jsdom so component tests (React Testing Library) can render; pure-logic tests
     // run here too. setup registers jest-dom matchers + per-test cleanup.
