@@ -188,7 +188,7 @@ export const qk = {
   },
   exceptionViewCounts: {
     all: ["exception-view-counts"] as const,
-    get: () => ["exception-view-counts"] as const,
+    get: (pinnedParams: string) => ["exception-view-counts", pinnedParams] as const,
   },
   exceptionEvents: {
     all: ["exception-events"] as const,

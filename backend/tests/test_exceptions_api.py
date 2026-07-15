@@ -217,6 +217,17 @@ def test_view_counts_match_their_views(client, seeded):
     # still open) must be visible to the badge.
     assert counts["recurring"] >= 1
 
+    # Pinned-workspace embedding (the dataset Exceptions tab adds dataset_id to
+    # every list request outside the URL filters): the invariant must hold with
+    # the same pin applied to both sides (codex review).
+    ds = seeded["dataset_id"]
+    pinned = client.get(f"/api/v1/exceptions/view-counts?dataset_id={ds}", headers=h).json()
+    for key, params in view_params.items():
+        total = client.get(
+            f"/api/v1/exceptions?{params}&dataset_id={ds}", headers=h
+        ).json()["total"]
+        assert pinned[key] == total, f"pinned {key}: badge {pinned[key]} != view total {total}"
+
 
 def test_export_csv(client, seeded):
     h = seeded["h"]

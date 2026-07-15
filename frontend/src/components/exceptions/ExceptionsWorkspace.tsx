@@ -284,7 +284,7 @@ export default function ExceptionsWorkspace({
   return (
     <div className={`xw-root${panelOpen ? " xw-panel-open" : ""}`}>
       <div className="xw-main">
-        <SavedViews currentParams={sp.toString()} onApply={applyViewParams} />
+        <SavedViews currentParams={sp.toString()} pinned={pinned} onApply={applyViewParams} />
         <FilterBar
           filters={filters}
           facets={facetsQ.data}

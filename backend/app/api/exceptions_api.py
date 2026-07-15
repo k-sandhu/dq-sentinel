@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import case, func
+from sqlalchemy import and_, case, func
 from sqlalchemy.orm import Query as SAQuery
 from sqlalchemy.orm import Session
 
@@ -213,6 +213,9 @@ def exception_facets(
 
 @router.get("/view-counts", response_model=schemas.ExceptionViewCounts)
 def exception_view_counts(
+    dataset_id: int | None = None,
+    run_id: int | None = None,
+    check_id: int | None = None,
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),
 ):
@@ -220,18 +223,52 @@ def exception_view_counts(
     single-dimension), each of these is the absolute row count of the view's exact
     param set — a chip click replaces the filters, so its badge must equal the
     total the user will see after clicking (UX benchmark P1: the "New today" chip
-    previously advertised the all-open facet count while its filters returned 0)."""
+    previously advertised the all-open facet count while its filters returned 0).
 
-    def n(**kw) -> int:
-        return _filtered(db, current_user=user, **kw).count()
+    The optional dataset/run/check params mirror a pinned workspace embedding
+    (the dataset Exceptions tab pins its scope outside the URL filters) so the
+    badges stay equal to what each chip shows there too (codex review). All six
+    counts come from ONE conditional-aggregate query over the open+expected
+    slice, with grant visibility computed once — not six serial COUNTs."""
+    now_24h = utcnow() - timedelta(hours=24)
+    exc = models.ExceptionRecord
+    is_open = exc.status == "open"
 
+    def tally(cond) -> object:
+        return func.coalesce(func.sum(case((cond, 1), else_=0)), 0)
+
+    q = (
+        db.query(
+            tally(and_(is_open, exc.assigned_to_id == user.id)).label("my_open"),
+            tally(and_(is_open, exc.first_seen_at >= now_24h)).label("new_today"),
+            tally(and_(is_open, models.Check.severity == "error")).label("high_severity"),
+            tally(and_(is_open, exc.occurrence_count >= 2)).label("recurring"),
+            tally(and_(is_open, exc.assigned_to_id.is_(None))).label("unassigned"),
+            tally(exc.status == "expected").label("expected"),
+        )
+        .select_from(exc)
+        .join(models.Check, models.Check.id == exc.check_id)
+        # Every badge counts only open or expected rows — bound the scan to that
+        # slice (prefix of the existing (status, ...) indexes).
+        .filter(exc.status.in_(["open", "expected"]))
+    )
+    vis = visible_dataset_ids(db, user)
+    if vis is not None:
+        q = q.filter(exc.dataset_id.in_(vis))
+    if dataset_id is not None:
+        q = q.filter(exc.dataset_id == dataset_id)
+    if run_id is not None:
+        q = q.filter(exc.run_id == run_id)
+    if check_id is not None:
+        q = q.filter(exc.check_id == check_id)
+    row = q.one()
     return schemas.ExceptionViewCounts(
-        my_open=n(assignee="me", status=["open"]),
-        new_today=n(recurrence="new", status=["open"]),
-        high_severity=n(severity=["error"], status=["open"]),
-        recurring=n(recurrence="recurring", status=["open"]),
-        unassigned=n(assignee="none", status=["open"]),
-        expected=n(status=["expected"]),
+        my_open=int(row.my_open),
+        new_today=int(row.new_today),
+        high_severity=int(row.high_severity),
+        recurring=int(row.recurring),
+        unassigned=int(row.unassigned),
+        expected=int(row.expected),
     )
 
 

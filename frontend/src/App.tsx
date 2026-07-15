@@ -3,7 +3,7 @@ import { Navigate, Outlet, Route, Routes, useLocation } from "react-router";
 import { useAuth } from "./auth";
 import Layout from "./components/Layout";
 import { Spinner } from "./components/ui";
-import { safeInternalPath } from "./lib/postLogin";
+import { resolvePostLoginTarget } from "./lib/postLogin";
 import { getLanding } from "./lib/prefs";
 import CatalogPage from "./pages/CatalogPage";
 import CheckDetailPage from "./pages/CheckDetailPage";
@@ -54,7 +54,7 @@ function LoginRedirect() {
 function PostLoginRedirect() {
   const location = useLocation();
   const from = (location.state as { from?: unknown } | null)?.from;
-  return <Navigate to={safeInternalPath(from)} replace />;
+  return <Navigate to={resolvePostLoginTarget(from, location.search)} replace />;
 }
 
 /**

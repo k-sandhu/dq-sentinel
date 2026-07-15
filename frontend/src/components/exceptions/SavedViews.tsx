@@ -41,21 +41,35 @@ function sameView(a: string, b: string): boolean {
 
 export default function SavedViews({
   currentParams,
+  pinned,
   onApply,
 }: {
   currentParams: string;
+  /** Workspace embedding scope (dataset tab pins these outside the URL) —
+   *  badges must count within it or they stop matching what a click shows. */
+  pinned?: { datasetId?: number; runId?: number; checkId?: number };
   onApply: (params: string) => void;
 }) {
   const [views, setViews] = useState<SavedView[]>(() =>
     getPref<SavedView[]>(PREF_KEYS.views, []),
   );
 
-  // Absolute per-view counts; triage mutations invalidate this key so the
-  // badges track the queue. Badges are hidden (not zeroed) while loading.
+  const pinnedQs = new URLSearchParams();
+  if (pinned?.datasetId != null) pinnedQs.set("dataset_id", String(pinned.datasetId));
+  if (pinned?.runId != null) pinnedQs.set("run_id", String(pinned.runId));
+  if (pinned?.checkId != null) pinnedQs.set("check_id", String(pinned.checkId));
+  const pinnedParams = pinnedQs.toString();
+
+  // Absolute per-view counts within the pinned scope. Triage in this tab
+  // invalidates the key; the 30s poll matches the list/facets queries so
+  // worker- and teammate-made changes update the badges too (codex review).
   const { data: counts } = useQuery({
-    queryKey: qk.exceptionViewCounts.get(),
-    queryFn: () => api.get<ExceptionViewCounts>("/exceptions/view-counts"),
-    staleTime: 15_000,
+    queryKey: qk.exceptionViewCounts.get(pinnedParams),
+    queryFn: () =>
+      api.get<ExceptionViewCounts>(
+        `/exceptions/view-counts${pinnedParams ? `?${pinnedParams}` : ""}`,
+      ),
+    refetchInterval: 30_000,
   });
 
   function persist(next: SavedView[]) {

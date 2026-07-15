@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { safeInternalPath } from "./postLogin";
+import { resolvePostLoginTarget, safeInternalPath } from "./postLogin";
 
 describe("safeInternalPath", () => {
   it("passes through same-app absolute paths with query and hash", () => {
@@ -28,5 +28,27 @@ describe("safeInternalPath", () => {
   it("never loops back to /login", () => {
     expect(safeInternalPath("/login")).toBe("/");
     expect(safeInternalPath("/login?next=x")).toBe("/");
+  });
+});
+
+describe("resolvePostLoginTarget", () => {
+  it("prefers router state over the ?from= query", () => {
+    expect(resolvePostLoginTarget("/checks", "?from=%2Fruns")).toBe("/checks");
+  });
+
+  it("falls back to ?from= (the API client's hard 401 redirect)", () => {
+    expect(resolvePostLoginTarget(undefined, "?from=%2Fexceptions%3Fdataset_id%3D5")).toBe(
+      "/exceptions?dataset_id=5",
+    );
+    expect(resolvePostLoginTarget(null, "?from=%2Fdatasets%2F3%2Fchecks")).toBe(
+      "/datasets/3/checks",
+    );
+  });
+
+  it("validates both channels — junk yields '/'", () => {
+    expect(resolvePostLoginTarget(undefined, "?from=https%3A%2F%2Fevil.example")).toBe("/");
+    expect(resolvePostLoginTarget(undefined, "?from=%2F%2Fevil.example")).toBe("/");
+    expect(resolvePostLoginTarget(undefined, "?from=%2Flogin")).toBe("/");
+    expect(resolvePostLoginTarget(undefined, "")).toBe("/");
   });
 });
