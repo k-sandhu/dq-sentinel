@@ -6,7 +6,7 @@ import type { Connection, ConnectionHealth, ConnectionTest, EngineInfo } from ".
 import { isAdmin, useAuth } from "../auth";
 import { useConfirm } from "../components/confirm";
 import { EmptyState, ErrorBox, Icon, Modal, Spinner } from "../components/ui";
-import { fmtDateTime } from "../lib/format";
+import { fmtDateTime, fmtRelative } from "../lib/format";
 
 const GENERIC_DSN_PLACEHOLDER = "dialect+driver://user:pass@host:port/dbname";
 
@@ -194,6 +194,13 @@ export default function ConnectionsPage() {
                 · fleet: <strong style={{ color: okCount === health.data.length ? "var(--ok)" : "var(--danger-dark)" }}>
                   {okCount}/{health.data.length} reachable
                 </strong>
+                {/* Probes can be up to a minute old (topbar pill poll) or older
+                    — a health figure without its age reads as live (UX P2). */}
+                {health.dataUpdatedAt > 0 && (
+                  <span style={{ color: "var(--text-light)" }}>
+                    {" "}· checked {fmtRelative(new Date(health.dataUpdatedAt).toISOString())}
+                  </span>
+                )}
               </span>
             )}
           </div>
@@ -252,7 +259,9 @@ export default function ConnectionsPage() {
                         {healthById.get(c.id)!.ok ? `up · ${healthById.get(c.id)!.latency_ms}ms` : "down"}
                       </span>
                     ) : (
-                      <span className="pill tone-neutral">—</span>
+                      <span className="pill tone-neutral" title="Not probed yet — run Check fleet health">
+                        not checked
+                      </span>
                     )}
                   </td>
                   <td><span className="badge kind">{c.kind}</span></td>
