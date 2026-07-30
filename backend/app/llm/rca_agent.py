@@ -17,6 +17,7 @@ from app.llm.client import (
     GET_TABLE_CODE_TOOL,
     RUN_SQL_TOOL,
     format_rows,
+    parse_json_text,
     redact_rows,
     run_agent_loop,
     safe_user_error,
@@ -24,6 +25,15 @@ from app.llm.client import (
 from app.models import Check, CheckRun, Dataset, ExceptionRecord, Profile, RcaSession, utcnow
 
 log = logging.getLogger(__name__)
+
+# Structured-report contract (#287). Field names/enums are the wire contract with
+# frontend/src/api/types.ts (RcaReport/RcaHypothesis/RcaEvidence/RcaAction) — keep in
+# sync. Only the legacy four fields are `required`, so a weaker model that ignores the
+# structured half still submits a usable markdown report (report_json stays NULL).
+REPORT_VERSION = 1
+VERDICTS = ("supported", "refuted", "inconclusive")
+ACTION_KINDS = ("fix_data", "fix_pipeline", "adjust_check", "investigate")
+CONFIDENCES = ("low", "medium", "high")
 
 SUBMIT_REPORT_TOOL = {
     "name": "submit_report",
@@ -34,13 +44,145 @@ SUBMIT_REPORT_TOOL = {
         "properties": {
             "root_cause_summary": {"type": "string", "description": "1-3 sentences, plain language"},
             "report_md": {"type": "string", "description": "Full markdown report with evidence"},
-            "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+            "confidence": {"type": "string", "enum": list(CONFIDENCES)},
             "suggested_fixes": {"type": "array", "items": {"type": "string"}},
+            "likely_cause": {
+                "type": "string",
+                "description": "One sentence naming the single most likely cause.",
+            },
+            "hypotheses": {
+                "type": "array",
+                "description": "Every hypothesis you tested, including the ones you ruled out.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "statement": {"type": "string", "description": "The hypothesis, one line"},
+                        "verdict": {"type": "string", "enum": list(VERDICTS)},
+                        "evidence": {
+                            "type": "string",
+                            "description": "The numbers that settled it, one line",
+                        },
+                    },
+                    "required": ["statement", "verdict"],
+                    "additionalProperties": False,
+                },
+            },
+            "evidence": {
+                "type": "array",
+                "description": "The key queries you actually ran, with what each showed.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "description": "What this query establishes"},
+                        "sql": {
+                            "type": "string",
+                            "description": "The query verbatim as you ran it via run_sql",
+                        },
+                        "finding": {"type": "string", "description": "What the result showed"},
+                    },
+                    "required": ["title"],
+                    "additionalProperties": False,
+                },
+            },
+            "recommended_actions": {
+                "type": "array",
+                "description": "Concrete next steps, most important first.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "description": "One concrete step"},
+                        "kind": {"type": "string", "enum": list(ACTION_KINDS)},
+                    },
+                    "required": ["action", "kind"],
+                    "additionalProperties": False,
+                },
+            },
         },
         "required": ["root_cause_summary", "report_md", "confidence", "suggested_fixes"],
         "additionalProperties": False,
     },
 }
+
+
+def _text(value: Any) -> str:
+    """Model fields arrive as strings; tolerate the odd number/None."""
+    if value is None:
+        return ""
+    return value.strip() if isinstance(value, str) else str(value)
+
+
+def _as_list(value: Any) -> list[Any]:
+    """A list, or a (possibly markdown-fenced) JSON string holding one."""
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = parse_json_text(value)
+        except Exception:  # noqa: BLE001 - malformed structure is not fatal
+            return []
+        return parsed if isinstance(parsed, list) else []
+    return []
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = parse_json_text(value)
+        except Exception:  # noqa: BLE001
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _enum(value: Any, allowed: tuple[str, ...], fallback: str | None) -> str | None:
+    text = _text(value).lower()
+    return text if text in allowed else fallback
+
+
+def build_report_json(result: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize the agent's submit_report input into the stored/served structured
+    report. Returns None when the model produced nothing structured — the markdown
+    report then remains the whole story (graceful degradation)."""
+    hypotheses = [
+        {
+            "statement": _text(item.get("statement")),
+            # An unrecognized verdict is 'we could not settle it', never 'supported'.
+            "verdict": _enum(item.get("verdict"), VERDICTS, "inconclusive"),
+            "evidence": _text(item.get("evidence")),
+        }
+        for item in (_as_dict(raw) for raw in _as_list(result.get("hypotheses")))
+        if _text(item.get("statement"))
+    ]
+    evidence = [
+        {
+            "title": _text(item.get("title")),
+            "sql": _text(item.get("sql")),
+            "finding": _text(item.get("finding")),
+        }
+        for item in (_as_dict(raw) for raw in _as_list(result.get("evidence")))
+        if _text(item.get("title"))
+    ]
+    actions = [
+        {
+            "action": _text(item.get("action")),
+            "kind": _enum(item.get("kind"), ACTION_KINDS, "investigate"),
+        }
+        for item in (_as_dict(raw) for raw in _as_list(result.get("recommended_actions")))
+        if _text(item.get("action"))
+    ]
+    likely_cause = _text(result.get("likely_cause"))
+    if not (hypotheses or evidence or actions or likely_cause):
+        return None
+    return {
+        "version": REPORT_VERSION,
+        "hypotheses": hypotheses,
+        "evidence": evidence,
+        "likely_cause": likely_cause,
+        "recommended_actions": actions,
+        "confidence": _enum(result.get("confidence"), CONFIDENCES, None),
+    }
 
 
 def _build_context(db, session: RcaSession) -> dict[str, Any]:
@@ -165,6 +307,8 @@ def run_rca_session(session_id: int) -> None:
                 if fixes and "## Suggested fixes" not in report:
                     report += "\n\n## Suggested fixes\n" + "\n".join(f"- {f}" for f in fixes)
                 session.report_md = report
+                # None when the model skipped the structured half; report_md stands alone.
+                session.report_json = build_report_json(result)
             else:
                 session.status = "failed"
                 session.report_md = "The agent did not produce a report within its turn limit."

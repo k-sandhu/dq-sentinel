@@ -1,0 +1,491 @@
+"""Router-level object authorization + LIKE-wildcard escaping (#72, #282/#273).
+
+Four routers used to reach a source by `connection_id` / `dataset_id` with only a
+GLOBAL role check: saved-query run, ad-hoc dashboards, custom-dashboard SQL
+widgets, and lineage/DDL introspection. They now go through the same helpers as
+`POST /query/run` (`app/security.py`), so this module asserts the three-way
+contract those helpers define:
+
+  * **404** for missing OR invisible — with an IDENTICAL body, so ids can't be
+    probed;
+  * **403** only when the connection IS visible but the grant is viewer-only;
+  * a **zero-grant user keeps full legacy access** — most deployments have no
+    grants at all and everything must keep working.
+
+Plus: a `?q=` containing `%` / `_` must search for that character instead of
+turning into a match-everything wildcard.
+
+Connection/user names include `uuid4().hex` because the app DB is shared across
+the whole test session and `Connection.name` is unique.
+"""
+
+from uuid import uuid4
+
+QH = "/api/v1"
+
+
+# ---------------------------------------------------------------- fixtures ----
+def _mk_user(client, admin_headers, email, role="editor"):
+    r = client.post(
+        f"{QH}/auth/users",
+        json={"email": email, "name": email, "password": "password1", "role": role},
+        headers=admin_headers,
+    )
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _login(client, email):
+    tok = client.post(f"{QH}/auth/login", json={"email": email, "password": "password1"}).json()
+    return {"Authorization": f"Bearer {tok['access_token']}"}
+
+
+def _grant(client, admin_headers, user_id, connection_id, role="editor"):
+    r = client.post(
+        f"{QH}/auth/users/{user_id}/grants",
+        json={"connection_id": connection_id, "role": role},
+        headers=admin_headers,
+    )
+    assert r.status_code == 201, r.text
+
+
+def _conn(client, admin_headers, name, source_db):
+    r = client.post(
+        f"{QH}/connections", json={"name": name, "dsn": source_db}, headers=admin_headers
+    )
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _register_people(client, admin_headers, connection_id):
+    r = client.post(
+        f"{QH}/datasets/register",
+        json={"connection_id": connection_id, "tables": [{"table_name": "people"}]},
+        headers=admin_headers,
+    )
+    assert r.status_code == 201, r.text
+    return r.json()[0]
+
+
+def _saved_query(client, headers, connection_id, name, sql="SELECT 1 AS n"):
+    r = client.post(
+        f"{QH}/queries",
+        json={"connection_id": connection_id, "name": name, "sql": sql},
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _adhoc_dashboard(client, admin_headers, dataset_id):
+    assert client.post(f"{QH}/datasets/{dataset_id}/profile", headers=admin_headers).status_code == 200
+    r = client.post(
+        f"{QH}/adhoc-dashboards/generate", json={"dataset_id": dataset_id}, headers=admin_headers
+    )
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _sql_widget(connection_id, sql="SELECT COUNT(*) AS n FROM people"):
+    return {
+        "id": uuid4().hex,
+        "title": "rows",
+        "span": 2,
+        "type": "sql",
+        "config": {
+            "connection_id": connection_id,
+            "sql": sql,
+            "viz": {"type": "number", "x": None, "y": "n"},
+        },
+    }
+
+
+# --------------------------------------------------- saved queries (#72) ------
+def test_saved_query_run_and_reads_scoped_to_grants(client, admin_headers, source_db):
+    """Running a saved query executes persisted SQL against its connection, so it
+    needs editor ON THAT connection — not merely the global editor role."""
+    h = admin_headers
+    sfx = uuid4().hex[:8]
+    a = _conn(client, h, f"rs-sq-A-{sfx}", source_db)
+    b = _conn(client, h, f"rs-sq-B-{sfx}", source_db)
+    q_b = _saved_query(client, h, b["id"], f"rs-sq-onB-{sfx}")
+    q_a = _saved_query(client, h, a["id"], f"rs-sq-onA-{sfx}")
+
+    alice = _mk_user(client, h, f"rs-sq-alice-{sfx}@x.com")  # global editor, granted A only
+    _grant(client, h, alice["id"], a["id"], "editor")
+    ah = _login(client, f"rs-sq-alice-{sfx}@x.com")
+    carol = _mk_user(client, h, f"rs-sq-carol-{sfx}@x.com")  # global editor, VIEWER grant on A
+    _grant(client, h, carol["id"], a["id"], "viewer")
+    ch = _login(client, f"rs-sq-carol-{sfx}@x.com")
+
+    # Ungranted connection: run is 404 and INDISTINGUISHABLE from a missing id.
+    missing = client.post(f"{QH}/queries/999999999/run", headers=ah)
+    invisible = client.post(f"{QH}/queries/{q_b['id']}/run", headers=ah)
+    assert missing.status_code == invisible.status_code == 404
+    assert missing.json()["detail"] == invisible.json()["detail"]
+    # ...and the by-id read leaks nothing either (the response carries the SQL).
+    assert client.get(f"{QH}/queries/{q_b['id']}", headers=ah).status_code == 404
+    # Granted editor: the same call succeeds on A.
+    ok = client.post(f"{QH}/queries/{q_a['id']}/run", headers=ah)
+    assert ok.status_code == 200, ok.text
+
+    # Visible but viewer-granted -> 403 (not 404): existence is already known.
+    assert client.get(f"{QH}/queries/{q_a['id']}", headers=ch).status_code == 200
+    assert client.post(f"{QH}/queries/{q_a['id']}/run", headers=ch).status_code == 403
+
+    # List is scoped: A's query is listed for alice, B's never is.
+    listed = {item["id"] for item in client.get(f"{QH}/queries", headers=ah).json()}
+    assert q_a["id"] in listed and q_b["id"] not in listed
+    admin_listed = {item["id"] for item in client.get(f"{QH}/queries", headers=h).json()}
+    assert {q_a["id"], q_b["id"]} <= admin_listed
+
+    for qid in (q_a["id"], q_b["id"]):
+        assert client.delete(f"{QH}/queries/{qid}", headers=h).status_code == 204
+    for cid in (a["id"], b["id"]):
+        assert client.delete(f"{QH}/connections/{cid}", headers=h).status_code == 204
+
+
+def test_saved_query_zero_grant_user_keeps_legacy_access(client, admin_headers, source_db):
+    """Regression guard: deployments with NO grants must be untouched by #72 —
+    a global editor with zero grants still reads, lists and runs everything."""
+    h = admin_headers
+    sfx = uuid4().hex[:8]
+    c = _conn(client, h, f"rs-sq-legacy-{sfx}", source_db)
+    q = _saved_query(client, h, c["id"], f"rs-sq-legacy-q-{sfx}")
+
+    _mk_user(client, h, f"rs-sq-nory-{sfx}@x.com")  # global editor, NO grants
+    nh = _login(client, f"rs-sq-nory-{sfx}@x.com")
+
+    assert client.get(f"{QH}/queries/{q['id']}", headers=nh).status_code == 200
+    assert q["id"] in {item["id"] for item in client.get(f"{QH}/queries", headers=nh).json()}
+    assert client.post(f"{QH}/queries/{q['id']}/run", headers=nh).status_code == 200
+
+    assert client.delete(f"{QH}/queries/{q['id']}", headers=h).status_code == 204
+    assert client.delete(f"{QH}/connections/{c['id']}", headers=h).status_code == 204
+
+
+def test_saved_query_global_viewer_cannot_run(client, admin_headers, source_db):
+    """A global viewer can browse the shared library but never execute from it —
+    the effective role is capped by the global role (matches /query/run)."""
+    h = admin_headers
+    sfx = uuid4().hex[:8]
+    c = _conn(client, h, f"rs-sq-viewer-{sfx}", source_db)
+    q = _saved_query(client, h, c["id"], f"rs-sq-viewer-q-{sfx}")
+
+    _mk_user(client, h, f"rs-sq-vw-{sfx}@x.com", role="viewer")  # zero grants
+    vh = _login(client, f"rs-sq-vw-{sfx}@x.com")
+
+    assert client.get(f"{QH}/queries/{q['id']}", headers=vh).status_code == 200
+    assert client.post(f"{QH}/queries/{q['id']}/run", headers=vh).status_code == 403
+
+    assert client.delete(f"{QH}/queries/{q['id']}", headers=h).status_code == 204
+    assert client.delete(f"{QH}/connections/{c['id']}", headers=h).status_code == 204
+
+
+# ------------------------------------------------ ad-hoc dashboards (#72) -----
+def test_adhoc_dashboard_open_scoped_to_grants(client, admin_headers, source_db):
+    """Opening an ad-hoc board RE-EXECUTES its persisted panel SQL, so despite
+    being a GET it carries /query/run's gate: editor on the board's connection."""
+    h = admin_headers
+    sfx = uuid4().hex[:8]
+    a = _conn(client, h, f"rs-ad-A-{sfx}", source_db)
+    b = _conn(client, h, f"rs-ad-B-{sfx}", source_db)
+    ds_b = _register_people(client, h, b["id"])
+    dash_b = _adhoc_dashboard(client, h, ds_b["id"])
+
+    alice = _mk_user(client, h, f"rs-ad-alice-{sfx}@x.com")  # global editor, granted A only
+    _grant(client, h, alice["id"], a["id"], "editor")
+    ah = _login(client, f"rs-ad-alice-{sfx}@x.com")
+
+    # 404, identical to a missing id — a dashboard id must not be probeable.
+    missing = client.get(f"{QH}/adhoc-dashboards/999999999", headers=ah)
+    invisible = client.get(f"{QH}/adhoc-dashboards/{dash_b['id']}", headers=ah)
+    assert missing.status_code == invisible.status_code == 404
+    assert missing.json()["detail"] == invisible.json()["detail"]
+    # generate against an ungranted dataset is 404 too (it executes SQL immediately)
+    assert client.post(
+        f"{QH}/adhoc-dashboards/generate", json={"dataset_id": ds_b["id"]}, headers=ah
+    ).status_code == 404
+    # list never surfaces B's board
+    assert dash_b["id"] not in {
+        m["id"] for m in client.get(f"{QH}/adhoc-dashboards", headers=ah).json()
+    }
+    # admin still sees + opens it
+    assert client.get(f"{QH}/adhoc-dashboards/{dash_b['id']}", headers=h).status_code == 200
+    assert dash_b["id"] in {
+        m["id"]
+        for m in client.get(
+            f"{QH}/adhoc-dashboards", params={"dataset_id": ds_b["id"]}, headers=h
+        ).json()
+    }
+
+    for cid in (a["id"], b["id"]):
+        assert client.delete(f"{QH}/connections/{cid}", headers=h).status_code == 204
+
+
+def test_adhoc_dashboard_viewer_grant_cannot_execute(client, admin_headers, source_db):
+    """Visible but viewer-granted -> 403, and a zero-grant editor still opens it
+    (legacy full access preserved)."""
+    h = admin_headers
+    sfx = uuid4().hex[:8]
+    c = _conn(client, h, f"rs-adv-{sfx}", source_db)
+    ds = _register_people(client, h, c["id"])
+    dash = _adhoc_dashboard(client, h, ds["id"])
+
+    carol = _mk_user(client, h, f"rs-adv-carol-{sfx}@x.com")  # global editor, viewer grant
+    _grant(client, h, carol["id"], c["id"], "viewer")
+    ch = _login(client, f"rs-adv-carol-{sfx}@x.com")
+    _mk_user(client, h, f"rs-adv-nory-{sfx}@x.com")  # global editor, NO grants
+    nh = _login(client, f"rs-adv-nory-{sfx}@x.com")
+
+    # the board is visible to carol (it appears in her list) but she can't execute it
+    assert dash["id"] in {m["id"] for m in client.get(f"{QH}/adhoc-dashboards", headers=ch).json()}
+    assert client.get(f"{QH}/adhoc-dashboards/{dash['id']}", headers=ch).status_code == 403
+    # zero-grant regression guard
+    assert client.get(f"{QH}/adhoc-dashboards/{dash['id']}", headers=nh).status_code == 200
+
+    assert client.delete(f"{QH}/connections/{c['id']}", headers=h).status_code == 204
+
+
+# ------------------------------------------- custom-dashboard SQL widgets -----
+def test_custom_dashboard_sql_widget_refresh_scoped_to_grants(client, admin_headers, source_db):
+    """A stored sql widget must not become a way to run SQL on an ungranted
+    source: /refresh checks editor per widget, and saving a widget pointed at an
+    invisible connection is refused with the same 422 as a nonexistent one."""
+    h = admin_headers
+    sfx = uuid4().hex[:8]
+    a = _conn(client, h, f"rs-cd-A-{sfx}", source_db)
+    b = _conn(client, h, f"rs-cd-B-{sfx}", source_db)
+
+    alice = _mk_user(client, h, f"rs-cd-alice-{sfx}@x.com")  # global editor, granted A only
+    _grant(client, h, alice["id"], a["id"], "editor")
+    ah = _login(client, f"rs-cd-alice-{sfx}@x.com")
+
+    # Save-time: pointing a NEW widget at B is refused, and the message is the same
+    # one a nonexistent connection gets — a save must not probe connection ids.
+    on_b = client.post(
+        f"{QH}/dashboards/custom",
+        json={"name": f"rs-cd-b-{sfx}", "layout": {"version": 1, "widgets": [_sql_widget(b["id"])]}},
+        headers=ah,
+    )
+    on_missing = client.post(
+        f"{QH}/dashboards/custom",
+        json={"name": f"rs-cd-m-{sfx}", "layout": {"version": 1, "widgets": [_sql_widget(999999999)]}},
+        headers=ah,
+    )
+    assert on_b.status_code == on_missing.status_code == 422
+    assert "not found" in on_b.text.lower() and "not found" in on_missing.text.lower()
+
+    # A board admin built on B, shared with the team: alice may open it, but the
+    # widget can neither execute nor hand her the rows an admin captured.
+    admin_board = client.post(
+        f"{QH}/dashboards/custom",
+        json={
+            "name": f"rs-cd-team-{sfx}",
+            "visibility": "team",
+            "layout": {"version": 1, "widgets": [_sql_widget(b["id"])]},
+        },
+        headers=h,
+    )
+    assert admin_board.status_code == 201, admin_board.text
+    did = admin_board.json()["id"]
+    refreshed = client.post(f"{QH}/dashboards/custom/{did}/refresh", headers=h).json()
+    assert refreshed["layout"]["widgets"][0]["snapshot"]["rows"][0][0] == 200
+
+    seen = client.get(f"{QH}/dashboards/custom/{did}", headers=ah).json()
+    snap = seen["layout"]["widgets"][0]["snapshot"]
+    assert snap["rows"] == [] and snap["columns"] == []  # redacted for an ungranted viewer
+    assert "access" in (snap["error"] or "").lower()
+
+    # alice refreshing does NOT execute on B, and does NOT clobber the admin's rows.
+    alice_refresh = client.post(f"{QH}/dashboards/custom/{did}/refresh", headers=ah)
+    assert alice_refresh.status_code == 200, alice_refresh.text
+    assert alice_refresh.json()["layout"]["widgets"][0]["snapshot"]["rows"] == []
+    still = client.get(f"{QH}/dashboards/custom/{did}", headers=h).json()
+    assert still["layout"]["widgets"][0]["snapshot"]["rows"][0][0] == 200
+
+    assert client.delete(f"{QH}/dashboards/custom/{did}", headers=h).status_code == 204
+    for cid in (a["id"], b["id"]):
+        assert client.delete(f"{QH}/connections/{cid}", headers=h).status_code == 204
+
+
+def test_custom_dashboard_zero_grant_refresh_still_works(client, admin_headers, source_db):
+    """Regression guard for the legacy (no grants anywhere) deployment."""
+    h = admin_headers
+    sfx = uuid4().hex[:8]
+    c = _conn(client, h, f"rs-cd-legacy-{sfx}", source_db)
+    _register_people(client, h, c["id"])
+    _mk_user(client, h, f"rs-cd-nory-{sfx}@x.com")  # global editor, NO grants
+    nh = _login(client, f"rs-cd-nory-{sfx}@x.com")
+
+    did = client.post(
+        f"{QH}/dashboards/custom",
+        json={"name": f"rs-cd-legacy-b-{sfx}", "layout": {"version": 1, "widgets": [_sql_widget(c["id"])]}},
+        headers=nh,
+    ).json()["id"]
+    out = client.post(f"{QH}/dashboards/custom/{did}/refresh", headers=nh)
+    assert out.status_code == 200, out.text
+    snap = out.json()["layout"]["widgets"][0]["snapshot"]
+    assert snap["error"] is None
+    assert snap["rows"][0][0] == 200
+
+    assert client.delete(f"{QH}/dashboards/custom/{did}", headers=nh).status_code == 204
+    assert client.delete(f"{QH}/connections/{c['id']}", headers=h).status_code == 204
+
+
+# ----------------------------------------------------------- lineage (#72) ----
+def test_lineage_and_ddl_scoped_to_grants(client, admin_headers, source_db):
+    """DDL + lineage describe the SOURCE schema, so they are grant-gated reads:
+    404 for an ungranted dataset/connection, identical to a missing id."""
+    h = admin_headers
+    sfx = uuid4().hex[:8]
+    a = _conn(client, h, f"rs-lin-A-{sfx}", source_db)
+    b = _conn(client, h, f"rs-lin-B-{sfx}", source_db)
+    ds_b = _register_people(client, h, b["id"])
+
+    alice = _mk_user(client, h, f"rs-lin-alice-{sfx}@x.com")  # granted A only
+    _grant(client, h, alice["id"], a["id"], "editor")
+    ah = _login(client, f"rs-lin-alice-{sfx}@x.com")
+    _mk_user(client, h, f"rs-lin-nory-{sfx}@x.com")  # zero grants -> legacy full access
+    nh = _login(client, f"rs-lin-nory-{sfx}@x.com")
+
+    # Templates (not str.replace) so a low dataset id can't rewrite "/api/v1/".
+    for template in (
+        QH + "/datasets/{}/ddl",
+        QH + "/datasets/{}/lineage",
+        QH + "/datasets/{}/lineage/columns?column=email",
+    ):
+        path = template.format(ds_b["id"])
+        invisible = client.get(path, headers=ah)
+        assert invisible.status_code == 404, path
+        missing = client.get(template.format(999999999), headers=ah)
+        assert missing.status_code == 404
+        assert missing.json()["detail"] == invisible.json()["detail"]
+        assert client.get(path, headers=h).status_code == 200, path
+        assert client.get(path, headers=nh).status_code == 200, path  # zero-grant legacy
+
+    conn_lineage = f"{QH}/connections/{b['id']}/lineage"
+    invisible = client.get(conn_lineage, headers=ah)
+    missing = client.get(f"{QH}/connections/999999999/lineage", headers=ah)
+    assert invisible.status_code == missing.status_code == 404
+    assert invisible.json()["detail"] == missing.json()["detail"]
+    assert client.get(conn_lineage, headers=h).status_code == 200
+    assert client.get(conn_lineage, headers=nh).status_code == 200
+
+    # A viewer grant is enough to READ lineage (it introspects, it never mutates).
+    carol = _mk_user(client, h, f"rs-lin-carol-{sfx}@x.com")
+    _grant(client, h, carol["id"], b["id"], "viewer")
+    ch = _login(client, f"rs-lin-carol-{sfx}@x.com")
+    assert client.get(f"{QH}/datasets/{ds_b['id']}/ddl", headers=ch).status_code == 200
+
+    for cid in (a["id"], b["id"]):
+        assert client.delete(f"{QH}/connections/{cid}", headers=h).status_code == 204
+
+
+# ------------------------------------------- LIKE wildcard escaping (#282) ----
+def test_q_filter_escapes_like_wildcards_saved_queries(client, admin_headers, source_db):
+    """`?q=%` must search for a literal percent sign, not match every row."""
+    h = admin_headers
+    sfx = uuid4().hex[:8]
+    c = _conn(client, h, f"rs-esc-sq-{sfx}", source_db)
+    literal = _saved_query(client, h, c["id"], f"rs-esc-100%-share-{sfx}")
+    plain = _saved_query(client, h, c["id"], f"rs-esc-plain-{sfx}")
+    under = _saved_query(client, h, c["id"], f"rs-esc_under-{sfx}")
+
+    def ids(q):
+        return {
+            item["id"]
+            for item in client.get(
+                f"{QH}/queries", params={"connection_id": c["id"], "q": q}, headers=h
+            ).json()
+        }
+
+    # "%" alone would match everything if it stayed a wildcard.
+    pct = ids("%")
+    assert literal["id"] in pct
+    assert plain["id"] not in pct and under["id"] not in pct
+    # "_" is the single-character wildcard; escaped it matches only the underscore.
+    us = ids("rs-esc_under")
+    assert under["id"] in us
+    assert plain["id"] not in us and literal["id"] not in us
+    # a plain needle still works
+    assert plain["id"] in ids("rs-esc-plain")
+
+    for q in (literal, plain, under):
+        assert client.delete(f"{QH}/queries/{q['id']}", headers=h).status_code == 204
+    assert client.delete(f"{QH}/connections/{c['id']}", headers=h).status_code == 204
+
+
+def test_q_filter_escapes_like_wildcards_exceptions(client, admin_headers, source_db):
+    """Same for the triage queue's search box, which filters on the check name."""
+    h = admin_headers
+    sfx = uuid4().hex[:8]
+    c = _conn(client, h, f"rs-esc-exc-{sfx}", source_db)
+    ds = _register_people(client, h, c["id"])
+
+    made = {}
+    for label in (f"rs-exc-100%-null-{sfx}", f"rs-exc-plain-{sfx}"):
+        chk = client.post(
+            f"{QH}/checks",
+            json={
+                "dataset_id": ds["id"],
+                "check_type": "not_null",
+                "column_name": "email",
+                "name": label,
+            },
+            headers=h,
+        )
+        assert chk.status_code == 201, chk.text
+        assert client.post(f"{QH}/checks/{chk.json()['id']}/run", headers=h).status_code in (200, 201)
+        made[label] = chk.json()["id"]
+
+    def check_ids(q):
+        body = client.get(
+            f"{QH}/exceptions", params={"dataset_id": ds["id"], "q": q}, headers=h
+        ).json()
+        return {item["check_id"] for item in body["items"]}, body["total"]
+
+    unfiltered_total = client.get(
+        f"{QH}/exceptions", params={"dataset_id": ds["id"]}, headers=h
+    ).json()["total"]
+    assert unfiltered_total > 0
+
+    hits, total = check_ids("%")
+    assert total < unfiltered_total  # "%" is no longer a match-everything wildcard
+    assert made[f"rs-exc-100%-null-{sfx}"] in hits
+    assert made[f"rs-exc-plain-{sfx}"] not in hits
+
+    # a literal needle is unaffected
+    hits, _ = check_ids(f"rs-exc-plain-{sfx}")
+    assert hits == {made[f"rs-exc-plain-{sfx}"]}
+
+    assert client.delete(f"{QH}/connections/{c['id']}", headers=h).status_code == 204
+
+
+def test_q_filter_escapes_like_wildcards_search_and_datasets(client, admin_headers, source_db):
+    """cmd-K search and the datasets list share the same escaping helper (#273)."""
+    h = admin_headers
+    sfx = uuid4().hex[:8]
+    c = _conn(client, h, f"rs-esc-search-100%-{sfx}", source_db)
+    plain = _conn(client, h, f"rs-esc-search-plain-{sfx}", source_db)
+
+    titles = {
+        hit["title"]
+        for hit in client.get(f"{QH}/search", params={"q": "%", "limit": 25}, headers=h).json()["hits"]
+    }
+    assert c["name"] in titles  # literal "%" match
+    assert plain["name"] not in titles  # would be present if "%" were a wildcard
+
+    # datasets ?q= uses the same helper: "_" matches literally, not any character.
+    ds = _register_people(client, h, c["id"])
+    named = {
+        d["id"]
+        for d in client.get(f"{QH}/datasets", params={"q": "p_ople"}, headers=h).json()
+    }
+    assert ds["id"] not in named  # "p_ople" would match "people" with a live wildcard
+    assert ds["id"] in {
+        d["id"] for d in client.get(f"{QH}/datasets", params={"q": "people"}, headers=h).json()
+    }
+
+    for cid in (c["id"], plain["id"]):
+        assert client.delete(f"{QH}/connections/{cid}", headers=h).status_code == 204

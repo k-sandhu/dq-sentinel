@@ -3,7 +3,7 @@
 from datetime import date, datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, ValidationError, field_validator
 
 Role = Literal["viewer", "editor", "admin"]
 Severity = Literal["info", "warn", "error"]
@@ -893,6 +893,35 @@ class RcaStartIn(BaseModel):
     question: str = ""
 
 
+class RcaHypothesis(BaseModel):
+    statement: str
+    verdict: Literal["supported", "refuted", "inconclusive"]
+    evidence: str = ""
+
+
+class RcaEvidence(BaseModel):
+    title: str
+    sql: str = ""
+    finding: str = ""
+
+
+class RcaAction(BaseModel):
+    action: str
+    kind: Literal["fix_data", "fix_pipeline", "adjust_check", "investigate"]
+
+
+class RcaReport(BaseModel):
+    """Structured RCA payload (#287). Normalized on write by llm/rca_agent.py;
+    `version` lets the UI render older/newer shapes best-effort."""
+
+    version: int = 1
+    hypotheses: list[RcaHypothesis] = Field(default_factory=list)
+    evidence: list[RcaEvidence] = Field(default_factory=list)
+    likely_cause: str = ""
+    recommended_actions: list[RcaAction] = Field(default_factory=list)
+    confidence: Literal["low", "medium", "high"] | None = None
+
+
 class RcaOut(ORMModel):
     id: int
     dataset_id: int
@@ -901,11 +930,27 @@ class RcaOut(ORMModel):
     question: str
     status: str
     report_md: str
+    report_json: RcaReport | None = None
     root_cause_summary: str
     transcript: list[Any]
     model: str
     created_at: datetime
     finished_at: datetime | None
+
+    @field_validator("report_json", mode="before")
+    @classmethod
+    def _tolerate_unreadable_report(cls, v: Any) -> Any:
+        """`report_json` is a free-form JSON column. A payload we can't parse
+        (older/foreign shape) must degrade to the markdown report, not 500 the
+        whole RCA tab."""
+        if v is None or isinstance(v, RcaReport):
+            return v
+        if not isinstance(v, dict):
+            return None
+        try:
+            return RcaReport.model_validate(v)
+        except ValidationError:
+            return None
 
 
 # ---- assistant chat ----

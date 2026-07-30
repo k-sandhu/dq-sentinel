@@ -5,8 +5,10 @@ and provide a small synthetic source database with known issues.
 import os
 import sqlite3
 import tempfile
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -80,6 +82,31 @@ def client():
     init_db()
     with TestClient(app) as c:
         yield c
+
+
+@pytest.fixture(scope="session")
+def unique_name() -> Callable[[str], str]:
+    """Factory for globally-unique app-DB row names.
+
+    The app DB above is created ONCE per session and every test file shares it,
+    so isolation rests entirely on names being unique — ``Connection.name`` has a
+    UNIQUE constraint, and a hard-coded literal makes a test fail (or, worse,
+    silently pick up a sibling's rows) depending on which files ran before it.
+    Use this instead of a literal for anything persisted in the app DB:
+
+        conn = Connection(name=unique_name("sched-src"), ...)
+
+    Session-scoped so module- and function-scoped fixtures can both request it.
+
+    Follow-up: the durable fix is function-scoped sessions on a transaction that
+    rolls back per test (or a per-worker DB file); that is a much larger change
+    to `app.db` and is deliberately out of scope here.
+    """
+
+    def _make(prefix: str = "t") -> str:
+        return f"{prefix}-{uuid4().hex[:12]}"
+
+    return _make
 
 
 @pytest.fixture(scope="session")

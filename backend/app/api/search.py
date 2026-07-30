@@ -20,6 +20,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app import models, schemas
+from app.api._filters import LIKE_ESCAPE, contains_pattern
 from app.db import get_db
 from app.security import get_current_user, visible_connection_ids
 
@@ -47,7 +48,9 @@ def search(
     if not needle:
         return schemas.SearchOut(hits=[])
     limit = max(1, min(limit, 25))
-    like = f"%{needle}%"
+    # Escaped: typing "%" or "_" into cmd-K must search for that character, not
+    # turn the palette into a match-everything wildcard scan (#282/#273).
+    like = contains_pattern(needle)
     hits: list[schemas.SearchHit] = []
     vis = visible_connection_ids(db, user)  # None -> unrestricted (admin / zero-grant) (#159)
 
@@ -56,8 +59,10 @@ def search(
         db.query(models.Dataset, models.Connection.name)
         .join(models.Connection, models.Dataset.connection_id == models.Connection.id)
         .filter(
-            func.lower(models.Dataset.table_name).like(like)
-            | func.lower(func.coalesce(models.Dataset.display_name, "")).like(like)
+            func.lower(models.Dataset.table_name).like(like, escape=LIKE_ESCAPE)
+            | func.lower(func.coalesce(models.Dataset.display_name, "")).like(
+                like, escape=LIKE_ESCAPE
+            )
         )
     )
     if vis is not None:
@@ -81,7 +86,7 @@ def search(
         .join(models.Dataset, models.Check.dataset_id == models.Dataset.id)
         .filter(
             models.Check.status != "archived",
-            func.lower(models.Check.name).like(like),
+            func.lower(models.Check.name).like(like, escape=LIKE_ESCAPE),
         )
     )
     if vis is not None:
@@ -99,7 +104,9 @@ def search(
         )
 
     # connections: match name; subtitle = kind.
-    conn_q = db.query(models.Connection).filter(func.lower(models.Connection.name).like(like))
+    conn_q = db.query(models.Connection).filter(
+        func.lower(models.Connection.name).like(like, escape=LIKE_ESCAPE)
+    )
     if vis is not None:
         conn_q = conn_q.filter(models.Connection.id.in_(vis))
     conn_rows = conn_q.order_by(models.Connection.name).limit(limit).all()
@@ -133,7 +140,10 @@ def _saved_query_hits(
     user must not discover their names/ids (or the workbench deep-link) for
     connections they can't access. ``vis is None`` -> unrestricted (admin / zero-grant).
     """
-    sql = "SELECT id, name FROM saved_queries WHERE lower(name) LIKE :like"
+    # The ESCAPE clause must be spelled out here too — this branch is raw SQL, so it
+    # doesn't get SQLAlchemy's escape= (#282/#273). ``ESCAPE '\'`` is standard and
+    # identical on SQLite (no default escape char) and PostgreSQL (backslash already).
+    sql = f"SELECT id, name FROM saved_queries WHERE lower(name) LIKE :like ESCAPE '{LIKE_ESCAPE}'"
     params: dict = {"like": like, "limit": limit}
     if vis is not None:
         if not vis:

@@ -16,11 +16,18 @@ RBAC semantics (document, don't reinvent — epic standard #3):
   * **SQL snapshots** are the one exception: server-executed, persisted results
     captured with the *refresher's* authority (same posture as ad-hoc boards).
     They always carry ``refreshed_at`` (UTC) so the UI labels freshness honestly.
+    Because that authority is baked into the stored rows, the snapshot is gated
+    twice against the per-connection grant model (#72): **writing** it requires
+    editor ON the widget's connection (checked per widget, so one ungranted
+    widget can't block the rest), and **reading** a board redacts the rows of any
+    widget whose connection the viewer can't see. A shared board must never
+    become a side channel for data from a source you were not granted.
 
 Quota policy (per-tenant quotas — multi-tenancy track — will hook into these
 caps): <=12 widgets, 200 rows per snapshot, the params allowlist.
 """
 
+import copy
 import logging
 import time
 
@@ -36,7 +43,14 @@ from app.core.profiler import jsonable
 from app.db import get_db
 from app.models import utcnow
 from app.schemas import SNAPSHOT_ROW_CAP
-from app.security import ROLE_RANK, get_current_user, require_role
+from app.security import (
+    ROLE_RANK,
+    assert_connection_role,
+    connection_role,
+    get_current_user,
+    require_role,
+    visible_connection_ids,
+)
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/dashboards/custom", tags=["custom-dashboards"])
@@ -108,48 +122,112 @@ def _validate_for_role(
             raise HTTPException(422, "Adding or editing SQL widgets requires the editor role")
 
 
-def _validate_sql_widgets(db: Session, layout: schemas.DashboardLayout) -> None:
-    """guard_sql() each sql widget at save time (#41 pattern) + connection must
-    exist. Surface the guard message as a 422 so the builder can show it."""
-    conn_cache: dict[int, bool] = {}
+def _validate_sql_widgets(
+    db: Session,
+    layout: schemas.DashboardLayout,
+    user: models.User,
+    existing_sql: dict[str, tuple] | None = None,
+) -> None:
+    """guard_sql() each sql widget at save time (#41 pattern); a NEW or MODIFIED
+    widget must additionally point at a connection the author may run SQL on (#72).
+
+    Only new/modified widgets are connection-checked, matching ``_validate_for_role``:
+    a widget inherited unchanged from a duplicated team board (#A10) can be moved or
+    removed but can never execute — ``/refresh`` re-checks every widget against the
+    refresher's grants — so blocking the whole save would destroy layout editing for
+    no security gain.
+
+    A connection that does not exist and one the author cannot see produce the SAME
+    422, so a save can't be used to probe which connection ids exist.
+    """
+    existing_sql = existing_sql or {}
     for w in layout.widgets:
         if not isinstance(w, schemas.SqlWidget):
             continue
         cid = w.config.connection_id
-        if cid not in conn_cache:
-            conn_cache[cid] = db.get(models.Connection, cid) is not None
-        if not conn_cache[cid]:
-            raise HTTPException(422, f"Connection {cid} not found for widget '{w.title}'")
+        if existing_sql.get(w.id) != (w.config.sql, cid):
+            role = connection_role(db, user, cid)
+            if role is None:  # missing OR invisible — deliberately indistinguishable
+                raise HTTPException(422, f"Connection {cid} not found for widget '{w.title}'")
+            if ROLE_RANK.get(role, -1) < ROLE_RANK["editor"]:
+                raise HTTPException(
+                    422,
+                    f"Widget '{w.title}': editor access on connection {cid} is required",
+                )
         try:
             guard_sql(w.config.sql)
         except SqlNotAllowed as exc:
             raise HTTPException(422, f"Widget '{w.title}': {exc}") from exc
 
 
+def _readable_layout(db: Session, dash: models.CustomDashboard, user: models.User) -> dict:
+    """The stored layout with the snapshot ROWS of any sql widget on a connection
+    the caller can't see blanked out (#72).
+
+    A snapshot holds source rows captured under the *refresher's* grants; serving
+    them to a viewer of a shared board would hand out data from a connection they
+    were never granted. The widget itself stays in the layout with an honest reason
+    in ``snapshot.error``, so the board keeps its shape instead of silently losing
+    a tile. Deep-copied: this must never write back to the stored JSON.
+    """
+    layout = copy.deepcopy(dash.layout or {"version": 1, "widgets": []})
+    vis = visible_connection_ids(db, user)  # None -> unrestricted (admin / zero-grant)
+    if vis is None:
+        return layout
+    for w in layout.get("widgets", []):
+        if w.get("type") != "sql" or not w.get("snapshot"):
+            continue
+        if (w.get("config") or {}).get("connection_id") in vis:
+            continue
+        w["snapshot"] = {
+            **w["snapshot"],
+            "columns": [],
+            "rows": [],
+            "error": "Hidden: you don't have access to this widget's connection",
+        }
+    return layout
+
+
 def _out(db: Session, dash: models.CustomDashboard, user: models.User) -> schemas.CustomDashboardOut:
     out = schemas.CustomDashboardOut(**custom_dashboard_meta(db, dash).model_dump())
-    out.layout = schemas.DashboardLayout.model_validate(dash.layout or {"version": 1, "widgets": []})
+    out.layout = schemas.DashboardLayout.model_validate(_readable_layout(db, dash, user))
     out.can_edit = _can_edit(dash, user)
     return out
 
 
 # ---- SQL snapshot runner ----------------------------------------------------
+NOT_ALLOWED_SNAPSHOT_ERROR = "Not allowed: this widget needs editor access on its connection"
+
+
 # TODO(#42): converge with core/dashboards.py once the scheduled-refresh helper
 # lands. #42's dashboard-claim loop should ALSO claim custom dashboards that have
 # sql widgets and call this same runner so scheduled and manual refresh share one
 # guarded path. Until then this is the small local runner.
-def _refresh_sql_widget(db: Session, cfg: schemas.SqlWidgetConfig) -> schemas.WidgetSnapshot:
+def _refresh_sql_widget(
+    db: Session, user: models.User, cfg: schemas.SqlWidgetConfig
+) -> schemas.WidgetSnapshot | None:
     """Execute one sql widget through the SAME guarded path as the workbench
-    (guard_sql + connector.run_select, row cap 200). Per-widget errors are
-    captured in ``snapshot.error`` — they NEVER fail the enclosing request."""
+    (guard_sql + connector.run_select, row cap 200) and under the SAME authority:
+    editor ON that widget's connection, exactly like POST /query/run (#72). A
+    stored widget must not become a way to point server-side execution at a source
+    the refresher was never granted — the board's global editor gate says nothing
+    about *which* connections this user may reach.
+
+    Returns ``None`` when the refresher may not run SQL on this widget's connection
+    (missing, invisible and under-roled are deliberately indistinguishable, so a
+    snapshot can't become an oracle for connection ids). The caller then leaves the
+    stored snapshot alone. Everything else is captured in ``snapshot.error`` — a
+    per-widget failure NEVER fails the enclosing request."""
+    try:
+        assert_connection_role(db, user, cfg.connection_id, "editor")
+    except HTTPException:
+        return None
     start = time.perf_counter()
     columns: list[str] = []
     rows: list[list] = []
     error: str | None = None
     try:
-        conn = db.get(models.Connection, cfg.connection_id)
-        if conn is None:
-            raise ValueError(f"Connection {cfg.connection_id} no longer exists")
+        conn = db.get(models.Connection, cfg.connection_id)  # exists: the gate 404s otherwise
         connector = connector_for(conn)
         res = connector.run_select(cfg.sql, limit=SNAPSHOT_ROW_CAP)
         columns = res.columns
@@ -207,7 +285,7 @@ def create_dashboard(
     """Any authenticated user (viewers curate read-only dashboards too), BUT a
     layout containing a ``sql`` widget requires editor (422)."""
     _validate_for_role(body.layout, user)
-    _validate_sql_widgets(db, body.layout)
+    _validate_sql_widgets(db, body.layout, user)
     dash = models.CustomDashboard(
         name=body.name,
         description=body.description,
@@ -246,7 +324,7 @@ def update_dashboard(
         existing_widgets = (dash.layout or {}).get("widgets", [])
         existing_sql = _sql_widget_configs(existing_widgets)
         _validate_for_role(body.layout, user, existing_sql)
-        _validate_sql_widgets(db, body.layout)
+        _validate_sql_widgets(db, body.layout, user, existing_sql)
         # Preserve existing server snapshots across a metadata/layout edit: the UI
         # round-trips snapshots back, but we never trust the client copy — re-attach
         # ours by widget id ONLY where the sql config is unchanged. Re-attaching by id
@@ -332,7 +410,11 @@ def refresh_dashboard(
     """Editor. Execute each ``sql`` widget through the guarded path and stamp its
     snapshot (rows + ``refreshed_at``, row cap 200). A broken query lands in that
     widget's ``snapshot.error`` and never fails the request; the other widgets
-    still refresh. Requires view access to the dashboard."""
+    still refresh. Requires view access to the dashboard.
+
+    Widgets on connections this refresher may not run SQL on are SKIPPED, not
+    errored-over: overwriting a snapshot an authorized editor captured would
+    destroy shared analyst state on a team board (#72)."""
     dash = _get_viewable(db, dashboard_id, user)
     layout = dict(dash.layout or {"version": 1, "widgets": []})
     widgets = layout.get("widgets", [])
@@ -346,7 +428,14 @@ def refresh_dashboard(
                 refreshed_at=utcnow(), error=f"Invalid widget config: {exc}"
             ).model_dump(mode="json")
             continue
-        w["snapshot"] = _refresh_sql_widget(db, cfg).model_dump(mode="json")
+        snap = _refresh_sql_widget(db, user, cfg)
+        if snap is None:  # not authorized on this widget's connection
+            if not w.get("snapshot"):  # nothing to preserve -> label it honestly
+                w["snapshot"] = schemas.WidgetSnapshot(
+                    refreshed_at=utcnow(), error=NOT_ALLOWED_SNAPSHOT_ERROR
+                ).model_dump(mode="json")
+            continue
+        w["snapshot"] = snap.model_dump(mode="json")
     dash.layout = layout
     # mutating a nested JSON dict in place isn't always seen as dirty — flag it
     from sqlalchemy.orm.attributes import flag_modified

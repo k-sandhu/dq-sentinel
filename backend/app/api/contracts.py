@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from app.core.audit import audit
 from app.core.contracts import (
+    SourceUnavailable,
     apply_contract,
     archive_contract_checks,
     conformance,
@@ -135,7 +136,13 @@ def create_contract(
     user: models.User = Depends(require_role("editor")),
 ):
     ds = _get_dataset(db, dataset_id)
-    spec = normalize_spec(body.spec) if body.spec is not None else default_contract_spec(db, ds)
+    if body.spec is not None:
+        spec = normalize_spec(body.spec)
+    else:
+        try:
+            spec = default_contract_spec(db, ds)
+        except SourceUnavailable as exc:  # unreachable source -> honest 502, not a raw 500 (#282)
+            raise HTTPException(502, str(exc)) from exc
     contract = models.DataContract(
         dataset_id=ds.id,
         name=body.name or f"{ds.table_name} contract",

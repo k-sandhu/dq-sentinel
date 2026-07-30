@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import difflib
 import json
+import logging
 import re
 from collections.abc import Iterable
 from typing import Any
@@ -22,6 +23,32 @@ from app.models import utcnow
 
 CONTRACT_SPEC_VERSION = 1
 MARKER_RE = re.compile(r"\[contract:(?P<contract_id>\d+):clause:(?P<clause>[^\]]+)\]")
+
+log = logging.getLogger(__name__)
+
+#: Keep a driver error readable in the UI; the full traceback stays in the log.
+_SOURCE_ERROR_MAX_CHARS = 300
+
+
+class SourceUnavailable(RuntimeError):
+    """The source database could not be reached/introspected (#282).
+
+    Raised only where a contract operation genuinely cannot proceed without the
+    live source. API callers translate it into a 502 with the message verbatim —
+    it is already user-facing and carries no internals.
+    """
+
+
+def _source_error(exc: Exception) -> str:
+    """One-line, bounded rendering of a source-connectivity failure.
+
+    Mirrors the connection fleet-health probe so the analyst sees the same words
+    in both places ("unable to open database file", "connection refused", ...).
+    """
+    text = " ".join(f"{type(exc).__name__}: {exc}".split())
+    if len(text) > _SOURCE_ERROR_MAX_CHARS:
+        text = text[: _SOURCE_ERROR_MAX_CHARS - 3].rstrip() + "..."
+    return text
 
 
 def _slug(value: str, fallback: str) -> str:
@@ -57,7 +84,23 @@ def default_contract_spec(db: Session, dataset: models.Dataset) -> dict[str, Any
             if c.get("name")
         ]
     else:
-        connector = connector_for(dataset.connection)
+        try:
+            connector = connector_for(dataset.connection)
+            source_columns = connector.get_columns(dataset.table_name, dataset.schema_name)
+        except Exception as exc:  # noqa: BLE001 - an unreachable source is not a server fault
+            # Without a profile the source IS the only column oracle. Silently
+            # returning an empty schema would write a contract that asserts nothing,
+            # so fail loudly but cleanly (#282).
+            log.warning(
+                "Dataset %s: could not read source schema for a starter contract",
+                dataset.id,
+                exc_info=True,
+                extra={"event": "contract_default_spec_unreadable"},
+            )
+            raise SourceUnavailable(
+                "Could not read the source schema to draft a contract: "
+                f"{_source_error(exc)}. Profile the dataset or fix the connection first."
+            ) from exc
         columns = [
             {
                 "name": c["name"],
@@ -65,7 +108,7 @@ def default_contract_spec(db: Session, dataset: models.Dataset) -> dict[str, Any
                 "nullable": bool(c.get("nullable", True)),
                 "required": True,
             }
-            for c in connector.get_columns(dataset.table_name, dataset.schema_name)
+            for c in source_columns
         ]
 
     knowledge = dataset.knowledge
@@ -586,8 +629,32 @@ def _schema_conformance(contract: models.DataContract) -> dict[str, Any]:
             "observed": {},
         }
 
-    connector = connector_for(contract.dataset.connection)
-    current = connector.get_columns(contract.dataset.table_name, contract.dataset.schema_name)
+    try:
+        connector = connector_for(contract.dataset.connection)
+        current = connector.get_columns(contract.dataset.table_name, contract.dataset.schema_name)
+    except Exception as exc:  # noqa: BLE001 - an unreachable source is not a server fault
+        # Honest degradation (#282): we cannot observe the live schema, so we do not
+        # know whether it conforms. Report "unknown" with the reason instead of
+        # exploding the whole conformance response with a raw 500.
+        log.warning(
+            "Contract %s: could not read source schema for dataset %s",
+            contract.id,
+            contract.dataset_id,
+            exc_info=True,
+            extra={"event": "contract_schema_unreadable"},
+        )
+        return {
+            "clause_id": "schema",
+            "kind": "schema",
+            "label": "Schema",
+            "status": "unknown",
+            "detail": f"Could not read the source schema: {_source_error(exc)}",
+            "expected": {
+                "columns": expected,
+                "allow_extra_columns": schema.get("allow_extra_columns", True),
+            },
+            "observed": {},
+        }
     current_by_name = _column_map(current)
     missing: list[str] = []
     type_mismatches: list[str] = []

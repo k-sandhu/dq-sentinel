@@ -10,6 +10,7 @@ from sqlalchemy.orm import Query as SAQuery
 from sqlalchemy.orm import Session
 
 from app import models, schemas
+from app.api._filters import LIKE_ESCAPE, contains_pattern
 from app.api.serialize import ExceptionRefs, exception_event_out, exception_out
 from app.core.attribution import build_attribution
 from app.core.audit import audit
@@ -90,11 +91,13 @@ def _filtered(
     if seen_since is not None:
         query = query.filter(models.ExceptionRecord.last_seen_at >= seen_since)
     if q:
-        needle = f"%{q.lower()}%"
+        # Escaped: a typed % or _ is literal text, not a wildcard — an unescaped
+        # "%" in the triage search box otherwise matched every exception (#282/#273).
+        needle = contains_pattern(q.lower())
         query = query.filter(
-            func.lower(models.ExceptionRecord.reason).like(needle)
-            | func.lower(models.ExceptionRecord.note).like(needle)
-            | func.lower(models.Check.name).like(needle)
+            func.lower(models.ExceptionRecord.reason).like(needle, escape=LIKE_ESCAPE)
+            | func.lower(models.ExceptionRecord.note).like(needle, escape=LIKE_ESCAPE)
+            | func.lower(models.Check.name).like(needle, escape=LIKE_ESCAPE)
         )
     # Connection-grant scoping (#159): restrict to exceptions on datasets whose
     # connection the caller may see. None -> unrestricted (admin / zero-grant).

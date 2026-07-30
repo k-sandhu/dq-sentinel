@@ -723,6 +723,9 @@ class RcaSession(Base):
     question: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(20), default="running")  # running | complete | failed
     report_md: Mapped[str] = mapped_column(Text, default="")
+    # Structured report (#287): {version, hypotheses[], evidence[], likely_cause,
+    # recommended_actions[], confidence}. NULL when the model only produced markdown.
+    report_json: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
     root_cause_summary: Mapped[str] = mapped_column(Text, default="")
     transcript: Mapped[list] = mapped_column(JSON, default=list)  # [{role, content}] steps incl. SQL + results
     model: Mapped[str] = mapped_column(String(100), default="")

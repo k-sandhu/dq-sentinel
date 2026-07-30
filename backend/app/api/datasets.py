@@ -5,6 +5,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
 from app import models, schemas
+from app.api._filters import LIKE_ESCAPE, contains_pattern
 from app.api.serialize import dataset_out
 from app.config import get_settings
 from app.connectors.sa import connector_for
@@ -40,10 +41,11 @@ def list_datasets(
     if connection_id is not None:
         query = query.filter(models.Dataset.connection_id == connection_id)
     if q:
-        needle = f"%{q.lower()}%"
+        # Escaped: a typed % or _ is literal text, not a wildcard (#282/#273).
+        needle = contains_pattern(q.lower())
         query = query.filter(
-            func.lower(models.Dataset.table_name).like(needle)
-            | func.lower(models.Dataset.display_name).like(needle)
+            func.lower(models.Dataset.table_name).like(needle, escape=LIKE_ESCAPE)
+            | func.lower(models.Dataset.display_name).like(needle, escape=LIKE_ESCAPE)
         )
     datasets = (
         query.options(

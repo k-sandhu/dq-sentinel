@@ -1,5 +1,13 @@
 """Ad-hoc investigation dashboards: generated (LLM or heuristic), persisted,
-re-executed on open."""
+re-executed on open.
+
+Authorization (#72): a panel is stored SQL that the server runs against the
+source, so BOTH generate and open are execution paths and carry the same gate as
+POST /query/run — editor ON the dataset's connection, not merely the global
+editor role. The list is scoped to datasets on visible connections, and a
+dashboard on an ungranted connection is indistinguishable from a missing one
+(both 404, identical body) so ids can't be probed.
+"""
 
 import logging
 
@@ -13,7 +21,14 @@ from app.core.profiler import summarize_profile_for_llm
 from app.db import get_db
 from app.llm.client import llm_enabled
 from app.models import utcnow
-from app.security import get_current_user, require_role
+from app.security import (
+    assert_connection_role,
+    assert_dataset_visible,
+    get_current_user,
+    require_role,
+    visible_connection_ids,
+    visible_dataset_ids,
+)
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/adhoc-dashboards", tags=["adhoc-dashboards"])
@@ -25,15 +40,36 @@ def _meta(d: models.AdhocDashboard) -> schemas.AdhocDashboardMeta:
     return out
 
 
+def _visible_dashboard(
+    db: Session, user: models.User, dashboard_id: int
+) -> models.AdhocDashboard:
+    """Fetch a dashboard whose dataset sits on a connection the caller may see.
+
+    A missing dashboard and one on an ungranted connection raise the IDENTICAL
+    404 so sequential id probing reveals nothing (#72). An orphaned dashboard
+    (dataset deleted) stays reachable so callers still get the honest 409.
+    """
+    dash = db.get(models.AdhocDashboard, dashboard_id)
+    if dash is None:
+        raise HTTPException(404, "Dashboard not found")
+    ds = db.get(models.Dataset, dash.dataset_id)
+    if ds is not None:
+        vis = visible_connection_ids(db, user)  # None -> unrestricted (admin / zero-grant)
+        if vis is not None and ds.connection_id not in vis:
+            raise HTTPException(404, "Dashboard not found")
+    return dash
+
+
 @router.post("/generate", response_model=schemas.AdhocDashboardOut, status_code=201)
 def generate(
     body: schemas.GenerateDashboardIn,
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role("editor")),
 ):
-    ds = db.get(models.Dataset, body.dataset_id)
-    if ds is None:
-        raise HTTPException(404, "Dataset not found")
+    # Visible-or-404, then editor ON THIS connection (#72): generation immediately
+    # executes the authored panel SQL against the source, same authority as /query/run.
+    ds = assert_dataset_visible(db, user, body.dataset_id)
+    assert_connection_role(db, user, ds.connection_id, "editor")
     profile_row = (
         db.query(models.Profile)
         .filter(models.Profile.dataset_id == ds.id)
@@ -100,9 +136,12 @@ def generate(
 def list_dashboards(
     dataset_id: int | None = None,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
     q = db.query(models.AdhocDashboard)
+    visible_ds = visible_dataset_ids(db, user)  # None -> unrestricted (admin / zero-grant)
+    if visible_ds is not None:  # only dashboards on granted connections (#72)
+        q = q.filter(models.AdhocDashboard.dataset_id.in_(visible_ds))
     if dataset_id is not None:
         q = q.filter(models.AdhocDashboard.dataset_id == dataset_id)
     return [_meta(d) for d in q.order_by(models.AdhocDashboard.id.desc()).limit(50).all()]
@@ -112,14 +151,18 @@ def list_dashboards(
 def open_dashboard(
     dashboard_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
-    dash = db.get(models.AdhocDashboard, dashboard_id)
-    if dash is None:
-        raise HTTPException(404, "Dashboard not found")
+    """Opening RE-EXECUTES every stored panel against the source, so despite being
+    a GET this is an execution path: it takes the same gate as POST /query/run —
+    editor ON the dataset's connection (#72). Without it, any authenticated user
+    could make the server run persisted SQL against a source they were never
+    granted, just by walking dashboard ids."""
+    dash = _visible_dashboard(db, user, dashboard_id)
     ds = db.get(models.Dataset, dash.dataset_id)
     if ds is None:
         raise HTTPException(409, "Dashboard's dataset no longer exists")
+    assert_connection_role(db, user, ds.connection_id, "editor")
     try:
         connector = connector_for(ds.connection)
     except Exception as exc:  # noqa: BLE001 - e.g. missing optional driver
@@ -139,10 +182,11 @@ def open_dashboard(
 def delete_dashboard(
     dashboard_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(require_role("editor")),
+    user: models.User = Depends(require_role("editor")),
 ):
-    dash = db.get(models.AdhocDashboard, dashboard_id)
-    if dash is None:
-        raise HTTPException(404, "Dashboard not found")
+    dash = _visible_dashboard(db, user, dashboard_id)  # 404 for missing OR ungranted
+    ds = db.get(models.Dataset, dash.dataset_id)
+    if ds is not None:  # orphaned boards stay deletable by any editor (cleanup)
+        assert_connection_role(db, user, ds.connection_id, "editor")
     db.delete(dash)
     db.commit()

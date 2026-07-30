@@ -99,9 +99,18 @@ Rules:
 - Every claim in your report must be backed by a query you actually ran.
 - Prefer aggregates; never dump large raw extracts.
 - If the evidence is inconclusive, say so and report the most likely hypotheses with their evidence.
-- When done, call submit_report. The report is markdown shown to data engineers: lead with the \
-root cause summary, then evidence (include the key queries + result numbers), affected scope, \
-and recommended fixes (both data fixes and check adjustments)."""
+- When done, call submit_report.
+
+submit_report takes two views of the same investigation — fill in both:
+- report_md: the narrative markdown a data engineer reads top-to-bottom. Lead with the root \
+cause summary, then evidence (key queries + result numbers), affected scope, and recommended \
+fixes (both data fixes and check adjustments).
+- the structured fields, which drive the UI: `likely_cause` (one sentence), `hypotheses` \
+(every hypothesis you tested with verdict supported|refuted|inconclusive and the numbers that \
+settled it — include the ones you ruled out, they save the next person the work), `evidence` \
+(the key queries verbatim as you ran them, each with what it showed), and `recommended_actions` \
+(each tagged fix_data|fix_pipeline|adjust_check|investigate). Never put a claim in the \
+structured fields that no query you ran supports."""
 
 
 def check_gen_user_prompt(

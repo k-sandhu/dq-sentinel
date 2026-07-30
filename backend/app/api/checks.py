@@ -5,6 +5,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import models, schemas
+from app.api._filters import LIKE_ESCAPE, contains_pattern
 from app.api.serialize import check_out, check_version_out, run_out
 from app.connectors.sa import connector_for
 from app.core import check_authoring, incidents
@@ -20,6 +21,7 @@ from app.security import (
     assert_dataset_visible,
     get_current_user,
     require_role,
+    visible_dataset_ids,
 )
 
 log = logging.getLogger(__name__)
@@ -46,18 +48,26 @@ def list_checks(
     status: str | None = None,
     q: str | None = None,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
     query = db.query(models.Check).filter(models.Check.status != "archived")
+    # Connection-grant scoping (#72), matching GET /checks/{id}: only checks on
+    # datasets whose connection the caller may see. None -> unrestricted.
+    visible_ds = visible_dataset_ids(db, user)
+    if visible_ds is not None:
+        query = query.filter(models.Check.dataset_id.in_(visible_ds))
     if dataset_id is not None:
         query = query.filter(models.Check.dataset_id == dataset_id)
     if status:
         query = query.filter(models.Check.status == status)
     if q:
-        needle = f"%{q.lower()}%"
+        # Escaped: a typed % or _ is literal text, not a wildcard (#282/#273).
+        needle = contains_pattern(q.lower())
         query = query.filter(
-            func.lower(models.Check.name).like(needle)
-            | func.lower(func.coalesce(models.Check.column_name, "")).like(needle)
+            func.lower(models.Check.name).like(needle, escape=LIKE_ESCAPE)
+            | func.lower(func.coalesce(models.Check.column_name, "")).like(
+                needle, escape=LIKE_ESCAPE
+            )
         )
     return [check_out(c) for c in query.order_by(models.Check.dataset_id, models.Check.id).all()]
 
