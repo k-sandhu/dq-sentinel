@@ -62,7 +62,11 @@ _UNRECOGNIZED = "the source driver reported an error (see the server log for thi
 
 # ---------------------------------------------------------------- (1) appendix
 # SQLAlchemy StatementError renders "<msg>\n[SQL: ...]\n[parameters: ...]".
-_APPENDIX = re.compile(r"\[(?:SQL|parameters|cached since)\b.*", re.S | re.I)
+# Anchored on SQLAlchemy's punctuation, not a bare word boundary: pyodbc injects
+# a literal "[SQL Server]" tag into every MSSQL error, and `\[SQL\b` swallowed it
+# plus the entire diagnosis after it — which also deleted "Login failed for user"
+# before the classifier below ever saw it. SQLAlchemy always renders the colon.
+_APPENDIX = re.compile(r"\[(?:SQL:|parameters:|cached since\s).*", re.S | re.I)
 _BACKGROUND = re.compile(r"\(Background on this error at:[^)]*\)?", re.I)
 # SQLAlchemy prefixes the DBAPI class, e.g. "(psycopg2.OperationalError) ...".
 _DBAPI_PREFIX = re.compile(r"^\((?:[\w.]+\.)?\w*(?:Error|Exception|Warning)\)\s*", re.I)
@@ -128,7 +132,12 @@ _REASONS: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     (
         re.compile(
-            r"permission denied for|not authorized|insufficient privilege"
+            # No bare "not authorized": Snowflake deliberately says
+            # "Object 'X' does not exist or not authorized." for a plain typo so
+            # it does not disclose existence, and classifying that as a grant
+            # failure sends the analyst hunting a permission they already have.
+            # A genuine Snowflake grant failure says "Insufficient privileges".
+            r"permission denied for|insufficient privilege"
             r"|does not have (?:the )?permission",
             re.I,
         ),
@@ -194,6 +203,16 @@ def redact_source_text(text: str) -> str:
     to a generic line only when nothing readable survives.
     """
     raw = _strip_appendix(" ".join((text or "").split()))
+    # Bound the input BEFORE any scanning. The scrub patterns are quadratic in
+    # the worst case, and a driver message is not a fixed-size input: engines
+    # echo the caller's identifiers back (DuckDB's "Referenced column ... not
+    # found" repeats the whole name), so an analyst-authored query can inflate
+    # it at will and burn CPU on a threadpool worker. Truncating first is safe:
+    # a bisected DSN or host=/port= pair on the surviving prefix still matches,
+    # and classification phrases appear early in driver messages. The tail
+    # truncation in _scrub still enforces the output bound afterwards, since
+    # "[redacted]" substitutions can lengthen the string.
+    raw = raw[: 4 * MAX_CHARS]
     if not raw:
         return _UNRECOGNIZED
     for pattern, reason in _REASONS:

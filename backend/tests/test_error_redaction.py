@@ -14,6 +14,7 @@ The bar is two-sided, and both halves are asserted here:
 """
 
 import logging
+import time
 from contextlib import contextmanager
 from typing import Any
 from uuid import uuid4
@@ -337,3 +338,70 @@ def test_starter_contract_502_is_redacted(client, admin_headers, connection_id, 
     for secret in SECRETS:
         assert secret not in resp.text
         assert secret in rendered(records)
+
+
+# ---------------------------------------------------------------------------
+# Review-round regressions (#307 follow-up). Each of these passed the original
+# implementation's own test suite, which is why they are pinned explicitly.
+# ---------------------------------------------------------------------------
+
+
+def test_redaction_is_bounded_on_an_attacker_inflated_message() -> None:
+    """A driver message is not a fixed-size input: engines echo the caller's
+    identifiers back, so an analyst-authored query can inflate it at will. The
+    scrub patterns are quadratic in the worst case, so the input must be bounded
+    BEFORE scanning -- otherwise a cheap request burns ~45s on a worker thread."""
+    ident = ".".join(["a"] * 4000)
+    msg = f'Binder Error: Referenced column "{ident}" not found in FROM clause!'
+    start = time.perf_counter()
+    out = redact_source_text(msg)
+    elapsed = time.perf_counter() - start
+    assert elapsed < 1.0, f"redaction took {elapsed:.1f}s on a {len(msg)}-char message"
+    assert len(out) <= 300
+
+
+def test_mssql_odbc_tag_does_not_eat_the_diagnosis() -> None:
+    r"""pyodbc injects a literal "[SQL Server]" tag into every MSSQL error. An
+    appendix pattern anchored on `\[SQL\b` swallowed it and everything after,
+    deleting the diagnosis -- and deleting "Login failed for user" before the
+    classifier could see it, so the primary control never fired on mssql."""
+    login = (
+        "('28000', \"[28000] [Microsoft][ODBC Driver 18 for SQL Server]"
+        "[SQL Server]Login failed for user 'svc'. (18456)\")"
+    )
+    assert redact_source_text(login) == "authentication with the source failed"
+
+    bad_column = (
+        "('42S22', \"[42S22] [Microsoft][ODBC Driver 18 for SQL Server]"
+        "[SQL Server]Invalid column name 'emial'.\")"
+    )
+    assert "Invalid column name 'emial'" in redact_source_text(bad_column)
+
+
+def test_sqlalchemy_appendix_is_still_stripped() -> None:
+    """Guard the above fix from over-correcting: SQLAlchemy's own
+    [SQL: ...] / [parameters: ...] / [cached since ...] tails must still go."""
+    text = (
+        "(sqlite3.OperationalError) no such column: emial "
+        "[SQL: SELECT emial FROM people] [parameters: {'p': 1}]"
+    )
+    assert redact_source_text(text) == "no such column: emial"
+    assert redact_source_text("boom [cached since 12s ago]") == "boom"
+
+
+def test_snowflake_missing_object_is_not_reported_as_a_grant_failure() -> None:
+    """Snowflake deliberately says "does not exist or not authorized" for a plain
+    typo so it does not disclose existence. Classifying that as a permission
+    error sends the analyst hunting a grant they already have."""
+    typo = (
+        "002003 (42S02): SQL compilation error: "
+        "Object 'ANALYTICS.PUBLIC.ORDRES' does not exist or not authorized."
+    )
+    assert "not permitted" not in redact_source_text(typo)
+    assert "ORDRES" in redact_source_text(typo)
+
+    grant = (
+        "003001 (42501): SQL access control error: "
+        "Insufficient privileges to operate on table 'ORDERS'"
+    )
+    assert redact_source_text(grant) == "the source account is not permitted to read this object"

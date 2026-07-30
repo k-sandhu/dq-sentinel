@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import { Navigate, Outlet, Route, Routes, useLocation } from "react-router";
 import { useAuth } from "./auth";
+import ErrorBoundary from "./components/ErrorBoundary";
 import Layout from "./components/Layout";
 import { Spinner } from "./components/ui";
 import { resolvePostLoginTarget } from "./lib/postLogin";
@@ -80,11 +81,20 @@ function LoginRedirect() {
  * beat late reads as "loading", not as a blank pane. Used as a pathless layout
  * route so one boundary covers every lazy route in the group.
  */
+/** Chrome-less lazy routes (/docs). These render OUTSIDE `Layout`, so they do
+ *  not inherit its per-route `ErrorBoundary` — without one here, a failed chunk
+ *  fetch (the normal outcome of navigating after a deploy replaced the hashed
+ *  assets) propagates to the root and unmounts the whole SPA, leaving a blank
+ *  page that no in-app navigation can recover. Keyed by pathname to match
+ *  Layout, so moving to another route clears a previous route's error. */
 function LazyRoutes() {
+  const location = useLocation();
   return (
-    <Suspense fallback={<Spinner label="Loading…" />}>
-      <Outlet />
-    </Suspense>
+    <ErrorBoundary key={location.pathname}>
+      <Suspense fallback={<Spinner label="Loading…" />}>
+        <Outlet />
+      </Suspense>
+    </ErrorBoundary>
   );
 }
 
