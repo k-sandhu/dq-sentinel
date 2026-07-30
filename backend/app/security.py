@@ -47,9 +47,13 @@ def get_current_user(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
     try:
         payload = jwt.decode(creds.credentials, get_settings().secret_key, algorithms=["HS256"])
-    except jwt.PyJWTError as exc:
+        # A validly-signed token can still carry a missing/non-numeric "sub" (foreign
+        # issuer, hand-rolled token, rotated claim shape). That is a bad credential,
+        # not a server fault — 401, never an uncaught KeyError/ValueError 500 (#282).
+        user_id = int(payload["sub"])
+    except (jwt.PyJWTError, KeyError, TypeError, ValueError) as exc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token") from exc
-    user = db.get(User, int(payload["sub"]))
+    user = db.get(User, user_id)
     if user is None or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found or inactive")
     return user

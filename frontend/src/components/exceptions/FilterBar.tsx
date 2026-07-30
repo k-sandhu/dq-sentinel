@@ -3,12 +3,31 @@
 
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "../../api/client";
+import { ApiError, api } from "../../api/client";
 import { qk } from "../../api/queryKeys";
 import type { Assignee, CheckTypeInfo, ExceptionFacets } from "../../api/types";
 import { checkTypeLabel } from "../../lib/checkMeta";
 import { ALL_SEVERITIES, ALL_STATUSES, SEEN_SINCE_OPTIONS, SORT_OPTIONS } from "./shared";
 import type { SeenSince, WorkspaceFilters } from "./shared";
+
+/** Turn an export failure into something the analyst can act on (#294).
+ *  A silent failure is worse than a slow one: the button used to slide back to
+ *  "Export CSV" on a 403/500/offline and the analyst assumed a file downloaded. */
+export function exportErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 403) {
+      return "Export failed: you don't have permission to export exceptions. Ask an admin for editor access.";
+    }
+    if (err.status === 401) {
+      return "Export failed: your session expired. Sign in again, then retry the export.";
+    }
+    if (err.status >= 500) {
+      return `Export failed: the server errored (${err.status}). Retry, or narrow the filters if this view is very large.`;
+    }
+    return `Export failed: ${err.message}`;
+  }
+  return "Export failed: couldn't reach the server. Check your connection and retry.";
+}
 
 export default function FilterBar({
   filters,
@@ -17,6 +36,7 @@ export default function FilterBar({
   exportUrl,
   update,
   clearAll,
+  onError,
 }: {
   filters: WorkspaceFilters;
   facets: ExceptionFacets | undefined;
@@ -24,6 +44,8 @@ export default function FilterBar({
   exportUrl: string; // query string (without leading ?) for export.csv
   update: (patch: Partial<WorkspaceFilters>) => void;
   clearAll: () => void;
+  /** Surface a failure through the workspace toast (role="status"). */
+  onError: (message: string) => void;
 }) {
   // Debounced search: keep the input snappy, hit the API at 300ms (matches the
   // server's count-cost mitigation note in #57).
@@ -47,6 +69,8 @@ export default function FilterBar({
     setExporting(true);
     try {
       await api.download(`/exceptions/export.csv?${exportUrl}`, "exceptions.csv");
+    } catch (err) {
+      onError(exportErrorMessage(err));
     } finally {
       setExporting(false);
     }

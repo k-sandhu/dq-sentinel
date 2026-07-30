@@ -19,7 +19,7 @@ Seeded issues (also written to samples/ISSUES.md):
 import argparse
 import random
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 SEED = 42
@@ -120,7 +120,10 @@ def main() -> None:
         out.unlink()
 
     rng = random.Random(SEED)
-    now = datetime.now()
+    # Naive UTC, matching how the app stores and reads timestamps. Plain
+    # datetime.now() would seed local-time rows that a UTC-reading freshness
+    # check sees as skewed by the generating machine's offset.
+    now = datetime.now(UTC).replace(tzinfo=None)
     issues: dict[str, int] = {}
 
     def bump(key: str, n: int = 1) -> None:
@@ -275,8 +278,7 @@ def main() -> None:
         f.write(f"Generated {now:%Y-%m-%d %H:%M} with seed {SEED}. Row counts: {counts}\n\n")
         f.write(f"Freshness: newest order is ~{FRESHNESS_GAP_HOURS}h old "
                 "(fails a 24h SLA, passes 48h).\n\n| Issue | Count |\n|---|---|\n")
-        for k in sorted(issues):
-            f.write(f"| {k} | {issues[k]} |\n")
+        f.writelines(f"| {k} | {issues[k]} |\n" for k in sorted(issues))
 
     print(f"Wrote {out}")
     for t, n in counts.items():

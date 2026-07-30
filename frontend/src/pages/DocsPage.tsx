@@ -5,12 +5,7 @@ import type { DocContent, DocSummary } from "../api/types";
 import InfoShell from "../components/InfoShell";
 import Markdown from "../components/Markdown";
 import { EmptyState, ErrorBox, Spinner } from "../components/ui";
-
-function formatUpdated(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
-}
+import { fmtDate } from "../lib/format";
 
 function DocView({ slug }: { slug: string }) {
   const { data, isLoading, error } = useQuery({
@@ -26,7 +21,9 @@ function DocView({ slug }: { slug: string }) {
     <article className="docs-content card card-pad">
       <div className="doc-meta">
         <h1>{data.title}</h1>
-        <span className="sub">Updated {formatUpdated(data.updated_at)}</span>
+        {/* Shared helper, not `new Date(iso)`: the backend serializes naive-UTC, so
+            a raw parse shifted the displayed day by the viewer's offset (#294). */}
+        <span className="sub">Updated {fmtDate(data.updated_at)}</span>
       </div>
       <Markdown>{data.markdown}</Markdown>
     </article>

@@ -2,6 +2,12 @@
 
 Declares full paths (no router prefix) because it spans /datasets and
 /connections; mounted in app.main under /api/v1.
+
+Every endpoint here introspects the SOURCE: table DDL, view SQL, the column
+graph derived from them. That is a description of a customer's schema, so all of
+it is gated on the per-connection grant model (#72) — a granted user must not be
+able to read the shape of a source they were never granted, and a missing id must
+be indistinguishable from an invisible one (both 404, per security.py).
 """
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,23 +17,22 @@ from app import models, schemas
 from app.connectors.sa import connector_for
 from app.core.lineage import build_lineage, column_subgraph, node_id_for, subgraph, table_key
 from app.db import get_db
-from app.security import get_current_user
+from app.security import assert_connection_visible, assert_dataset_visible, get_current_user
 
 router = APIRouter(tags=["lineage"])
 
 
-def _get_dataset(db: Session, dataset_id: int) -> models.Dataset:
-    ds = db.get(models.Dataset, dataset_id)
-    if ds is None:
-        raise HTTPException(404, "Dataset not found")
-    return ds
+def _get_dataset(db: Session, dataset_id: int, user: models.User) -> models.Dataset:
+    # Visible-or-404: the dataset must sit on a connection the caller can see (#72),
+    # and a missing dataset returns the identical 404 body (see security.py).
+    return assert_dataset_visible(db, user, dataset_id)
 
 
 @router.get("/datasets/{dataset_id}/ddl", response_model=schemas.DatasetDdlOut)
 def get_dataset_ddl(
-    dataset_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_user)
+    dataset_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)
 ):
-    ds = _get_dataset(db, dataset_id)
+    ds = _get_dataset(db, dataset_id, user)
     try:
         connector = connector_for(ds.connection)
         ddl, source = connector.get_ddl(ds.table_name, ds.schema_name)
@@ -50,9 +55,9 @@ def dataset_lineage(
     depth: int = 2,
     granularity: str = "table",
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
-    ds = _get_dataset(db, dataset_id)
+    ds = _get_dataset(db, dataset_id, user)
     depth = max(1, min(5, depth))  # clamp rather than reject
     granularity = "column" if granularity == "column" else "table"
     try:
@@ -68,9 +73,9 @@ def dataset_column_lineage(
     column: str,
     depth: int = 2,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
-    ds = _get_dataset(db, dataset_id)
+    ds = _get_dataset(db, dataset_id, user)
     depth = max(1, min(8, depth))
     try:
         graph = build_lineage(db, ds.connection, connector_for(ds.connection), granularity="column")
@@ -84,11 +89,10 @@ def connection_lineage(
     connection_id: int,
     granularity: str = "table",
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
-    conn = db.get(models.Connection, connection_id)
-    if conn is None:
-        raise HTTPException(404, "Connection not found")
+    # Visible-or-404 (#72): identical response for a missing and an ungranted id.
+    conn = assert_connection_visible(db, user, connection_id)
     granularity = "column" if granularity == "column" else "table"
     try:
         return build_lineage(db, conn, connector_for(conn), granularity=granularity)

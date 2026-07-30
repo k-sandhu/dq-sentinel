@@ -376,6 +376,13 @@ export const qk = {
     all: ["users"] as const,
     list: () => ["users"] as const,
   },
+  // Per-connection grants are fetched one user at a time (the API is
+  // /auth/users/{id}/grants), so the family is keyed by user id; mutations
+  // invalidate the single user's key, never the whole `all` prefix.
+  grants: {
+    all: ["grants"] as const,
+    byUser: (userId: Id) => ["grants", userId] as const,
+  },
 } as const;
 
 /** The factory type — reference a family as `QueryKeyFactory["datasets"]`. */

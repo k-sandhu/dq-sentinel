@@ -24,9 +24,28 @@ export function matchesRollupFilter(
   return (value ?? "").trim().toLowerCase() === filter.trim().toLowerCase();
 }
 
+/** Human label for a rollup dimension, shared by the producer's link titles and the
+ *  consumer's chips so the two can never drift. */
+export const ROLLUP_LABELS: Record<RollupFilterKey, string> = {
+  domain: "Domain",
+  team: "Team",
+};
+
+/**
+ * Build the Datasets URL for a domain/team drill-in — the *producer* side of
+ * `parseRollupFilters` (#294: the filter strip shipped with no way to reach it).
+ * An empty/absent value becomes a present-but-empty param, i.e. the "Unassigned"
+ * bucket, exactly as the parser reads it back.
+ */
+export function rollupFilterHref(key: RollupFilterKey, value: string | null | undefined): string {
+  const sp = new URLSearchParams();
+  sp.set(key, (value ?? "").trim());
+  return `/datasets?${sp.toString()}`;
+}
+
 /** Read the scorecard rollup filters (domain/team) from the URL. A present-but-empty
  *  param is "Unassigned" and is distinct from an absent param (no filter at all),
- *  so a scorecard drill-in on the Unassigned bucket survives a reload. */
+ *  so a drill-in on the Unassigned bucket survives a reload. */
 export function parseRollupFilters(sp: URLSearchParams): {
   domainFilter: string | null;
   teamFilter: string | null;
@@ -36,10 +55,10 @@ export function parseRollupFilters(sp: URLSearchParams): {
   const teamFilter = sp.has("team") ? (sp.get("team") ?? "") : null;
   const activeRollupFilters = [
     domainFilter !== null
-      ? { key: "domain" as const, label: "Domain", value: domainFilter || "Unassigned" }
+      ? { key: "domain" as const, label: ROLLUP_LABELS.domain, value: domainFilter || "Unassigned" }
       : null,
     teamFilter !== null
-      ? { key: "team" as const, label: "Team", value: teamFilter || "Unassigned" }
+      ? { key: "team" as const, label: ROLLUP_LABELS.team, value: teamFilter || "Unassigned" }
       : null,
   ].filter((item): item is ActiveRollupFilter => item !== null);
   return { domainFilter, teamFilter, activeRollupFilters };

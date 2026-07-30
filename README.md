@@ -11,13 +11,14 @@ root-cause analyst that investigates with read-only SQL and reports back with ev
 ## What it does
 
 1. **Connect** — register SQLite / DuckDB / PostgreSQL / MySQL / SQL Server / Snowflake /
-   BigQuery / Trino / ClickHouse sources (always opened **read-only** where the engine allows;
-   every query passes a SQL safety guard that allows only single SELECT/WITH statements).
+   BigQuery / Trino / ClickHouse sources (always opened **read-only** where the engine allows,
+   with host access switched off where the engine has such a switch; every query passes a SQL
+   safety guard that allows only single SELECT/WITH statements — see *Security model*).
    Non-core drivers are optional extras: `pip install "dqsentinel[snowflake]"` etc.
 2. **Profile** — per-column stats pushed down as SQL aggregates plus sampled quantiles,
    string-format inference (email/uuid/url/date), primary-key and freshness candidates.
-3. **Generate checks** — a deterministic heuristic engine always works; with an
-   `ANTHROPIC_API_KEY`, Claude proposes sharper checks using the profile **plus the table
+3. **Generate checks** — a deterministic heuristic engine always works; with an LLM key
+   configured, the model proposes sharper checks using the profile **plus the table
    knowledge you record** (business context, known issues, SLAs, PII columns). Optionally a
    bounded **exploration agent** first writes its own SQL to learn the data — distributions,
    cross-column consistency, orphans — before proposing.
@@ -29,8 +30,17 @@ root-cause analyst that investigates with read-only SQL and reports back with ev
 6. **ML outlier detection** — IsolationForest over numeric columns is a first-class check
    type; flagged rows land in the same exception workflow with anomaly scores.
 7. **Root-cause analysis** — an agent reproduces the failure, segments and time-boxes the bad
-   rows, queries related tables, and submits a markdown report (root cause, evidence with the
-   actual queries, affected scope, suggested fixes). The full SQL transcript is shown in the UI.
+   rows, queries related tables, and submits a structured report: likely cause + confidence,
+   hypotheses marked supported/refuted/inconclusive, evidence items carrying the actual SQL and
+   its finding, and recommended actions. The full SQL transcript is shown in the UI.
+
+Around that core loop the platform also ships **lineage** (table-level graph parsed from view
+SQL, with a check-health overlay), a guarded **SQL workbench** (schema sidebar, history, saved
+queries, CSV export), **custom and LLM-generated dashboards**, an **assistant chat** agent, a
+one-click **data catalog**, and the governance surfaces teams ask for next: quality
+**scorecards**, **SLA** tracking, **incidents**, **data contracts**, **monitor packs**, an
+**audit log**, global search, a read-only **status page**, and **notifications** (Slack, email,
+generic webhook, Teams, PagerDuty, Jira, ServiceNow).
 
 Without an LLM key everything still works — generation falls back to heuristics and the agentic
 features explain what they need. PII columns flagged in table knowledge are redacted from every
@@ -61,8 +71,10 @@ documented in `samples/ISSUES.md`), register the tables, hit **Profile now**, th
 **Generate checks**. A real public dataset is one command away:
 `python data/download_public_data.py` (NYC taxi → DuckDB).
 
-To enable the AI features, set `ANTHROPIC_API_KEY` in `.env` (model defaults to
-`claude-opus-4-8`, configurable via `DQ_LLM_MODEL`).
+To enable the AI features, point the provider-agnostic LLM layer at any model: set
+`ANTHROPIC_API_KEY` in `.env` for the native Anthropic API (model defaults to
+`claude-opus-4-8`), or `DQ_LLM_API_KEY` + `DQ_LLM_MODEL` for any OpenAI-compatible endpoint
+(OpenRouter by default; `DQ_LLM_BASE_URL` points at vLLM/Ollama/Together/your own gateway).
 
 ### Quickstart (Docker)
 
@@ -73,7 +85,7 @@ docker compose up --build    # UI on http://localhost:3000, Postgres-backed
 ### Verify an install
 
 ```bash
-python scripts/e2e_smoke.py   # 28-step live workflow check against a running API
+python scripts/e2e_smoke.py   # 38 assertions over the live workflow, against a running API
 ```
 
 ## Architecture
@@ -99,13 +111,17 @@ python scripts/e2e_smoke.py   # 28-step live workflow check against a running AP
 
 - **Backend**: FastAPI + SQLAlchemy 2.0 + Pydantic v2, JWT auth with viewer/editor/admin
   roles, app metadata on SQLite (dev) or PostgreSQL (`DQ_DATABASE_URL`).
-- **Check types** (pluggable registry): `not_null`, `unique`, `accepted_values`, `range`,
-  `string_length`, `regex_match`, `freshness` (robust to future-dated rows), `row_count_min`,
-  `row_count_anomaly` (self-baselining), `custom_sql`, `ml_outlier`.
-- **LLM layer**: Anthropic SDK; structured-output check generation validated against the
-  registry; explorer & RCA are bounded tool-use loops whose every query passes the same
-  read-only guard and row limits as human queries.
-- **Frontend**: React 19, react-router 7, TanStack Query 5, recharts — no UI kit, ~600 lines
+- **Check types** (14, pluggable registry — `backend/app/core/check_types.py`): `not_null`,
+  `unique`, `accepted_values`, `range`, `string_length`, `regex_match`, `schema_contract`,
+  `freshness` (robust to future-dated rows), `row_count_min`, `row_count_anomaly`
+  (self-baselining), `custom_sql`, `ml_outlier`, `distribution_drift` (PSI/KS vs the profiling
+  baseline), `schema_change`.
+- **LLM layer**: provider-agnostic (`app/llm/providers.py`) — the native Anthropic API or any
+  OpenAI-compatible endpoint, including local models; no SDK is imported outside that module.
+  Structured-output check generation is validated against the registry; explorer & RCA are
+  bounded tool-use loops whose every query passes the same read-only guard and row limits as
+  human queries.
+- **Frontend**: React 19, react-router 7, TanStack Query 5, recharts — no UI kit, ~1,700 lines
   of hand-rolled Metabase-ish CSS.
 
 ## Repo guide
@@ -113,29 +129,49 @@ python scripts/e2e_smoke.py   # 28-step live workflow check against a running AP
 | Path | What |
 |---|---|
 | [AGENTS.md](AGENTS.md) | **Start here** — dev setup, conventions, safety rails, OneDrive gotchas. `CLAUDE.md` symlinks to it. |
+| [docs/getting-started.md](docs/getting-started.md) | First sign-in → first triaged exception, as a product walkthrough |
 | `backend/app/core/check_types.py` | Check registry + how to add a type |
-| `backend/app/llm/` | Check generation, exploration agent, RCA agent, prompts |
+| `backend/app/llm/` | `providers.py` (the provider abstraction), check generation, exploration agent, RCA agent, chat agent, prompts |
 | `backend/app/connectors/safety.py` | The SQL guard everything goes through |
-| `backend/app/connectors/dialects.py` | 9-engine dialect registry: schemes, read-only enforcement, optional drivers, DDL catalog queries |
+| `backend/app/connectors/dialects.py` | 9-engine dialect registry: schemes, read-only + host-access enforcement, optional drivers, DDL catalog queries |
 | `backend/app/core/lineage.py` | sqlglot view parsing → lineage graph with check-health overlay |
 | `data/` | Sample-data generator + public-dataset downloader |
 | `scripts/e2e_smoke.py` | Full-workflow smoke test |
 
 ## Security model (v0.1)
 
-- Sources opened read-only at the driver level **and** statement-guarded (single SELECT/WITH,
-  keyword denylist, forced row limits) — including all LLM-authored SQL.
-- JWT auth (HS256), bcrypt passwords, role-gated mutations; bootstrap admin seeded once.
+- **A source database cannot write, and cannot read its host.** Two layers, and the driver one
+  is the one that counts:
+  - *Driver level.* Connections open read-only where the engine allows it, and host access is
+    switched off where the engine has a switch. DuckDB opens with `read_only=True` **and**
+    `enable_external_access=false`, because `read_only=True` alone does not stop *reads*: a
+    DuckDB replacement scan (`SELECT * FROM '/etc/passwd'`) reads a host file with no function
+    call involved. The trade is deliberate — a registered DuckDB source can then read nothing
+    but its own database file (no `read_csv`, no httpfs/S3, no `ATTACH`).
+  - *Statement level.* Every query, including all LLM-authored SQL, passes `guard_sql()`:
+    single SELECT/WITH, keyword denylist, a denylist of read-side functions that reach the
+    filesystem/network/OS, a rejection of a string literal in table position after
+    `FROM`/`JOIN`, and forced row limits. This is pattern matching over masked SQL rather than
+    a parser — defence in depth for engines that grow the same feature, not the primary control.
+- JWT auth (HS256), bcrypt passwords, role-gated mutations (`viewer`/`editor`/`admin`) plus
+  per-connection grants that narrow a role to specific sources (editable in Settings → Users);
+  connection-scoped endpoints resolve an invisible id to the same 404 as a missing one, so ids
+  can't be probed. Bootstrap admin seeded once, and `DQ_ENV=prod` refuses to boot on the
+  default secret key or admin password.
+- Privileged and state-changing actions (users, grants, connections, checks, triage, knowledge,
+  contracts, SLAs) are recorded in an append-only **audit log** with an admin-only viewer in
+  Settings.
 - PII redaction in LLM prompts/tool results based on per-table knowledge.
-- Known gaps tracked as issues: DSN encryption at rest (#24), SSO/OIDC (#26), audit log (#30).
+- Known gaps tracked as issues: DSN encryption at rest (#24), SSO/OIDC (#26).
 
 ## Roadmap
 
-Open issues track the hardening path: Alembic migrations, secret encryption, distributed
-execution (queue/SKIP LOCKED), OIDC + granular RBAC, Slack/email notifications, drift checks
-(PSI/KS), audit log, triage-label
-learning, and lineage-aware RCA — see the
-[issue tracker](https://github.com/k-sandhu/dq-sentinel/issues) and
+Open issues track the hardening path: DSN encryption at rest (#24), distributed execution at
+scale (#25), OIDC + granular RBAC (#26), learning from triage to auto-suppress expected
+exceptions (#31), and lineage-aware RCA (#32) — plus the larger lanes (quality gates,
+checks-as-code, reconciliation, BI lineage, PII classification). See the
+[issue tracker](https://github.com/k-sandhu/dq-sentinel/issues), the
+[roadmap issue](https://github.com/k-sandhu/dq-sentinel/issues/254), and the
 [project board](https://github.com/users/k-sandhu/projects/4).
 
 ## License

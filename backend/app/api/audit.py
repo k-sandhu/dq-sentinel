@@ -12,6 +12,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import models, schemas
+from app.api._filters import LIKE_ESCAPE, escape_like
 from app.db import get_db
 from app.security import require_role
 
@@ -40,7 +41,15 @@ def list_audit(
     if since is not None:
         query = query.filter(models.AuditEntry.created_at >= since)
     if q:
-        query = query.filter(func.lower(models.AuditEntry.action).like(f"{q.lower()}%"))
+        # PREFIX match (documented above), with the needle's own %/_ escaped so a
+        # typed wildcard is literal text (#282/#273). Deliberately NOT
+        # contains_pattern(): a leading "%" would silently widen this to a
+        # substring search over the compliance trail.
+        query = query.filter(
+            func.lower(models.AuditEntry.action).like(
+                f"{escape_like(q.lower())}%", escape=LIKE_ESCAPE
+            )
+        )
 
     total = query.count()
     rows = query.order_by(models.AuditEntry.id.desc()).offset(offset).limit(limit).all()

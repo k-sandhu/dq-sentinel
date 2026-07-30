@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { api } from "../api/client";
 import { qk } from "../api/queryKeys";
@@ -13,15 +13,23 @@ import type {
   VizType,
 } from "../api/types";
 import { canEdit, useAuth } from "../auth";
+import { useConfirm } from "../components/confirm";
 import PanelChart from "../components/PanelChart";
 import { HistoryModal } from "../components/workbench/HistoryModal";
 import ResultGrid from "../components/workbench/ResultGrid";
 import { SaveQueryModal } from "../components/workbench/SaveQueryModal";
 import { SavedQueriesRail } from "../components/workbench/SavedQueriesRail";
 import { SchemaSidebar } from "../components/workbench/SchemaSidebar";
-import { LIMITS, type TabState, copyText, makeTab, nextLimitAfter } from "../components/workbench/shared";
+import {
+  LIMITS,
+  type TabState,
+  canManageQuery,
+  copyText,
+  makeTab,
+  nextLimitAfter,
+} from "../components/workbench/shared";
 import SqlEditor from "../components/workbench/SqlEditor";
-import { Breadcrumbs, EmptyState, ErrorBox, Icon, Spinner } from "../components/ui";
+import { Breadcrumbs, EmptyState, ErrorBox, Icon, Modal, Spinner } from "../components/ui";
 import { downloadText, rowsToCsv, rowsToJson, rowsToTsv } from "../lib/csv";
 import { fmtNum } from "../lib/format";
 import { addHistory, clearHistory, loadHistory } from "../lib/queryHistory";
@@ -30,10 +38,194 @@ import { formatSql } from "../lib/sqlFormat";
 import { deriveTabTitle, loadTabsState, newTabId, persistTabsState } from "../lib/workbenchTabs";
 import type { WorkbenchTab } from "../lib/workbenchTabs";
 
+/** Body of PATCH /queries/{id} — only the fields SavedQueryUpdate accepts. */
+interface SavedQueryPatch {
+  name?: string;
+  description?: string;
+  sql?: string;
+  tags?: string[];
+  dataset_id?: number;
+  unpin?: boolean;
+}
+
+const sameList = (a: string[], b: string[]) => a.length === b.length && a.every((v, i) => v === b[i]);
+
+/** Keep the toolbar chip a chip — the full name is always in the title attribute. */
+const shortName = (name: string) => (name.length > 24 ? `${name.slice(0, 23)}…` : name);
+
+/** Edit an entry in the shared saved-query library (#289): rename, re-describe,
+ *  re-tag, move/clear the dataset pin, and optionally publish the editor's current
+ *  SQL over the stored SQL. PATCH /queries/{id} was wired but had no UI, so the
+ *  library was append-only — a typo in a name could only be fixed by delete +
+ *  re-save, which lost the entry's history and its deep link. Uses the shared
+ *  Modal + confirm dialog; deliberately not window.prompt (#213). */
+function EditSavedQueryModal({
+  query,
+  editorSql,
+  onClose,
+  onSaved,
+}: {
+  query: SavedQuery;
+  editorSql: string;
+  onClose: () => void;
+  onSaved: (q: SavedQuery) => void;
+}) {
+  const confirm = useConfirm();
+  const fieldId = useId();
+  const [name, setName] = useState(query.name);
+  const [description, setDescription] = useState(query.description);
+  const [tags, setTags] = useState(query.tags.join(", "));
+  const [datasetId, setDatasetId] = useState<number | "">(query.dataset_id ?? "");
+  const [replaceSql, setReplaceSql] = useState(false);
+
+  const { data: datasets } = useQuery({
+    queryKey: qk.datasets.byConnection(query.connection_id),
+    queryFn: () => api.get<Dataset[]>(`/datasets?connection_id=${query.connection_id}`),
+  });
+
+  const trimmedName = name.trim();
+  const trimmedDescription = description.trim();
+  const nextTags = tags.split(",").map((t) => t.trim()).filter(Boolean);
+  const sqlChanged = !!editorSql.trim() && editorSql.trim() !== query.sql.trim();
+  const pinChanged = datasetId === "" ? query.dataset_id !== null : datasetId !== query.dataset_id;
+  const dirty =
+    trimmedName !== query.name ||
+    trimmedDescription !== query.description ||
+    !sameList(nextTags, query.tags) ||
+    pinChanged ||
+    (replaceSql && sqlChanged);
+
+  const save = useMutation({
+    mutationFn: () => {
+      const body: SavedQueryPatch = {
+        name: trimmedName,
+        description: trimmedDescription,
+        tags: nextTags,
+      };
+      // `dataset_id: null` means "leave the pin alone" server-side — clearing it
+      // needs the explicit unpin flag.
+      if (datasetId === "") {
+        if (query.dataset_id !== null) body.unpin = true;
+      } else {
+        body.dataset_id = datasetId;
+      }
+      if (replaceSql && sqlChanged) body.sql = editorSql;
+      return api.patch<SavedQuery>(`/queries/${query.id}`, body);
+    },
+    onSuccess: onSaved,
+  });
+
+  // Backdrop / Escape / ✕ all land here, so typed edits are never dropped silently.
+  const requestClose = async () => {
+    if (
+      dirty &&
+      !(await confirm({
+        title: "Discard changes?",
+        body: `Your edits to “${query.name}” haven't been saved.`,
+        confirmLabel: "Discard",
+        cancelLabel: "Keep editing",
+        danger: true,
+      }))
+    )
+      return;
+    onClose();
+  };
+
+  return (
+    <Modal
+      title="Edit saved query"
+      onClose={() => void requestClose()}
+      footer={
+        <>
+          <button className="ghost" onClick={() => void requestClose()}>Cancel</button>
+          <button
+            className="primary"
+            disabled={!trimmedName || !dirty || save.isPending}
+            title={!trimmedName ? "Name can't be empty" : !dirty ? "No changes to save" : undefined}
+            onClick={() => save.mutate()}
+          >
+            {save.isPending ? <span className="spinner" style={{ width: 13, height: 13 }} /> : null}
+            Save changes
+          </button>
+        </>
+      }
+    >
+      <label htmlFor={`${fieldId}-name`}>Name</label>
+      <input
+        id={`${fieldId}-name`}
+        type="text"
+        value={name}
+        autoFocus
+        aria-invalid={!trimmedName}
+        aria-describedby={trimmedName ? undefined : `${fieldId}-name-err`}
+        onChange={(e) => setName(e.target.value)}
+      />
+      {!trimmedName && (
+        <div id={`${fieldId}-name-err`} className="field-error">Name can't be empty.</div>
+      )}
+      <label htmlFor={`${fieldId}-desc`} style={{ marginTop: 12 }}>Description</label>
+      <input
+        id={`${fieldId}-desc`}
+        type="text"
+        value={description}
+        placeholder="What this query answers (optional)"
+        onChange={(e) => setDescription(e.target.value)}
+      />
+      <label htmlFor={`${fieldId}-tags`} style={{ marginTop: 12 }}>Tags</label>
+      <input
+        id={`${fieldId}-tags`}
+        type="text"
+        value={tags}
+        placeholder="comma-separated, e.g. triage, revenue"
+        onChange={(e) => setTags(e.target.value)}
+      />
+      <label htmlFor={`${fieldId}-pin`} style={{ marginTop: 12 }}>Pin to dataset</label>
+      <select
+        id={`${fieldId}-pin`}
+        value={datasetId}
+        onChange={(e) => setDatasetId(e.target.value === "" ? "" : Number(e.target.value))}
+      >
+        <option value="">No pin</option>
+        {(datasets ?? []).map((d) => (
+          <option key={d.id} value={d.id}>{d.table_name}</option>
+        ))}
+      </select>
+      <div style={{ fontSize: 11.5, color: "var(--text-light)", marginTop: 6 }}>
+        Pinned queries appear on the dataset's Code tab as investigation starting points.
+      </div>
+      {sqlChanged && (
+        <label
+          className="field"
+          style={{ marginTop: 12, display: "flex", gap: 8, alignItems: "flex-start", fontWeight: 400 }}
+        >
+          <input
+            type="checkbox"
+            checked={replaceSql}
+            onChange={(e) => setReplaceSql(e.target.checked)}
+            style={{ marginTop: 2, width: "auto" }}
+          />
+          <span>
+            Replace the saved SQL with this tab's current SQL
+            <span className="field-hint">
+              Leave unchecked to edit only the name, description, tags and pin. Replacement SQL is
+              re-validated as a single read-only SELECT.
+            </span>
+          </span>
+        </label>
+      )}
+      <pre className="result" style={{ marginTop: 12, maxHeight: 130, fontSize: 11 }}>
+        {replaceSql && sqlChanged ? editorSql : query.sql}
+      </pre>
+      <ErrorBox error={save.error} />
+    </Modal>
+  );
+}
+
 export default function WorkbenchPage() {
   const { user } = useAuth();
   const editable = canEdit(user);
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const [params] = useSearchParams();
   const datasetId = params.get("dataset_id") ? Number(params.get("dataset_id")) : undefined;
   const runId = params.get("run_id") ? Number(params.get("run_id")) : undefined;
@@ -46,6 +238,7 @@ export default function WorkbenchPage() {
   );
   const [limit, setLimit] = useState(200);
   const [showSave, setShowSave] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showSuggest, setShowSuggest] = useState(false);
   const suggestAutoOpened = useRef(false);
@@ -63,6 +256,24 @@ export default function WorkbenchPage() {
   const [tabs, setTabs] = useState<TabState[]>(initialTabs);
   const [activeId, setActiveId] = useState<string>(initialActiveId);
   const active = tabs.find((t) => t.id === activeId) ?? tabs[0];
+
+  // Which library entry (if any) seeded each tab. Keeps the "edit this saved
+  // query" affordance attached to the tab it belongs to rather than to the page,
+  // so switching tabs can't retarget an edit at the wrong entry (#289).
+  const [tabSaved, setTabSaved] = useState<Record<string, SavedQuery>>({});
+  const linkSaved = (tabId: string, q: SavedQuery | null) =>
+    setTabSaved((prev) => {
+      if (q) return { ...prev, [tabId]: q };
+      if (!(tabId in prev)) return prev;
+      const next = { ...prev };
+      delete next[tabId];
+      return next;
+    });
+  const activeSaved = tabSaved[activeId] ?? null;
+  const canEditSaved = !!activeSaved && canManageQuery(user, activeSaved);
+  // The edit dialog belongs to one tab; switching tabs must not re-open it later
+  // pointed at whatever entry the new tab happens to hold.
+  useEffect(() => setShowEdit(false), [activeId]);
 
   // Persist id/title/sql for the last session (titles re-derived from SQL).
   useEffect(() => {
@@ -113,10 +324,12 @@ export default function WorkbenchPage() {
     setConnectionId(connection_id);
     if (!active.dirty && !active.sql.trim()) {
       patchActive({ sql, result: null, error: null });
+      linkSaved(activeId, deepLinked.data);
     } else {
       const t = makeTab(sql);
       setTabs((prev) => [...prev, t]);
       setActiveId(t.id);
+      linkSaved(t.id, deepLinked.data);
     }
     // React only to the fetched query landing.
   }, [deepLinked.data]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -212,19 +425,37 @@ export default function WorkbenchPage() {
       dirty: true,
     }));
 
-  const confirmReplace = () =>
-    !active.dirty || !active.sql.trim() || window.confirm("Replace the current query? Unsaved edits will be lost.");
+  const confirmReplace = async () =>
+    !active.dirty ||
+    !active.sql.trim() ||
+    (await confirm({
+      title: "Replace the current query?",
+      body: "The unsaved SQL in this tab will be discarded.",
+      confirmLabel: "Replace query",
+      cancelLabel: "Keep editing",
+      danger: true,
+    }));
 
-  // Load SQL into the active tab from a saved query / history entry, switching the
-  // source if needed. Switching connections clears every tab's stale result.
-  const loadSql = (sql: string, sourceConnectionId: number, thenRun: boolean) => {
-    if (!confirmReplace()) return;
+  // Load SQL into the active tab from a saved query / history entry / suggestion,
+  // switching the source if needed. Every path that REPLACES the editor's contents
+  // must come through here so a dirty tab is never clobbered silently (#284).
+  // Switching connections clears every tab's stale result. `saved` records which
+  // library entry the tab now shows (null for history/suggestions), which is what
+  // the "Edit saved query" affordance targets.
+  const loadSql = async (
+    sql: string,
+    sourceConnectionId: number,
+    thenRun: boolean,
+    saved: SavedQuery | null = null,
+  ) => {
+    if (!(await confirmReplace())) return;
     const sameConn = sourceConnectionId === connectionId;
     if (!sameConn && sourceConnectionId) {
       setConnectionId(sourceConnectionId);
       setTabs((prev) => prev.map((t) => ({ ...t, result: null, error: null, view: "table" })));
     }
     patchActive({ sql, dirty: false, result: null, error: null });
+    linkSaved(activeId, saved);
     if (thenRun && sameConn) runSql(activeId, sql);
   };
 
@@ -244,6 +475,7 @@ export default function WorkbenchPage() {
   const closeTab = (id: string) => {
     const idx = tabs.findIndex((t) => t.id === id);
     if (idx === -1) return;
+    linkSaved(id, null); // don't leak the closed tab's saved-query link
     const fresh = tabs.length <= 1 ? makeTab() : null;
     // Functional update so the removal never operates on a stale array.
     setTabs((prev) => {
@@ -319,8 +551,8 @@ export default function WorkbenchPage() {
             <SavedQueriesRail
               connectionId={connectionId}
               editable={editable}
-              onLoad={(q) => loadSql(q.sql, q.connection_id, false)}
-              onRun={(q) => loadSql(q.sql, q.connection_id, true)}
+              onLoad={(q) => void loadSql(q.sql, q.connection_id, false, q)}
+              onRun={(q) => void loadSql(q.sql, q.connection_id, true, q)}
             />
           )}
         </div>
@@ -392,6 +624,26 @@ export default function WorkbenchPage() {
               >
                 <Icon name="plus" size={12} /> Save
               </button>
+              {/* Only offered once this tab is tied to a library entry — renaming
+                  is an edit of that entry, not of the editor's contents (#289).
+                  Non-owners get the reason as visible text rather than a dead
+                  disabled control, matching the rail's creator/admin gate. */}
+              {activeSaved && canEditSaved && (
+                <button
+                  className="small"
+                  aria-label={`Edit saved query ${activeSaved.name}`}
+                  title={`Rename, re-describe, re-tag or re-pin “${activeSaved.name}”`}
+                  onClick={() => setShowEdit(true)}
+                >
+                  <Icon name="settings" size={12} /> Edit “{shortName(activeSaved.name)}”
+                </button>
+              )}
+              {activeSaved && !canEditSaved && (
+                <span className="badge" title={`Saved query “${activeSaved.name}”`}>
+                  “{shortName(activeSaved.name)}” · only {activeSaved.created_by ?? "its creator"} or an
+                  admin can edit
+                </span>
+              )}
               <button className="small" onClick={() => setShowHistory(true)} title="Recent queries (this browser)">
                 <Icon name="refresh" size={12} /> History{history.length ? ` (${history.length})` : ""}
               </button>
@@ -511,19 +763,17 @@ export default function WorkbenchPage() {
               <div className="t">{s.title}</div>
               <div style={{ fontSize: 11.5, color: "var(--text-light)", margin: "2px 0 6px" }}>{s.rationale}</div>
               <pre className="result" style={{ maxHeight: 110, fontSize: 11 }}>{s.sql}</pre>
+              {/* Suggestions replace the active tab's SQL, so they go through the
+                  same loadSql/confirmReplace funnel as the saved-query rail and
+                  history — they used to overwrite a dirty tab silently (#284).
+                  Suggestions are always generated for the current source. */}
               <div style={{ display: "flex", gap: 6 }}>
                 {editable && (
-                  <button
-                    className="primary small"
-                    onClick={() => {
-                      editActiveSql(s.sql);
-                      runSql(activeId, s.sql);
-                    }}
-                  >
+                  <button className="primary small" onClick={() => void loadSql(s.sql, connectionId ?? 0, true)}>
                     Run
                   </button>
                 )}
-                <button className="small" onClick={() => editActiveSql(s.sql)}>Edit</button>
+                <button className="small" onClick={() => void loadSql(s.sql, connectionId ?? 0, false)}>Edit</button>
               </div>
             </div>
           ))}
@@ -540,10 +790,27 @@ export default function WorkbenchPage() {
           sql={active.sql}
           defaultDatasetId={dataset?.connection_id === connectionId ? datasetId : undefined}
           onClose={() => setShowSave(false)}
-          onSaved={() => {
+          onSaved={(q) => {
             setShowSave(false);
             patchActive({ dirty: false });
+            linkSaved(activeId, q); // the tab now IS this library entry — editable at once
             qc.invalidateQueries({ queryKey: qk.savedQueries.all });
+          }}
+        />
+      )}
+
+      {showEdit && activeSaved && (
+        <EditSavedQueryModal
+          query={activeSaved}
+          editorSql={active.sql}
+          onClose={() => setShowEdit(false)}
+          onSaved={(q) => {
+            setShowEdit(false);
+            linkSaved(activeId, q);
+            // If the stored SQL was republished, the tab is in sync with the library.
+            if (q.sql.trim() === active.sql.trim()) patchActive({ dirty: false });
+            qc.invalidateQueries({ queryKey: qk.savedQueries.all });
+            qc.invalidateQueries({ queryKey: qk.savedQuery.detail(q.id) });
           }}
         />
       )}
@@ -554,8 +821,8 @@ export default function WorkbenchPage() {
           editable={editable}
           onClose={() => setShowHistory(false)}
           onLoad={(entry, thenRun) => {
-            loadSql(entry.sql, entry.connectionId, thenRun);
             setShowHistory(false);
+            void loadSql(entry.sql, entry.connectionId, thenRun);
           }}
           onClear={() => setHistory(clearHistory())}
         />

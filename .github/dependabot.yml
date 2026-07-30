@@ -1,0 +1,43 @@
+# Weekly dependency updates (#292). Three ecosystems, staggered across the week
+# so a bad Monday doesn't arrive as three simultaneous PR stacks.
+#
+# Note for pip: backend/pyproject.toml carries `>=` floors and
+# backend/requirements.lock pins the image's resolved set (#290). Dependabot
+# raises the floors; regenerate the lock in the same PR (see the header comment
+# in requirements.lock) or the image keeps installing the old pins.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "backend"
+    groups:
+      # One PR for the routine patch/minor churn; majors still come in alone so
+      # a breaking SQLAlchemy/Pydantic bump gets its own review.
+      backend-minor:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: tuesday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "frontend"
+    groups:
+      frontend-minor:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: wednesday
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci"

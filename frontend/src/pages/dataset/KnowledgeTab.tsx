@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState, type MutableRefObject } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../../api/client";
 import { qk } from "../../api/queryKeys";
 import type { Knowledge } from "../../api/types";
 import { canEdit, useAuth } from "../../auth";
 import { ErrorBox, Spinner } from "../../components/ui";
+import { useUnsavedGuard } from "../../lib/useUnsavedGuard";
 
 const EMPTY: Knowledge = {
   business_context: "",
@@ -27,14 +28,7 @@ function parseOptionalNumber(raw: string): { value: number | null; invalid: bool
   return Number.isFinite(value) ? { value, invalid: false } : { value: null, invalid: true };
 }
 
-export default function KnowledgeTab({
-  datasetId,
-  dirtyRef,
-}: {
-  datasetId: number;
-  /** Set by this tab so the parent can warn before a tab switch discards edits (BF-3). */
-  dirtyRef?: MutableRefObject<boolean>;
-}) {
+export default function KnowledgeTab({ datasetId }: { datasetId: number }) {
   const { user } = useAuth();
   const qc = useQueryClient();
   const editable = canEdit(user);
@@ -94,22 +88,9 @@ export default function KnowledgeTab({
   const dirty =
     baseline !== null && !save.isPending && `${JSON.stringify(form)}|${piiText}|${sloTargetText}|${sloWindowText}` !== baseline;
 
-  useEffect(() => {
-    if (dirtyRef) dirtyRef.current = dirty;
-    return () => {
-      if (dirtyRef) dirtyRef.current = false;
-    };
-  }, [dirty, dirtyRef]);
-
-  useEffect(() => {
-    if (!dirty) return;
-    const handler = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = "";
-    };
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
-  }, [dirty]);
+  // One guard for every way this form can be abandoned: the dataset tab strip, any
+  // sidebar/breadcrumb link, a global-search hit, or a tab close (BF-3, #284).
+  useUnsavedGuard(dirty, "Your unsaved edits to this table's knowledge will be discarded.");
 
   if (isLoading) return <Spinner />;
 

@@ -5,6 +5,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import models, schemas
+from app.api._filters import LIKE_ESCAPE, contains_pattern
 from app.api.serialize import check_out, check_version_out, run_out
 from app.connectors.sa import connector_for
 from app.core import check_authoring, incidents
@@ -20,10 +21,44 @@ from app.security import (
     assert_dataset_visible,
     get_current_user,
     require_role,
+    visible_dataset_ids,
 )
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/checks", tags=["checks"])
+
+
+def _authoring_dataset(db: Session, user: models.User, dataset_id: int) -> models.Dataset:
+    """Resolve a dataset for an AUTHORING route and gate it on its connection.
+
+    Creating or generating checks decides what the scheduler will execute against
+    that connection's source, so the global editor role is not enough (#72/#159).
+    Missing and invisible share the same 404 body so dataset ids can't be probed;
+    403 only when the connection IS visible but the grant is viewer-only.
+    """
+    ds = assert_dataset_visible(db, user, dataset_id)
+    assert_connection_role(db, user, ds.connection_id, "editor")
+    return ds
+
+
+def _check_for_edit(db: Session, user: models.User, check_id: int) -> models.Check:
+    """Look up a check for a MUTATING route and gate it on the owning connection.
+
+    Patching/archiving changes what the scheduler runs against the source and
+    ``run_now`` executes it immediately, so these need editor ON that connection
+    (#72/#159). A check on an invisible connection reports exactly like a missing
+    one — same status AND body — so ids can't be probed across grants; 403 is
+    reserved for a visible connection the caller only holds a viewer grant on.
+    """
+    check = db.get(models.Check, check_id)
+    if check is None:
+        raise HTTPException(404, "Check not found")
+    try:
+        ds = assert_dataset_visible(db, user, check.dataset_id)
+    except HTTPException as exc:  # invisible -> indistinguishable from missing
+        raise HTTPException(404, "Check not found") from exc
+    assert_connection_role(db, user, ds.connection_id, "editor")
+    return check
 
 
 @router.get("/types", response_model=list[schemas.CheckTypeInfo])
@@ -46,18 +81,26 @@ def list_checks(
     status: str | None = None,
     q: str | None = None,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
     query = db.query(models.Check).filter(models.Check.status != "archived")
+    # Connection-grant scoping (#72), matching GET /checks/{id}: only checks on
+    # datasets whose connection the caller may see. None -> unrestricted.
+    visible_ds = visible_dataset_ids(db, user)
+    if visible_ds is not None:
+        query = query.filter(models.Check.dataset_id.in_(visible_ds))
     if dataset_id is not None:
         query = query.filter(models.Check.dataset_id == dataset_id)
     if status:
         query = query.filter(models.Check.status == status)
     if q:
-        needle = f"%{q.lower()}%"
+        # Escaped: a typed % or _ is literal text, not a wildcard (#282/#273).
+        needle = contains_pattern(q.lower())
         query = query.filter(
-            func.lower(models.Check.name).like(needle)
-            | func.lower(func.coalesce(models.Check.column_name, "")).like(needle)
+            func.lower(models.Check.name).like(needle, escape=LIKE_ESCAPE)
+            | func.lower(func.coalesce(models.Check.column_name, "")).like(
+                needle, escape=LIKE_ESCAPE
+            )
         )
     return [check_out(c) for c in query.order_by(models.Check.dataset_id, models.Check.id).all()]
 
@@ -83,9 +126,7 @@ def create_check(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role("editor")),
 ):
-    ds = db.get(models.Dataset, body.dataset_id)
-    if ds is None:
-        raise HTTPException(404, "Dataset not found")
+    ds = _authoring_dataset(db, user, body.dataset_id)
     try:
         check = check_authoring.create_check(
             db, user, ds,
@@ -162,9 +203,7 @@ def update_check(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role("editor")),
 ):
-    check = db.get(models.Check, check_id)
-    if check is None:
-        raise HTTPException(404, "Check not found")
+    check = _check_for_edit(db, user, check_id)
     try:
         check_authoring.apply_update(db, user, check, body.model_dump(exclude_unset=True))
     except ValueError as exc:
@@ -184,9 +223,7 @@ def run_now(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role("editor")),
 ):
-    check = db.get(models.Check, check_id)
-    if check is None:
-        raise HTTPException(404, "Check not found")
+    check = _check_for_edit(db, user, check_id)
     audit(db, user, "check.run_manual", "check", check.id, check_type=check.check_type)
     run = run_check(db, check, triggered_by="manual")  # commits the audit row in the same tx
     return run_out(db, run)
@@ -249,9 +286,7 @@ def archive_check(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role("editor")),
 ):
-    check = db.get(models.Check, check_id)
-    if check is None:
-        raise HTTPException(404, "Check not found")
+    check = _check_for_edit(db, user, check_id)
     check.status = "archived"
     check.next_run_at = None
     # Retiring a check must silence its open incident too, else escalations keep
@@ -267,9 +302,7 @@ def generate_checks(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role("editor")),
 ):
-    ds = db.get(models.Dataset, body.dataset_id)
-    if ds is None:
-        raise HTTPException(404, "Dataset not found")
+    ds = _authoring_dataset(db, user, body.dataset_id)
     profile = (
         db.query(models.Profile)
         .filter(models.Profile.dataset_id == ds.id)

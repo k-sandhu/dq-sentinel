@@ -32,12 +32,14 @@ def count_statements():
 
 
 @pytest.fixture(scope="module")
-def perf_seeded(client, admin_headers, source_db):
+def perf_seeded(client, admin_headers, source_db, unique_name):
     """One dataset with a failing check run a dozen times — enough rows that an
     N+1 would blow well past the budgets below."""
     h = admin_headers
     conn = client.post(
-        "/api/v1/connections", json={"name": "perfcount-src", "dsn": source_db}, headers=h
+        "/api/v1/connections",
+        json={"name": unique_name("perfcount-src"), "dsn": source_db},
+        headers=h,
     ).json()
     ds = client.post(
         "/api/v1/datasets/register",

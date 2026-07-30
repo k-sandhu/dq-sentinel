@@ -19,11 +19,11 @@ def test_compute_next_run_interval_and_cron():
     assert compute_next_run(check, now) is None
 
 
-def test_worker_claims_and_runs_due_check(source_db):
+def test_worker_claims_and_runs_due_check(source_db, unique_name):
     init_db()
     factory = session_factory()
     with factory() as db:
-        conn = Connection(name="sched-src", kind="sqlite", dsn=source_db)
+        conn = Connection(name=unique_name("sched-src"), kind="sqlite", dsn=source_db)
         db.add(conn)
         db.flush()
         ds = Dataset(connection_id=conn.id, table_name="people", display_name="people")
@@ -79,13 +79,13 @@ def test_validate_schedule_rejects_unparseable_expr():
         raise AssertionError(f"validate_schedule accepted bad {kind} expr {expr!r}")
 
 
-def test_poisoned_schedule_expr_does_not_wedge_pass(source_db):
+def test_poisoned_schedule_expr_does_not_wedge_pass(source_db, unique_name):
     """A single unparseable schedule_expr (pre-validation legacy row) must be parked,
     not abort the whole claim loop and starve every check behind it."""
     init_db()
     factory = session_factory()
     with factory() as db:
-        conn = Connection(name="sched-poison", kind="sqlite", dsn=source_db)
+        conn = Connection(name=unique_name("sched-poison"), kind="sqlite", dsn=source_db)
         db.add(conn)
         db.flush()
         ds = Dataset(connection_id=conn.id, table_name="people", display_name="people")

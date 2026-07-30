@@ -4,7 +4,7 @@ import { api } from "../../api/client";
 import { qk } from "../../api/queryKeys";
 import type { Check, CheckTypeInfo, ColumnInfo, GenerateResult, Health } from "../../api/types";
 import { canEdit, useAuth } from "../../auth";
-import ChecksTable from "../../components/ChecksTable";
+import ChecksTable, { invalidateCheckCaches } from "../../components/ChecksTable";
 import CheckParamsForm, { validateParams } from "../../components/CheckParamsForm";
 import { ErrorBox, Icon, Modal, Spinner } from "../../components/ui";
 
@@ -40,7 +40,9 @@ function NewCheckModal({ datasetId, onClose }: { datasetId: number; onClose: () 
         status: "active",
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: qk.checks.all });
+      // Created active: the dataset header's "N active checks" and the datasets
+      // index rollups move with it, so use the shared check-mutation set (#285).
+      invalidateCheckCaches(qc);
       onClose();
     },
   });
@@ -118,7 +120,9 @@ export default function ChecksTab({ datasetId, hasProfile }: { datasetId: number
       api.post<GenerateResult>("/checks/generate", { dataset_id: datasetId, use_llm: llm, explore: llm && explore }),
     onSuccess: (result) => {
       setGenResult(result);
-      qc.invalidateQueries({ queryKey: qk.checks.all });
+      // Generation writes new `proposed` rows, which the home dashboard counts
+      // as `proposed_checks` — same shared set, plus this tab's explorer log.
+      invalidateCheckCaches(qc);
       qc.invalidateQueries({ queryKey: qk.exploration.detail(datasetId) });
     },
   });

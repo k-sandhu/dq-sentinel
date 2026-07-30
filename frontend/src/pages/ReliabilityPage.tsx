@@ -2,9 +2,18 @@
 // per-SLA attainment trend. Editors can define dataset SLAs and re-evaluate.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import type { CSSProperties } from "react";
 import { Link } from "react-router";
 import { api } from "../api/client";
-import type { Dataset, Reliability, Sla, SlaDetail, SLAEvaluation } from "../api/types";
+import type {
+  Dataset,
+  Reliability,
+  Sla,
+  SlaDetail,
+  SLAEvaluation,
+  SLATargetType,
+  SLAWindow,
+} from "../api/types";
 import { canEdit, useAuth } from "../auth";
 import { useConfirm } from "../components/confirm";
 import { ErrorBox, Icon, Spinner } from "../components/ui";
@@ -46,11 +55,154 @@ function Sparkline({ evals, objective }: { evals: SLAEvaluation[]; objective: nu
   );
 }
 
+const FIELD: CSSProperties = { display: "flex", flexDirection: "column", gap: 3, fontSize: 12 };
+
+/** Body of PATCH /sla/{id} — only the fields the endpoint accepts (SLAUpdate). */
+interface SlaPatch {
+  name?: string;
+  target_type?: SLATargetType;
+  objective?: number;
+  window?: SLAWindow;
+  enabled?: boolean;
+}
+
+/** Inline editor for an existing SLA (#289). PATCH /sla/{id} was wired but had no
+ *  UI, so changing an objective meant delete-and-recreate — which threw away the
+ *  evaluation history the burn-down chart is built from. */
+function EditSlaForm({ sla, onClose }: { sla: Sla; onClose: () => void }) {
+  const qc = useQueryClient();
+  const confirm = useConfirm();
+  const [name, setName] = useState(sla.name);
+  const [targetType, setTargetType] = useState<SLATargetType>(sla.target_type);
+  // Percent in the UI, 0..1 on the wire. Round-tripped at 2dp so re-saving an
+  // untouched form can't drift the stored objective.
+  const [objectivePct, setObjectivePct] = useState(Number((sla.objective * 100).toFixed(2)));
+  const [window, setWindow] = useState<SLAWindow>(sla.window);
+  const [enabled, setEnabled] = useState(sla.enabled);
+
+  const trimmed = name.trim();
+  const nameBlank = !trimmed;
+  // The endpoint takes 0 < objective <= 1. Reject an emptied/out-of-range box here
+  // rather than clamping it — silently saving 0.01% when the analyst cleared the
+  // field would be worse than refusing.
+  const pctValid = Number.isFinite(objectivePct) && objectivePct > 0 && objectivePct <= 100;
+  const objective = Number((objectivePct / 100).toFixed(6));
+  const patch: SlaPatch = {};
+  if (!nameBlank && trimmed !== sla.name) patch.name = trimmed;
+  if (targetType !== sla.target_type) patch.target_type = targetType;
+  if (pctValid && objective !== Number(sla.objective.toFixed(6))) patch.objective = objective;
+  if (window !== sla.window) patch.window = window;
+  if (enabled !== sla.enabled) patch.enabled = enabled;
+  const dirty =
+    Object.keys(patch).length > 0 ||
+    trimmed !== sla.name ||
+    (!pctValid && objectivePct !== Number((sla.objective * 100).toFixed(2)));
+  const invalid = nameBlank || !pctValid;
+
+  const save = useMutation({
+    mutationFn: () => api.patch<Sla>(`/sla/${sla.id}`, patch),
+    onSuccess: () => {
+      // The PATCH re-evaluates the SLA server-side, so the rollup and the
+      // burn-down both need to refetch.
+      qc.invalidateQueries({ queryKey: ["reliability"] });
+      qc.invalidateQueries({ queryKey: ["sla", sla.id] });
+      onClose();
+    },
+  });
+
+  // Never drop typed edits without asking (enterprise bar).
+  const cancel = async () => {
+    if (dirty && !(await confirm({
+      title: "Discard changes?",
+      body: `Your edits to “${sla.name}” haven't been saved.`,
+      confirmLabel: "Discard",
+      cancelLabel: "Keep editing",
+      danger: true,
+    })))
+      return;
+    onClose();
+  };
+
+  return (
+    <form
+      aria-label={`Edit SLA ${sla.name}`}
+      style={{ marginTop: 10, borderTop: "1px solid var(--border)", paddingTop: 10 }}
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (invalid || save.isPending) return;
+        if (!dirty) {
+          onClose();
+          return;
+        }
+        save.mutate();
+      }}
+    >
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+        <label style={{ ...FIELD, flex: 1, minWidth: 180 }}>
+          <span className="sub">Name</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} aria-invalid={nameBlank} />
+        </label>
+        <label style={FIELD}>
+          <span className="sub">Target</span>
+          <select value={targetType} onChange={(e) => setTargetType(e.target.value as SLATargetType)}>
+            <option value="check_success">All checks pass</option>
+            <option value="freshness">Freshness</option>
+            <option value="volume">Volume</option>
+          </select>
+        </label>
+        <label style={FIELD}>
+          <span className="sub">Objective %</span>
+          <input
+            type="number"
+            min={0.1}
+            max={100}
+            step={0.1}
+            value={objectivePct}
+            aria-invalid={!pctValid}
+            onChange={(e) => setObjectivePct(Number(e.target.value))}
+            style={{ width: 90 }}
+          />
+        </label>
+        <label style={FIELD}>
+          <span className="sub">Window</span>
+          <select value={window} onChange={(e) => setWindow(e.target.value as SLAWindow)}>
+            <option value="rolling_7d">Rolling 7 days</option>
+            <option value="rolling_30d">Rolling 30 days</option>
+          </select>
+        </label>
+        <label style={{ ...FIELD, flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => setEnabled(e.target.checked)}
+            style={{ marginTop: 0, width: "auto" }}
+          />
+          <span className="sub">Enabled</span>
+        </label>
+        <button type="submit" className="primary small" disabled={invalid || save.isPending}>
+          {save.isPending ? "Saving…" : "Save changes"}
+        </button>
+        <button type="button" className="small ghost" onClick={() => void cancel()} disabled={save.isPending}>
+          Cancel
+        </button>
+      </div>
+      {nameBlank && <div className="field-error">Name can't be empty.</div>}
+      {!pctValid && <div className="field-error">Objective must be greater than 0% and at most 100%.</div>}
+      <div className="sub" style={{ marginTop: 6 }}>
+        Scope ({sla.scope} · {sla.scope_label}) can't be changed — create a new SLA to track a different
+        target. Saving re-evaluates the SLA immediately; its history is kept.
+      </div>
+      <ErrorBox error={save.error} />
+    </form>
+  );
+}
+
 function SlaCard({ sla }: { sla: Sla }) {
   const { user } = useAuth();
   const qc = useQueryClient();
   const confirm = useConfirm();
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
   const detail = useQuery({
     queryKey: ["sla", sla.id],
     queryFn: () => api.get<SlaDetail>(`/sla/${sla.id}`),
@@ -121,6 +273,17 @@ function SlaCard({ sla }: { sla: Sla }) {
         <div className="right">
           {canEdit(user) && (
             <>
+              {/* Open-only, not a disclosure toggle: closing the editor must go through
+                  the form's own Cancel, which asks before discarding typed edits. A
+                  toggle here unmounted EditSlaForm — and its local state — silently. */}
+              <button
+                className="btn small ghost"
+                onClick={() => setEditing(true)}
+                disabled={editing}
+                title="Edit this SLA's objective, target, window or name"
+              >
+                <Icon name="settings" size={12} /> Edit
+              </button>
               <button className="btn small" onClick={() => evaluate.mutate()} disabled={evaluate.isPending}>
                 <Icon name="refresh" size={12} /> Re-evaluate
               </button>
@@ -146,6 +309,8 @@ function SlaCard({ sla }: { sla: Sla }) {
         </div>
       </div>
       <ErrorBox error={evaluate.error || remove.error} />
+
+      {editing && canEdit(user) && <EditSlaForm sla={sla} onClose={() => setEditing(false)} />}
 
       {open && (
         <div style={{ marginTop: 10 }}>
