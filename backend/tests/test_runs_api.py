@@ -3,6 +3,7 @@ from uuid import uuid4
 
 from app.db import session_factory
 from app.models import CheckRun, utcnow
+from app.schemas import MAX_OFFSET
 
 
 def _seed_check(client, admin_headers, source_db):
@@ -88,3 +89,43 @@ def test_runs_support_dashboard_drilldown_filters(client, admin_headers, source_
         f"/api/v1/runs?check_id={check_id}&since=90d", headers=admin_headers
     )
     assert bad_since.status_code == 422
+
+
+def test_pagination_bounds(client, admin_headers, source_db):
+    """#274: /runs had the same raw-offset pattern as /exceptions, plus a
+    `min(limit, 200)` that let a negative limit through — and SQLite reads
+    `LIMIT -1` as *unbounded*, so `?limit=-1` dumped every visible run.
+    """
+    h = admin_headers
+    dataset_id, check_id = _seed_check(client, h, source_db)
+    with session_factory()() as db:
+        db.add_all(
+            [
+                CheckRun(
+                    check_id=check_id,
+                    dataset_id=dataset_id,
+                    started_at=utcnow() - timedelta(minutes=i),
+                    status="pass",
+                    violation_count=0,
+                    triggered_by="manual",
+                )
+                for i in range(3)
+            ]
+        )
+        db.commit()
+
+    assert client.get("/api/v1/runs?offset=-1", headers=h).status_code == 422
+    assert client.get(f"/api/v1/runs?offset={MAX_OFFSET + 1}", headers=h).status_code == 422
+
+    page = client.get(f"/api/v1/runs?check_id={check_id}&limit=2&offset=0", headers=h)
+    assert page.status_code == 200 and len(page.json()) == 2
+    assert page.headers["X-Total-Count"] == "3"
+    # An out-of-range page is an empty list, not an error.
+    past = client.get(f"/api/v1/runs?check_id={check_id}&offset=50", headers=h)
+    assert past.status_code == 200 and past.json() == []
+    edge = client.get(f"/api/v1/runs?check_id={check_id}&offset={MAX_OFFSET}", headers=h)
+    assert edge.status_code == 200 and edge.json() == []
+
+    # A negative limit must not mean "no limit"; the 200 cap is unchanged.
+    assert len(client.get(f"/api/v1/runs?check_id={check_id}&limit=-1", headers=h).json()) == 1
+    assert client.get(f"/api/v1/runs?check_id={check_id}&limit=500", headers=h).status_code == 200

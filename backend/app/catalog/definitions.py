@@ -609,8 +609,13 @@ SUBSCRIPTIONS = CatalogEntry(
             quality=(
                 _av("plan", g._PLANS, "Plan in agreed catalog"),
                 _av("status", g._SUB_STATUS, "Subscription status in agreed set"),
-                QualityClause("nonneg-seats", "seats positive", "range", "seats", {"min": 0},
-                              "error", rationale="Seat count must be non-negative."),
+                # min is an INCLUSIVE lower bound (the runner emits `col < min`), so a
+                # strictly-positive rule is {"min": 1} — {"min": 0} would certify the
+                # 0-seat rows the generator plants as invalid (#275).
+                QualityClause("positive-seats", "seats positive", "range", "seats", {"min": 1},
+                              "error",
+                              rationale="A subscription must carry at least one seat; 0 or "
+                                        "negative seat counts are billing defects."),
                 QualityClause("nonneg-mrr", "mrr non-negative", "range", "mrr", {"min": 0},
                               "warn", rationale="MRR cannot be negative."),
                 QualityClause("notnull-sub", "subscription_id present", "not_null",

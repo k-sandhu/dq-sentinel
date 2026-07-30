@@ -23,6 +23,12 @@ EngineOptionsBuilder = Callable[[URL], dict[str, Any]]
 # Connector.scalar(), i.e. it passes guard_sql() before touching the source.
 DdlBuilder = Callable[[str, str | None, Callable[[str], str]], list[tuple[str, dict[str, Any]]]]
 
+# (quoted column, its declared type as Connector.get_columns() renders it) -> a SQL
+# boolean that is TRUE only for an IEEE NaN, or None when a column of that type
+# cannot hold one. Used by the `range` check, which otherwise lets NaN through
+# whenever no upper bound is configured (#271).
+NanPredicateBuilder = Callable[[str, str], str | None]
+
 
 class DriverNotInstalled(RuntimeError):
     """A supported dialect whose optional driver package is missing on this server."""
@@ -98,6 +104,73 @@ def _clickhouse_options(url: URL) -> dict[str, Any]:
     return {"connect_args": {"settings": {"readonly": 1}}}
 
 
+# ---------------------------------------------------------------- NaN predicates
+# `WHERE col IS NOT NULL AND col < :min` silently passes a NaN: NaN is not NULL and
+# no comparison against a bound is true for it, so a min-only range check gave a
+# clean bill of health on genuinely invalid data (#271). Each engine therefore
+# declares how to *name* a NaN, because the obvious IEEE test is not portable:
+#
+#   * `col != col` (NaN != NaN) is WRONG here. Verified live on both engines this
+#     repo bundles: DuckDB and PostgreSQL both define `NaN = NaN` as TRUE and sort
+#     NaN above every other value, so `!=` matches nothing and `col > :max` is what
+#     was catching NaN on two-sided ranges all along.
+#   * PostgreSQL has no isnan(); the portable test there is `col = 'NaN'`, with the
+#     untyped literal resolved to the column's own type (works for float8 *and*
+#     numeric, both of which accept NaN).
+#   * The predicate must be gated on the column type, which is why the builder gets
+#     the dtype: `isnan(<date>)` is a DuckDB binder error and `<int col> = 'NaN'` is
+#     a PostgreSQL conversion error, so an ungated predicate would break every
+#     date/integer range check — a worse regression than the bug.
+#
+# Engines with no builder cannot hold a NaN at all, so the fix is a no-op there and
+# costs them not even the column-type lookup:
+#   * SQLite stores NaN as NULL (verified) — a not_null check catches it instead.
+#   * MySQL/MariaDB and SQL Server reject NaN in numeric columns outright.
+#
+# VERIFICATION STATUS, since only some of this can be pinned by CI:
+#   * duckdb — behaviour proven end-to-end in tests/test_checks.py against a real
+#     .duckdb file (duckdb is a bundled dependency, so this runs everywhere).
+#   * postgresql — semantics and end-to-end behaviour verified by hand against
+#     postgres:16 (float8 and numeric NaN caught on min-only / max-only / two-sided;
+#     integer, date and text columns left untouched). CI has no PostgreSQL *source*
+#     server, so the suite can only pin the emitted predicate, not run it.
+#   * snowflake / bigquery / trino / clickhouse — vendor-documented spelling, never
+#     executed here. Gated to binary-float columns so a wrong spelling surfaces as a
+#     loud error on a float range check, never as a silent wrong answer.
+
+# Type names as Connector.get_columns() renders them (SQLAlchemy type strings):
+# "DOUBLE PRECISION", "FLOAT", "REAL", "FLOAT64", "Float64", "NUMERIC(10, 2)".
+_BINARY_FLOAT_TYPES = ("DOUBLE", "FLOAT", "REAL")
+# Exact numerics hold NaN on PostgreSQL only; DuckDB DECIMAL, Snowflake NUMBER and
+# BigQuery NUMERIC cannot, and Snowflake even errors on `NUMBER = 'NaN'`.
+_EXACT_NUMERIC_TYPES = ("NUMERIC", "DECIMAL")
+
+
+def _type_matches(dtype: str, tokens: tuple[str, ...]) -> bool:
+    upper = dtype.upper()
+    return any(token in upper for token in tokens)
+
+
+def _nan_function(fn: str) -> NanPredicateBuilder:
+    """NaN test via the engine's own isnan() function, for float columns only."""
+
+    def build(col: str, dtype: str) -> str | None:
+        return f"{fn}({col})" if _type_matches(dtype, _BINARY_FLOAT_TYPES) else None
+
+    return build
+
+
+def _nan_equality(*, exact_numeric: bool) -> NanPredicateBuilder:
+    """NaN test by comparison with the 'NaN' literal, for engines where NaN equals
+    itself and there is no isnan(). The literal is a constant, never user input."""
+    types = _BINARY_FLOAT_TYPES + (_EXACT_NUMERIC_TYPES if exact_numeric else ())
+
+    def build(col: str, dtype: str) -> str | None:
+        return f"{col} = 'NaN'" if _type_matches(dtype, types) else None
+
+    return build
+
+
 def _qual(table: str, schema: str | None) -> str:
     return f"{schema}.{table}" if schema else table
 
@@ -169,6 +242,7 @@ class DialectSpec:
     default_driver: str | None = None  # appended as +driver when the DSN uses the bare scheme
     engine_options: EngineOptionsBuilder = _no_options
     ddl_queries: DdlBuilder | None = None  # None = handled inline in sa.get_ddl (or synthesized)
+    nan_predicate: NanPredicateBuilder | None = None  # None = this engine cannot store NaN
 
 
 REGISTRY: dict[str, DialectSpec] = {
@@ -200,6 +274,7 @@ REGISTRY: dict[str, DialectSpec] = {
                 "database file that holds its own data."
             ),
             engine_options=_duckdb_options,
+            nan_predicate=_nan_function("isnan"),  # verified live
         ),
         DialectSpec(
             kind="postgresql",
@@ -212,6 +287,8 @@ REGISTRY: dict[str, DialectSpec] = {
             multi_schema=True,
             system_schemas=frozenset({"information_schema", "pg_catalog"}),
             engine_options=_postgresql_options,
+            # No isnan() in PostgreSQL; NaN equals itself, and numeric holds it too.
+            nan_predicate=_nan_equality(exact_numeric=True),  # verified live
         ),
         DialectSpec(
             kind="mysql",
@@ -257,6 +334,10 @@ REGISTRY: dict[str, DialectSpec] = {
             system_schemas=frozenset({"INFORMATION_SCHEMA"}),
             engine_options=_snowflake_options,
             ddl_queries=_snowflake_ddl,
+            # Snowflake has no isnan(); 'NaN' casts into FLOAT and equals itself.
+            # NUMBER (its DECIMAL) cannot hold NaN and errors on the cast, hence
+            # exact_numeric=False. Vendor-documented, not exercised live here.
+            nan_predicate=_nan_equality(exact_numeric=False),
         ),
         DialectSpec(
             kind="bigquery",
@@ -271,6 +352,7 @@ REGISTRY: dict[str, DialectSpec] = {
             ),
             multi_schema=True,
             ddl_queries=_bigquery_ddl,
+            nan_predicate=_nan_function("IS_NAN"),  # vendor-documented, not live-tested
         ),
         DialectSpec(
             kind="trino",
@@ -283,6 +365,7 @@ REGISTRY: dict[str, DialectSpec] = {
             multi_schema=True,
             system_schemas=frozenset({"information_schema"}),
             ddl_queries=_trino_ddl,
+            nan_predicate=_nan_function("is_nan"),  # vendor-documented, not live-tested
         ),
         DialectSpec(
             kind="clickhouse",
@@ -297,6 +380,7 @@ REGISTRY: dict[str, DialectSpec] = {
             default_driver="native",
             engine_options=_clickhouse_options,
             ddl_queries=_clickhouse_ddl,
+            nan_predicate=_nan_function("isNaN"),  # vendor-documented, not live-tested
         ),
     )
 }
@@ -304,6 +388,16 @@ REGISTRY: dict[str, DialectSpec] = {
 SPEC_BY_SCHEME: dict[str, DialectSpec] = {
     scheme: spec for spec in REGISTRY.values() for scheme in spec.schemes
 }
+
+
+def nan_predicate_builder(kind: str) -> NanPredicateBuilder | None:
+    """How this engine names a NaN, or None when it cannot store one.
+
+    Callers check for None *before* looking up a column's type, so engines that
+    cannot hold a NaN pay nothing for the check.
+    """
+    spec = REGISTRY.get(kind)
+    return spec.nan_predicate if spec is not None else None
 
 
 def driver_installed(spec: DialectSpec) -> bool:

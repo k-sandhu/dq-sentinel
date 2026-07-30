@@ -8,6 +8,7 @@ import pytest
 
 from app.db import session_factory
 from app.models import ExceptionRecord, utcnow
+from app.schemas import MAX_OFFSET
 
 
 def _audit(client, headers, **params):
@@ -97,6 +98,31 @@ def test_envelope_paging(client, seeded):
     ).json()
     # Deterministic, non-overlapping pages.
     assert {e["id"] for e in p1["items"]}.isdisjoint({e["id"] for e in p2["items"]})
+
+
+def test_pagination_bounds(client, seeded):
+    """#274: `offset` reached `.offset()` raw, so a negative page produced invalid
+    SQL and an unhandled 500. It is a client bug with no sensible clamp target
+    (clamping -5 to 0 answers a different question), so it is a 422 at the edge.
+    """
+    h = seeded["h"]
+    assert client.get("/api/v1/exceptions?limit=3&offset=-5", headers=h).status_code == 422
+    assert client.get("/api/v1/exceptions?limit=3&offset=-1", headers=h).status_code == 422
+    # Bounded above as well — deep pagination makes the DB count off rows it will
+    # then discard. At the bound it is still a valid (empty) page, not an error.
+    assert client.get(f"/api/v1/exceptions?offset={MAX_OFFSET + 1}", headers=h).status_code == 422
+    edge = client.get(f"/api/v1/exceptions?offset={MAX_OFFSET}", headers=h)
+    assert edge.status_code == 200 and edge.json()["items"] == []
+    # A page past the end of a real result set is empty, not an error.
+    past = client.get(
+        f"/api/v1/exceptions?check_id={seeded['check_err']}&limit=3&offset=99", headers=h
+    )
+    assert past.status_code == 200
+    assert past.json()["items"] == [] and past.json()["total"] == 5
+    # `limit` behaviour is unchanged: still clamped (server capacity policy), not 422.
+    assert client.get("/api/v1/exceptions?limit=0", headers=h).json()["limit"] == 1
+    assert client.get("/api/v1/exceptions?limit=-7", headers=h).json()["limit"] == 1
+    assert client.get("/api/v1/exceptions?limit=9999", headers=h).json()["limit"] == 500
 
 
 def test_filter_severity_via_join(client, seeded):

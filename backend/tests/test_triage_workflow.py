@@ -1,14 +1,16 @@
 """Triage workflow: assignment, comments, append-only events (#56)."""
 
+from uuid import uuid4
+
 import pytest
 
 
 @pytest.fixture(scope="module")
-def workflow(client, admin_headers, source_db):
+def workflow(client, admin_headers, source_db, unique_name):
     """Register a dataset + a failing check, capture exceptions, return ids/headers."""
     h = admin_headers
     conn = client.post(
-        "/api/v1/connections", json={"name": "tw-src", "dsn": source_db}, headers=h
+        "/api/v1/connections", json={"name": unique_name("tw-src"), "dsn": source_db}, headers=h
     ).json()
     ds = client.post(
         "/api/v1/datasets/register",
@@ -29,7 +31,8 @@ def workflow(client, admin_headers, source_db):
     run = client.post(f"/api/v1/checks/{check['id']}/run", headers=h).json()
     excs = client.get(f"/api/v1/exceptions?run_id={run['id']}", headers=h).json()
     items = excs["items"] if isinstance(excs, dict) else excs
-    assert len(items) >= 3
+    # conftest seeds NULL_EMAILS=5 null emails; tests below take a private id each.
+    assert len(items) >= 5
 
     # An editor user for mutation tests.
     client.post(
@@ -119,6 +122,130 @@ def test_assign_and_clear_roundtrip(client, workflow):
 
     events = client.get(f"/api/v1/exceptions/{exc_id}/events", headers=h).json()
     assert sum(1 for e in events if e["kind"] == "assign") == 2  # assign + unassign
+
+
+def _editor_assignee(client, headers) -> dict:
+    assignees = client.get("/api/v1/auth/assignees", headers=headers).json()
+    return next(a for a in assignees if a["email"] == "tw-editor@example.com")
+
+
+def _events(client, headers, exc_id) -> list[dict]:
+    resp = client.get(f"/api/v1/exceptions/{exc_id}/events", headers=headers)
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def test_note_with_assignment_only_lands_in_the_event_history(client, workflow):
+    """#272: an assignment-only triage dropped the note from the append-only
+    timeline — the assign branch set `touched`, so the standalone-comment branch
+    was skipped, while the denormalized `note` still showed it on the record.
+    An auditor reading the timeline saw an unexplained reassignment.
+    """
+    exc_id = workflow["ids"][3]
+    h = workflow["editor"]
+    target = _editor_assignee(client, h)
+    note = f"root-caused, reassigning to owner {uuid4().hex[:8]}"
+
+    r = client.post(
+        "/api/v1/exceptions/triage",
+        json={"ids": [exc_id], "assigned_to_id": target["id"], "note": note},
+        headers=h,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()[0]["note"] == note  # denormalized latest note (unchanged)
+
+    events = _events(client, h, exc_id)
+    # The assign event keeps its machine-written label: the UI renders an assign
+    # event's comment as the timeline *title* and suppresses it as a body, so the
+    # analyst's words must not be spliced into it.
+    assert [e["comment"] for e in events if e["kind"] == "assign"][-1].startswith("assigned to ")
+    # The note survives as its own comment event — exactly once.
+    assert [e["comment"] for e in events].count(note) == 1
+    assert [e["kind"] for e in events if e["comment"] == note] == ["comment"]
+
+
+def test_note_with_status_change_is_recorded_exactly_once(client, workflow):
+    """#272 guard rail: the note rides the status transition's own comment; adding
+    a standalone comment event too would double-record it in the trail."""
+    exc_id = workflow["ids"][4]
+    h = workflow["editor"]
+    note = f"expected during the backfill {uuid4().hex[:8]}"
+
+    r = client.post(
+        "/api/v1/exceptions/triage",
+        json={"ids": [exc_id], "status": "acknowledged", "note": note},
+        headers=h,
+    )
+    assert r.status_code == 200, r.text
+
+    carriers = [e for e in _events(client, h, exc_id) if e["comment"] == note]
+    assert len(carriers) == 1
+    assert carriers[0]["kind"] == "status"
+
+
+def test_note_with_status_and_assignment_is_recorded_exactly_once(client, workflow):
+    """All three at once: still one copy of the note, on the status transition."""
+    exc_id = workflow["ids"][4]
+    h = workflow["editor"]
+    target = _editor_assignee(client, h)
+    note = f"handing over after resolving {uuid4().hex[:8]}"
+
+    r = client.post(
+        "/api/v1/exceptions/triage",
+        json={
+            "ids": [exc_id],
+            "status": "resolved",
+            "assigned_to_id": target["id"],
+            "note": note,
+        },
+        headers=h,
+    )
+    assert r.status_code == 200, r.text
+
+    events = _events(client, h, exc_id)
+    carriers = [e for e in events if e["comment"] == note]
+    assert len(carriers) == 1
+    assert carriers[0]["kind"] == "status"
+    assert [e["comment"] for e in events if e["kind"] == "assign"][-1].startswith("assigned to ")
+
+
+def test_note_only_triage_still_writes_a_standalone_comment_event(client, workflow):
+    """Unchanged behaviour: a note with no status/assignment change is a comment."""
+    exc_id = workflow["ids"][3]
+    h = workflow["editor"]
+    note = f"still investigating {uuid4().hex[:8]}"
+
+    r = client.post("/api/v1/exceptions/triage", json={"ids": [exc_id], "note": note}, headers=h)
+    assert r.status_code == 200, r.text
+
+    carriers = [e for e in _events(client, h, exc_id) if e["comment"] == note]
+    assert len(carriers) == 1
+    assert carriers[0]["kind"] == "comment"
+
+
+def test_assignment_without_a_note_writes_no_comment_event(client, workflow):
+    """Unchanged behaviour: no note, no comment event — only the assign event."""
+    exc_id = workflow["ids"][3]
+    h = workflow["editor"]
+    target = _editor_assignee(client, h)
+    before = _events(client, h, exc_id)
+
+    r = client.post(
+        "/api/v1/exceptions/triage",
+        json={"ids": [exc_id], "clear_assignee": True},
+        headers=h,
+    )
+    assert r.status_code == 200, r.text
+    r = client.post(
+        "/api/v1/exceptions/triage",
+        json={"ids": [exc_id], "assigned_to_id": target["id"]},
+        headers=h,
+    )
+    assert r.status_code == 200, r.text
+
+    after = _events(client, h, exc_id)
+    added = after[len(before):]
+    assert [e["kind"] for e in added] == ["assign", "assign"]
 
 
 def test_assign_unknown_user_is_422(client, workflow):

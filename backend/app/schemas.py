@@ -14,6 +14,15 @@ IncidentStatus = Literal["open", "acknowledged", "resolved"]
 ContractStatus = Literal["draft", "active", "deprecated"]
 ContractConformanceStatus = Literal["pass", "breached", "unknown"]
 
+# Shared pagination guard rail for the list endpoints (#274). A raw `offset`
+# reaches the driver as invalid SQL on a negative value (an unhandled 500), and
+# an unbounded one asks the DB to walk past rows it will then throw away. List
+# endpoints declare `offset` as ``Query(default=0, ge=0, le=MAX_OFFSET)`` so a
+# malformed page is a 422 at the edge. Deliberately generous — 2000 pages at the
+# default page size — because it is a runaway guard, not a product limit; bulk
+# readers should use the capped exports, not deep paging.
+MAX_OFFSET = 100_000
+
 
 class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)

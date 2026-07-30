@@ -7,11 +7,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from app.connectors.dialects import nan_predicate_builder
 from app.connectors.sa import Connector
 from app.core.check_types import (
     CheckContext,
     _categorical_drift,
     _decile_edges,
+    _nan_violation_predicate,
     _numeric_drift,
     run_check_type,
     validate_check,
@@ -74,6 +76,154 @@ def test_range(ctx_factory):
     r = run_check_type(ctx_factory("age", {"min": 0, "max": 120}), "range")
     assert r.violation_count == HUGE_AGE
     assert r.sample_rows[0]["age"] == 999
+
+
+# ------------------------------------------------------------------ range + NaN (#271)
+# NaN is not NULL and no bound comparison is true for it, so `col IS NOT NULL AND
+# col < :min` used to give a min-only range check a clean bill of health on a NaN.
+# These run against a real DuckDB file because the bug is engine semantics, not logic.
+
+
+@pytest.fixture(scope="module")
+def nan_tmp() -> Path:
+    # Same reason as drift_tmp below: pytest's default basetemp is unwritable here.
+    return Path(tempfile.mkdtemp(prefix="dqsentinel-nan-"))
+
+
+@pytest.fixture(scope="module")
+def nan_ctx_factory(nan_tmp):
+    """CheckContext factory over a DuckDB table holding NaN, NULL, in- and out-of-range
+    values, plus a DATE column (range checks are used for date bounds too)."""
+    import duckdb
+
+    db = nan_tmp / "nan.duckdb"
+    con = duckdb.connect(str(db))  # writer fully closed before the connector opens it
+    try:
+        con.execute("CREATE TABLE metrics (label VARCHAR, amount DOUBLE, event_date DATE)")
+        con.execute(
+            "INSERT INTO metrics VALUES "
+            "('ok', 5.0, DATE '2024-01-01'), "
+            "('nan', CAST('nan' AS DOUBLE), DATE '2024-01-02'), "
+            "('below', -1.0, DATE '2024-01-03'), "
+            "('null', NULL, DATE '2024-01-04'), "
+            "('above', 200.0, DATE '2019-01-01')"
+        )
+    finally:
+        con.close()
+    connector = Connector(f"duckdb:///{db.as_posix()}")
+
+    def make(column=None, params=None):
+        return CheckContext(
+            connector=connector, table="metrics", schema=None, column=column, params=params or {}
+        )
+
+    yield make
+    connector.engine.dispose()
+
+
+def _labels(result) -> set[str]:
+    return {row["label"] for row in result.sample_rows}
+
+
+def test_range_min_only_flags_nan(nan_ctx_factory):
+    """The #271 case: with only a lower bound, NaN used to pass as in-range."""
+    r = run_check_type(nan_ctx_factory("amount", {"min": 0}), "range")
+    assert _labels(r) == {"nan", "below"}
+    assert r.violation_count == 2
+
+
+def test_range_max_only_flags_nan(nan_ctx_factory):
+    # A max bound already caught NaN (it sorts above every value on DuckDB), so this
+    # pins that the fix did not change the answer here.
+    r = run_check_type(nan_ctx_factory("amount", {"max": 120}), "range")
+    assert _labels(r) == {"nan", "above"}
+    assert r.violation_count == 2
+
+
+def test_range_two_sided_flags_nan(nan_ctx_factory):
+    r = run_check_type(nan_ctx_factory("amount", {"min": 0, "max": 120}), "range")
+    assert _labels(r) == {"nan", "below", "above"}
+    assert r.violation_count == 3
+
+
+@pytest.mark.parametrize("params", [{"min": 0}, {"max": 120}, {"min": 0, "max": 120}])
+def test_range_no_false_positives_on_valid_or_null_rows(nan_ctx_factory, params):
+    """The in-range value and the NULL must never be flagged, whatever the bounds."""
+    r = run_check_type(nan_ctx_factory("amount", params), "range")
+    assert "ok" not in _labels(r)
+    assert "null" not in _labels(r)
+
+
+def test_range_nan_reason_says_it_is_not_a_number(nan_ctx_factory):
+    """NaN has no JSON representation, so the row reads `amount = None`; the reason
+    must say what is actually wrong instead of `'nan' outside [0, inf]`."""
+    r = run_check_type(nan_ctx_factory("amount", {"min": 0}), "range")
+    reasons = dict(zip([row["label"] for row in r.sample_rows], r.reasons, strict=True))
+    assert "not a finite number" in reasons["nan"]
+    assert "-1.0 outside [0, inf]" in reasons["below"]  # ordinary rows keep their wording
+
+
+def test_range_on_date_column_is_unaffected(nan_ctx_factory):
+    """Regression guard: `range` is used for date bounds too, and an ungated NaN
+    predicate is a binder error there (`isnan(DATE)` on DuckDB, `date = 'NaN'` on
+    PostgreSQL) — it would turn a working check into a failing one."""
+    ctx = nan_ctx_factory("event_date", {"min": "2024-01-01"})
+    assert _nan_violation_predicate(ctx) is None  # gated off by column type
+    r = run_check_type(ctx, "range")
+    assert _labels(r) == {"above"}  # only the 2019 row
+    assert r.violation_count == 1
+
+
+def test_range_nan_predicate_gating(nan_ctx_factory):
+    ctx = nan_ctx_factory("amount", {})
+    assert _nan_violation_predicate(ctx) == f"isnan({ctx.col})"  # DOUBLE
+    assert _nan_violation_predicate(nan_ctx_factory("label", {})) is None  # VARCHAR
+
+
+def test_ieee_nan_inequality_would_not_have_worked(nan_ctx_factory):
+    """Why the fix is a per-dialect predicate and not `col != col`: DuckDB (like
+    PostgreSQL) deviates from IEEE — NaN equals itself and sorts above everything —
+    so the obvious one-liner matches nothing on the engine this bug was found on."""
+    connector = nan_ctx_factory().connector
+    assert connector.scalar("SELECT COUNT(*) FROM metrics WHERE amount != amount") == 0
+    assert connector.scalar("SELECT COUNT(*) FROM metrics WHERE isnan(amount)") == 1
+
+
+def test_nan_predicate_registry_shapes():
+    """The per-dialect spellings, including the engines with no live coverage here.
+    Every one must be gated to the types that engine can hold a NaN in."""
+    duckdb_nan = nan_predicate_builder("duckdb")
+    assert duckdb_nan('"x"', "FLOAT") == 'isnan("x")'
+    assert duckdb_nan('"x"', "NUMERIC(10, 2)") is None  # DuckDB DECIMAL is exact
+    assert duckdb_nan('"x"', "DATE") is None
+
+    pg_nan = nan_predicate_builder("postgresql")
+    assert pg_nan('"x"', "DOUBLE PRECISION") == "\"x\" = 'NaN'"
+    assert pg_nan('"x"', "NUMERIC") == "\"x\" = 'NaN'"  # PostgreSQL numeric holds NaN
+    assert pg_nan('"x"', "INTEGER") is None  # `int = 'NaN'` is a conversion error
+
+    # NUMBER is Snowflake's DECIMAL and cannot hold NaN; only its FLOAT can.
+    assert nan_predicate_builder("snowflake")('"x"', "DECIMAL(38, 0)") is None
+    assert nan_predicate_builder("snowflake")('"x"', "FLOAT") == "\"x\" = 'NaN'"
+    assert nan_predicate_builder("bigquery")('"x"', "FLOAT64") == 'IS_NAN("x")'
+    assert nan_predicate_builder("trino")('"x"', "DOUBLE") == 'is_nan("x")'
+    assert nan_predicate_builder("clickhouse")('"x"', "Float64") == 'isNaN("x")'
+
+    # Engines that cannot store NaN at all: no predicate, so no cost and no risk.
+    # SQLite coerces NaN to NULL on write; MySQL and SQL Server reject it outright.
+    assert nan_predicate_builder("sqlite") is None
+    assert nan_predicate_builder("mysql") is None
+    assert nan_predicate_builder("mssql") is None
+
+
+def test_nan_predicates_pass_guard_sql():
+    """Every predicate is spliced into a WHERE that goes through guard_sql()."""
+    from app.connectors.safety import guard_sql
+
+    for kind in ("duckdb", "postgresql", "snowflake", "bigquery", "trino", "clickhouse"):
+        predicate = nan_predicate_builder(kind)('"amount"', "DOUBLE")
+        assert predicate is not None, kind
+        guard_sql(f'SELECT COUNT(*) FROM "t" WHERE "amount" IS NOT NULL AND ({predicate})')
 
 
 def test_string_length(ctx_factory):

@@ -16,6 +16,7 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
+from app.connectors.dialects import nan_predicate_builder
 from app.connectors.sa import Connector
 from app.connectors.safety import guard_sql
 from app.core import ml
@@ -197,6 +198,37 @@ def _run_accepted_values(ctx: CheckContext) -> CheckResult:
 
 
 # ---------------------------------------------------------------- range
+def _column_dtype(ctx: CheckContext) -> str | None:
+    """The checked column's declared type, or None if it can't be resolved."""
+    try:
+        columns = ctx.connector.get_columns(ctx.table, ctx.schema)
+    except Exception:  # noqa: BLE001 - introspection is optional here; see caller
+        return None
+    target = (ctx.column or "").lower()
+    for col in columns:
+        if str(col.get("name", "")).lower() == target:
+            return str(col.get("dtype") or "")
+    return None
+
+
+def _nan_violation_predicate(ctx: CheckContext) -> str | None:
+    """SQL that is TRUE for a NaN in the checked column, or None when NaN can't occur.
+
+    NaN survives `col IS NOT NULL AND col < :min` on every engine that stores it, so
+    a min-only range check silently passed NaN (#271). The spelling is per-dialect
+    (``connectors/dialects.py`` explains why ``col != col`` is NOT it) and is applied
+    only to column types that can actually hold a NaN — an ungated predicate is a
+    binder/conversion error on date and integer columns, which would turn a working
+    date-range check into a failing one. If either lookup comes up empty the check
+    behaves exactly as before rather than erroring.
+    """
+    build = nan_predicate_builder(ctx.connector.kind)
+    if build is None:  # engine cannot store NaN — don't even introspect the column
+        return None
+    dtype = _column_dtype(ctx)
+    return build(ctx.col, dtype) if dtype else None
+
+
 def _run_range(ctx: CheckContext) -> CheckResult:
     lo, hi = ctx.params.get("min"), ctx.params.get("max")
     if lo is None and hi is None:
@@ -209,11 +241,26 @@ def _run_range(ctx: CheckContext) -> CheckResult:
     if hi is not None:
         parts.append(f"{ctx.col} > :rmax")
         params["rmax"] = hi
+    # Unconditional: a max bound happens to catch NaN (it sorts above everything on
+    # the engines that store it), but relying on that leaves min-only checks blind.
+    nan_predicate = _nan_violation_predicate(ctx)
+    if nan_predicate is not None:
+        parts.append(nan_predicate)
     where = f"{ctx.col} IS NOT NULL AND (" + " OR ".join(parts) + ")"
     r = _sample_where(ctx, where, params)
     bounds = f"[{lo if lo is not None else '-inf'}, {hi if hi is not None else 'inf'}]"
-    r.reasons = [f"{ctx.column} = {row.get(ctx.column)!r} outside {bounds}" for row in r.sample_rows]
+    r.reasons = [_range_reason(ctx, row, bounds) for row in r.sample_rows]
     return r
+
+
+def _range_reason(ctx: CheckContext, row: dict[str, Any], bounds: str) -> str:
+    column = ctx.column or ""
+    if column in row and row[column] is None:
+        # SQL already excluded NULLs, so a None back in Python is a float with no JSON
+        # representation: NaN (#271) or ±Infinity. "= None outside [0, inf]" told an
+        # analyst nothing; name the actual problem.
+        return f"{column} is not a finite number (NaN or ±Infinity), so it cannot be inside {bounds}"
+    return f"{column} = {row.get(column)!r} outside {bounds}"
 
 
 def _char_length_fn(kind: str) -> str:

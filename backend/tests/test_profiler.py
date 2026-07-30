@@ -38,3 +38,27 @@ def test_summary_redacts_pii(source_db):
     text = summarize_profile_for_llm(profile, pii_columns=["email"])
     assert "[values redacted: PII]" in text
     assert "user10@example.com" not in text
+
+
+def test_jsonable_rejects_non_finite_decimals():
+    """PostgreSQL `numeric` (and 14+ `Infinity`) can hold non-finite values, and
+    `json.dumps` renders them as the bare tokens NaN/Infinity, which are invalid
+    JSON. Those land in `ExceptionRecord.row_data` (a JSON column) via
+    `_truncate_row`, so an unguarded Decimal fails the INSERT at commit — outside
+    runner.py's error handling, meaning the check 500s with no run row at all.
+
+    No DuckDB-backed test can reach this branch (its DECIMAL cannot hold NaN),
+    so it is pinned directly. Regression guard for the #271 review finding.
+    """
+    import json
+    from decimal import Decimal
+
+    from app.core.profiler import jsonable
+
+    assert jsonable(Decimal("NaN")) is None
+    assert jsonable(Decimal("Infinity")) is None
+    assert jsonable(Decimal("-Infinity")) is None
+    # Finite decimals must still round-trip as numbers.
+    assert jsonable(Decimal("12.50")) == 12.5
+    # And the whole point: the result must be serializable as valid JSON.
+    assert json.dumps({"n": jsonable(Decimal("NaN"))}) == '{"n": null}'
