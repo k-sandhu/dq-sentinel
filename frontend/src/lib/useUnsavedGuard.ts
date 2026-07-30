@@ -8,7 +8,7 @@
 //
 // WHY THIS DOESN'T CALL react-router's `useBlocker`
 // -------------------------------------------------
-// `useBlocker` (react-router 7.17) is built on `useDataRouterContext`, so outside
+// `useBlocker` is built on `useDataRouterContext`, so outside
 // a `createBrowserRouter`/`RouterProvider` tree it throws
 //   "useBlocker must be used within a data router."
 // This app mounts a plain `<BrowserRouter>` (src/main.tsx), so calling `useBlocker`

@@ -285,7 +285,12 @@ jobs:
   dependency-audit:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: true
+    # Now a real gate rather than advisory. It was continue-on-error while
+    # `npm audit` had no way to say "known and justified", which left it
+    # permanently red -- the alert-fatigue pattern this product exists to fight,
+    # and a check nobody reads will not report the next real CVE. The expiring
+    # allowlist below gives it that vocabulary, so it can block. To go back to
+    # advisory, restore `continue-on-error: true`.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -305,4 +310,10 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Audit frontend runtime dependencies
         working-directory: frontend
-        run: npm audit --omit=dev
+        # npm audit has no ignore mechanism, so its JSON goes through a gate that
+        # fails on anything not explicitly AND unexpiredly justified. Piping makes
+        # node's exit code the step's, which is what we want: `npm audit` exits 1
+        # whenever it reports anything, including advisories we have already
+        # assessed. See frontend/scripts/audit-allowlist.mjs for the entries --
+        # each carries an expiry, and a stale entry fails the gate too.
+        run: npm audit --omit=dev --json | node scripts/audit-allowlist.mjs
