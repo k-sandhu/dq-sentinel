@@ -12,9 +12,9 @@ when symlinks are unavailable). Read this top-to-bottom before making changes.
    SQL Server / Snowflake / BigQuery / Trino / ClickHouse (non-core drivers are optional
    pip extras; see `backend/app/connectors/dialects.py`).
 2. Register tables/views as **datasets** and **profile** them (SQL aggregates + sampled stats).
-3. **Generate checks** from the profile — heuristic rules always, LLM-proposed rules when an
-   Anthropic API key is configured (the LLM can also run a read-only *exploration agent* that
-   writes SQL to learn about the data before proposing checks).
+3. **Generate checks** from the profile — heuristic rules always, LLM-proposed rules when a key
+   is configured for any supported provider (the LLM can also run a read-only *exploration
+   agent* that writes SQL to learn about the data before proposing checks).
 4. Run checks **on a schedule** (worker process) and capture **exceptions** (violating rows).
 5. Users **triage exceptions** (open → acknowledged / expected / resolved / muted) in a
    Metabase-style UI; "expected" markings feed back into the table knowledge base.
@@ -42,52 +42,62 @@ when symlinks are unavailable). Read this top-to-bottom before making changes.
 
 | Path | What lives there |
 |---|---|
-| `backend/app/main.py` | FastAPI app factory + router mounting |
+| `backend/app/main.py` | FastAPI app factory + router mounting + `UnhandledErrorMiddleware` (any unhandled exception becomes a consistent JSON 500 carrying the request id; the traceback goes to the log, never the body) |
 | `backend/app/models.py` | All SQLAlchemy ORM models (app metadata DB) |
 | `backend/app/schemas.py` | All Pydantic request/response schemas |
-| `backend/app/api/` | One router per resource (auth, connections, datasets, checks, runs, exceptions, knowledge, rca, dashboard, lineage, query/workbench, adhoc dashboards, mcp, chat — `chat` also serves the assistant WebSocket at `/api/v1/chat/ws/{session_id}?token=`) |
-| `backend/app/connectors/` | Source-DB access. **All source SQL must pass `safety.guard_sql()`**. `dialects.py` is the 9-engine registry (schemes, read-only enforcement, optional drivers, DDL catalog queries) |
+| `backend/app/api/` | One router per resource (auth, connections, datasets, checks, runs, exceptions, knowledge, rca, dashboard, custom/adhoc dashboards, lineage, query/workbench, saved queries, contracts, monitors, incidents, scorecards, sla, insights, notifications, audit, catalog, search, status, docs, mcp, chat — `chat` also serves the assistant WebSocket at `/api/v1/chat/ws/{session_id}?token=`) |
+| `backend/app/api/_filters.py` | **The LIKE-escaping chokepoint.** Every `?q=` substring filter must build its pattern with `contains_pattern()` and pass `escape=LIKE_ESCAPE` — an unescaped `%`/`_` is a wildcard, so `?q=%` returns every row |
+| `backend/app/connectors/` | Source-DB access. **All source SQL must pass `safety.guard_sql()`** — single SELECT/CTE, side-effect keyword denylist, *and* a denylist of read-side functions that reach the filesystem/network/OS (`read_csv`, `load_file`, `postgres_scan`, `xp_cmdshell`, …). `dialects.py` is the 9-engine registry (schemes, read-only enforcement, optional drivers, DDL catalog queries) |
 | `backend/app/core/lineage.py` | sqlglot view parsing → table-level lineage graph + check-health overlay |
 | `backend/app/core/check_types.py` | Check registry: type → param schema + violation-SQL compiler |
 | `backend/app/core/profiler.py` | Profiling engine (SQL aggregates + pandas sample stats) |
 | `backend/app/core/runner.py` | Executes a check → `CheckRun` + `ExceptionRecord`s |
 | `backend/app/core/scheduler.py` | Due-check claiming loop (run via `python -m app.worker`) |
 | `backend/app/core/ml.py` | IsolationForest outlier detection |
-| `backend/app/llm/` | Anthropic client, check generation, exploration agent, RCA agent |
+| `backend/app/llm/` | `providers.py` (the only place an LLM SDK is imported), check generation, exploration agent, RCA agent, chat agent |
 | `backend/tests/` | pytest suite — keep green |
-| `frontend/src/pages/` | One file per page; `DatasetDetailPage` is tabbed (Profile/Code/Lineage/Checks/Runs/Exceptions/Dashboards/Knowledge/RCA) |
+| `frontend/src/pages/` | One file per page; `DatasetDetailPage` is tabbed — 12 tabs, each a route (Profile/Code/Schema/Lineage/Contract/Monitors/Checks/Runs/Exceptions/Dashboards/Knowledge/Root cause); the list is the `TABS` const at the top of the file |
 | `frontend/src/api/` | Typed API client (`client.ts`, `types.ts`) — mirror backend schemas here |
+| `frontend/src/lib/useUnsavedGuard.ts` | The standard way to guard a dirty editor. Any page holding unsaved analyst typing calls it; it intercepts in-app navigation *and* `beforeunload` and asks via the shared confirm dialog. Do not hand-roll a `beforeunload` listener or call `window.confirm` |
 | `data/` | `generate_sample_data.py` (synthetic shop DB with injected DQ issues), `download_public_data.py` (NYC taxi → DuckDB) |
 | `scripts/` | `dev.ps1` / `dev.sh` bootstrap helpers |
-| `.github/workflows/ci.yml` | CI: ruff + pytest + tsc + vite build |
+| `.github/workflows/ci.yml` | CI, on PRs and pushes to `main`. Backend: ruff over `app`/`tests`/`scripts`/`data`, static validation of the shipped configs (compose, Grafana dashboard JSON), pytest. Frontend: typecheck + build, vitest. Jobs and steps get added — **read the workflow** rather than trusting this row |
 
 ## Golden rules
 
-1. **Never write to a source database.** Every query against a user's data source must go
-   through `app/connectors/safety.py: guard_sql()` (single SELECT/CTE, denylist, forced LIMIT)
-   and connectors open read-only where the driver supports it. This includes LLM-authored SQL.
+1. **Never write to a source database, and never let it read the host.** Every query against a
+   user's data source must go through `app/connectors/safety.py: guard_sql()` (single
+   SELECT/CTE, side-effect keyword denylist, read-side file/network/OS function denylist,
+   forced LIMIT) and connectors open read-only where the driver supports it. This includes
+   LLM-authored SQL. A new engine or extension usually means new function names to deny.
 2. **Never commit secrets.** Config comes from env vars (see `.env.example`). The app DB and
    sample DBs (`*.sqlite`, `*.duckdb`, `backend/dqsentinel.db`) are gitignored — never force-add them.
 3. **Keep frontend and backend decoupled.** The only contract is the JSON API. If you change a
    response schema in `backend/app/schemas.py`, update `frontend/src/api/types.ts` in the same change.
-4. **LLM features must degrade gracefully.** Without `ANTHROPIC_API_KEY`, check generation falls
-   back to heuristics and explorer/RCA endpoints return 503 with a clear message. Preserve this.
+4. **LLM features must degrade gracefully.** With no LLM key configured (see *LLM integration
+   notes* — `ANTHROPIC_API_KEY` or `DQ_LLM_API_KEY`), check generation falls back to heuristics
+   and explorer/RCA endpoints return 503 with a clear message. Preserve this.
 5. **Adding a check type** touches exactly four places: `core/check_types.py` (registry entry +
    compiler), `schemas.py` (if params need validation), `frontend/src/api/types.ts` +
    `frontend/src/lib/checkMeta.ts` (label/description), and a test in `tests/test_checks.py`.
-6. **Tests must pass before you commit**: `cd backend && pytest` and `cd frontend && npm run build`.
+   `CHECK_TYPES` is the single source of truth for how many types exist — count it, don't
+   copy a list out of the docs.
+6. **Tests must pass before you commit**: `cd backend && pytest`, and `cd frontend && npm run build`
+   plus `npm test` (CI runs vitest too).
 7. **Reference GitHub issues** in commits (`Refs #N` / `Closes #N`). Track new feature work as issues first (`gh issue create`).
 8. **Privacy in prompts:** LLM prompts may include aggregates and ≤25 sample rows. Columns listed
    in a dataset's knowledge `pii_columns` are redacted before being sent. Keep it that way.
 9. **App-DB schema changes need an Alembic revision (#23).** Any change to `models.py` must ship
-   with a migration in the same change: `cd backend && alembic revision --autogenerate -m "..."`,
-   then review it (autogen misses some things). `init_db()` runs `upgrade head` at startup (and
+   with a migration in the same change: `cd backend && alembic revision --autogenerate -m "..."`
+   (revisions land in `backend/migrations/versions/`, numbered `NNNN_slug.py`), then review it
+   (autogen misses some things). `init_db()` runs `upgrade head` at startup (and
    *stamps* a pre-Alembic DB instead of re-applying the baseline). Don't re-introduce a
    `create_all`/ALTER shim. `tests/test_migrations.py` fails if migrations drift from the models.
 
 ## Dev setup (Windows-first; POSIX equivalents in parentheses)
 
-Prereqs: Python ≥3.12, Node ≥20, git. Optional: Docker, an Anthropic API key.
+Prereqs: Python ≥3.12, Node ≥20, git. Optional: Docker, and an LLM API key (Anthropic, or any
+OpenAI-compatible endpoint — see *LLM integration notes*).
 
 ```powershell
 # 1. Python venv — put it OUTSIDE OneDrive (see OneDrive section below)
@@ -111,7 +121,10 @@ python -m app.worker            # run from backend/ or with PYTHONPATH=backend
 cd frontend; npm install; npm run dev
 ```
 
-First login: `admin@example.com` / `admin123` (seeded in dev when no users exist; change via Settings).
+First login: `admin@example.com` / `admin123` — seeded from `DQ_BOOTSTRAP_ADMIN_PASSWORD` only
+when the user table is empty. **There is no password-change UI**: set that env var before the
+first boot, or have an admin `PATCH /api/v1/auth/users/{id}` with `{"password": "..."}`.
+Settings → Users covers invite / role / activate / per-connection grants only.
 
 ### Standing demo (Docker) — keep it running
 
@@ -137,6 +150,7 @@ Push coherent checkpoints to `main` frequently (CI gates them) rather than batch
 | Apply migrations | `cd backend && alembic upgrade head` (also runs automatically on app startup) |
 | Frontend typecheck | `cd frontend && npm run typecheck` |
 | Frontend build | `cd frontend && npm run build` (runs typecheck first) |
+| Frontend tests | `cd frontend && npm test` (vitest; single file: `npx vitest run <path>`) |
 | Regenerate sample data | `python data/generate_sample_data.py --force` |
 | Download public dataset | `python data/download_public_data.py` |
 | One-shot bootstrap | `scripts/dev.ps1` (PowerShell) / `scripts/dev.sh` |
@@ -149,10 +163,20 @@ Push coherent checkpoints to `main` frequently (CI gates them) rather than batch
 - **TypeScript**: strict mode, function components + hooks, TanStack Query for all server state
   (no manual `useEffect` fetching), react-router v7. Plain CSS in `src/styles.css` — Metabase-ish
   look: brand `#509ee3`, bg `#f9fbfc`, white cards, 8px radii. No UI kit dependencies.
+- **Never destroy analyst state silently.** Anything holding unsaved typing guards with
+  `lib/useUnsavedGuard.ts`; anything destructive or surprising asks through the shared dialog in
+  `components/confirm.tsx` — never `window.confirm`/`window.prompt` (they are unstyled,
+  unlabelled, and untestable). Mutations must invalidate the query keys their result changes.
+- **User text in a SQL filter is data, not pattern.** Route every `?q=` through
+  `api/_filters.py` (`contains_pattern` + `escape=LIKE_ESCAPE`).
 - **Commits**: imperative subject, scope prefix (`backend:`, `frontend:`, `data:`, `ci:`), body
   explains why, reference issues.
 - **API**: REST-ish under `/api/v1`. Everything except `/api/v1/health` and `/api/v1/auth/login`
-  requires a Bearer JWT. Role gates: `viewer` (read), `editor` (mutate checks/triage), `admin` (connections/users).
+  requires a Bearer JWT. Role gates: `viewer` (read), `editor` (mutate checks/triage), `admin`
+  (connections/users). The global role is a *ceiling*; per-connection grants narrow it. Any
+  router that returns or mutates connection-scoped rows filters through
+  `security.visible_connection_ids()` — a new list/detail endpoint that skips it leaks across
+  tenants (#72).
 
 ## LLM integration notes
 
@@ -245,7 +269,7 @@ Push coherent checkpoints to `main` frequently (CI gates them) rather than batch
 |---|---|
 | `database is locked` (app DB) | OneDrive/WAL contention — retry; keep worker count at 1 for SQLite |
 | `regex check unsupported` on SQLite | expected: regex checks run via the Python fallback path (chunked fetch) |
-| LLM endpoints return 503 | `ANTHROPIC_API_KEY` not set — heuristic generation still works |
+| LLM endpoints return 503 | no LLM key resolved (`ANTHROPIC_API_KEY`, or `DQ_LLM_API_KEY` + `DQ_LLM_MODEL`) — heuristic generation still works; `/health` reports `llm_enabled` |
 | `npm run dev` proxy errors | backend not running on :8000, or `VITE_API_PROXY` overridden |
 | `Cannot find module '@rollup/rollup-win32-x64-msvc'` | npm optional-deps bug (worse under OneDrive): `npm install @rollup/rollup-win32-x64-msvc --no-save` — do NOT add it to package.json (platform-specific; CI runs Linux) |
 | Worker runs nothing | checks need `status=active` + a schedule; check `next_run_at` in DB |

@@ -1,11 +1,18 @@
 # Full stack: PostgreSQL app DB + API + scheduler worker + nginx frontend.
 #   docker compose up --build      ->  UI on http://localhost:3000
+#   docker compose up --build --wait   (blocks until every service is healthy)
 # The Prometheus/Grafana/Loki observability stack is opt-in:
 #   docker compose --profile monitoring up --build
 # Set ANTHROPIC_API_KEY in your shell or a .env file to enable AI features.
 # Mount your source databases (read-only) into the api+worker containers, e.g.
 # the bundled sample under ./samples (generate it first:
 #   python data/generate_sample_data.py).
+#
+# Ports: the UI is on :3000 (nginx, which proxies /api to the api container).
+# The API is published on 127.0.0.1:8000 ONLY — loopback, not every interface —
+# because /metrics is unauthenticated by design (#292). Scripts that talk to the
+# API directly (scripts/e2e_smoke.py --base http://127.0.0.1:8000) still work
+# from the host; nothing else on the network can reach it.
 
 services:
   postgres:
@@ -51,11 +58,18 @@ services:
     volumes:
       - ./samples:/data/samples:ro # register with dsn sqlite:////data/samples/shopdb.sqlite
       - ./docs:/docs:ro # in-app /docs documentation browser reads markdown from here
+      # Built-in catalog datasets are generated lazily on first connect; api and
+      # worker must see the SAME files (#261), hence a shared named volume. The
+      # image sets DQ_CATALOG_DATA_DIR=/data/catalog and pre-creates it owned by
+      # the non-root user, so the volume inherits that ownership.
+      - catalogdata:/data/catalog
     ports:
-      - "8000:8000"
+      # Loopback only: /metrics is unauthenticated by design (#292).
+      - "127.0.0.1:8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
+    # healthcheck: inherited from backend/Dockerfile (GET /api/v1/health)
 
   worker:
     build: ./backend
@@ -66,17 +80,37 @@ services:
     environment: *backend_env
     volumes:
       - ./samples:/data/samples:ro
+      - catalogdata:/data/catalog
+    # Bound a runaway check (pandas profiling / IsolationForest on a wide table)
+    # so it degrades this container instead of starving the host and the API.
+    mem_limit: 2g
+    cpus: 2.0
     depends_on:
       postgres:
         condition: service_healthy
+    # The worker has no HTTP API, so the image's /api/v1/health probe does not
+    # apply — probe its Prometheus endpoint (DQ_WORKER_METRICS_PORT) instead,
+    # which only answers once the scheduler process is actually up.
+    healthcheck:
+      test:
+        ["CMD", "python", "-c",
+         "import urllib.request as u; u.urlopen('http://127.0.0.1:9100/metrics', timeout=4).read()"]
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+      retries: 5
 
   frontend:
     build: ./frontend
     restart: unless-stopped
     ports:
-      - "3000:80"
+      # nginx runs unprivileged inside the container and listens on 8080 (#292);
+      # the UI is still on http://localhost:3000.
+      - "3000:8080"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    # healthcheck: inherited from frontend/Dockerfile (static GET / on :8080)
 
   # ---- observability (all open source: Prometheus / Grafana OSS / Loki) ----
   # Opt-in via profile so a first demo is 4 containers, not 8:
@@ -133,6 +167,7 @@ services:
 
 volumes:
   pgdata:
+  catalogdata:  # shared api+worker scratch for generated catalog datasets (#261)
   promdata:
   lokidata:
   grafanadata:

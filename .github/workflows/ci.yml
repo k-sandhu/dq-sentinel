@@ -6,9 +6,19 @@ on:
   pull_request:
     branches: [main]
 
+# One in-flight run per ref: a follow-up push supersedes the previous run instead
+# of queueing behind it. These jobs build images and boot a stack — not cheap.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   backend:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -31,6 +41,7 @@ jobs:
 
   frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -47,3 +58,171 @@ jobs:
       - name: Test (vitest)
         working-directory: frontend
         run: npm test
+      # nginx.conf ships a strict CSP whose script-src allows index.html's single
+      # inline bootstrap script by sha256 hash (#292). Edit that script and the
+      # hash goes stale — the browser then silently blocks the pre-paint theme
+      # bootstrap. Recompute from the BUILT index.html and fail loudly instead.
+      - name: Verify CSP script hash matches built index.html
+        working-directory: frontend
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, pathlib, re, sys
+
+          html = pathlib.Path("dist/index.html").read_text(encoding="utf-8")
+          conf = pathlib.Path("nginx.conf").read_text(encoding="utf-8")
+          inline = [
+              m.group(2)
+              for m in re.finditer(r"<script([^>]*)>(.*?)</script>", html, re.S)
+              if "src=" not in m.group(1)
+          ]
+          hashes = [
+              "sha256-" + base64.b64encode(hashlib.sha256(b.encode()).digest()).decode()
+              for b in inline
+          ]
+          missing = [h for h in hashes if h not in conf]
+          if missing:
+              sys.exit(
+                  "CSP drift: frontend/index.html's inline script(s) are not allowed by "
+                  "frontend/nginx.conf. Add to script-src: " + " ".join(f"'{h}'" for h in missing)
+              )
+          print(f"CSP ok: {len(inline)} inline script(s) allowed by hash")
+          PY
+
+  # Migrations only ever ran against SQLite (with render_as_batch, so the DDL is
+  # not the DDL prod gets) while init_db() runs `upgrade head` at boot on
+  # PostgreSQL — a PG-only migration bug bricked api+worker startup (#291).
+  # Exercise the real engine, both directions.
+  migrations-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: dq
+          POSTGRES_PASSWORD: dq
+          POSTGRES_DB: dqsentinel
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dq -d dqsentinel"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install (with the postgres driver)
+        run: pip install -e "backend[dev,postgres]"
+      - name: Migrate up, all the way down, and up again
+        working-directory: backend
+        env:
+          # migrations/env.py resolves the URL from app settings.
+          DQ_DATABASE_URL: postgresql+psycopg://dq:dq@localhost:5432/dqsentinel
+        run: |
+          set -e
+          alembic upgrade head
+          alembic current
+          alembic downgrade base   # every revision's downgrade() must work on PG too
+          alembic upgrade head
+          alembic current
+
+  # Build the shipped images and boot the real stack, then drive the documented
+  # end-to-end workflow through it (#292). `docker compose config` alone never
+  # caught a broken Dockerfile, a non-root permission problem, or a healthcheck
+  # that never goes green.
+  stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install the smoke-test client
+        run: pip install httpx
+      - name: Generate sample data (compose mounts ./samples read-only)
+        run: python data/generate_sample_data.py
+      - name: Generate ephemeral prod-posture secrets
+        # The stack boots with DQ_ENV=prod (the compose default), which refuses to
+        # start on insecure defaults (#155). Satisfy the guard with per-run random
+        # values instead of weakening it — this job is what proves the guard is
+        # satisfiable by a real deployment.
+        run: |
+          {
+            echo "DQ_SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
+            echo "DQ_BOOTSTRAP_ADMIN_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
+          } >> "$GITHUB_ENV"
+      - name: Build images and boot the stack
+        run: docker compose up --build -d --wait --wait-timeout 300
+      - name: Show service state
+        run: docker compose ps
+      - name: Frontend serves the app with its security headers
+        run: |
+          set -e
+          curl -sS -D headers.txt -o body.html http://127.0.0.1:3000/
+          grep -q '<div id="root">' body.html
+          grep -iq '^content-security-policy:' headers.txt
+          grep -iq '^x-content-type-options: nosniff' headers.txt
+          grep -iq '^cache-control: no-cache' headers.txt   # index.html must revalidate (#280)
+          cat headers.txt
+      - name: Point the smoke test at the seeded admin
+        # scripts/e2e_smoke.py logs in as admin@example.com/admin123, but the
+        # bootstrap password above is (correctly) not that. Rotate the seeded
+        # admin's password through the API, as an admin would, so the smoke test
+        # can authenticate. FOLLOW-UP: teach e2e_smoke.py a --password flag and
+        # delete this step.
+        run: |
+          set -euo pipefail
+          api=http://127.0.0.1:8000/api/v1
+          token=$(curl -sS -X POST "$api/auth/login" -H 'Content-Type: application/json' \
+            --data "$(python3 -c 'import json,os; print(json.dumps({"email":"admin@example.com","password":os.environ["DQ_BOOTSTRAP_ADMIN_PASSWORD"]}))')" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
+          uid=$(curl -sS "$api/auth/me" -H "Authorization: Bearer $token" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$api/auth/users/$uid" \
+            -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+            --data '{"password":"admin123"}')
+          test "$code" = "200"
+      - name: End-to-end smoke test against the stack
+        run: |
+          python scripts/e2e_smoke.py --base http://127.0.0.1:8000 \
+            --dsn sqlite:////data/samples/shopdb.sqlite
+      - name: Container logs (on failure)
+        if: failure()
+        run: docker compose logs --no-color --tail 200
+      - name: Tear down
+        if: always()
+        run: docker compose down -v --remove-orphans
+
+  # Advisory only: a new CVE disclosure should show up here, not turn every PR
+  # red until an upstream fix ships. Dependabot (.github/dependabot.yml) does the
+  # actual bumping.
+  dependency-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install pip-audit
+        run: pip install pip-audit
+      - name: Audit backend image dependencies (requirements.lock)
+        # --no-deps: the lock is already a fully pinned resolution, so audit
+        # exactly what the image installs, nothing more.
+        run: pip-audit --no-deps --desc --requirement backend/requirements.lock
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Audit frontend runtime dependencies
+        working-directory: frontend
+        run: npm audit --omit=dev
