@@ -46,8 +46,8 @@ when symlinks are unavailable). Read this top-to-bottom before making changes.
 | `backend/app/models.py` | All SQLAlchemy ORM models (app metadata DB) |
 | `backend/app/schemas.py` | All Pydantic request/response schemas |
 | `backend/app/api/` | One router per resource (auth, connections, datasets, checks, runs, exceptions, knowledge, rca, dashboard, custom/adhoc dashboards, lineage, query/workbench, saved queries, contracts, monitors, incidents, scorecards, sla, insights, notifications, audit, catalog, search, status, docs, mcp, chat — `chat` also serves the assistant WebSocket at `/api/v1/chat/ws/{session_id}?token=`) |
-| `backend/app/api/_filters.py` | **The LIKE-escaping chokepoint.** Every `?q=` substring filter must build its pattern with `contains_pattern()` and pass `escape=LIKE_ESCAPE` — an unescaped `%`/`_` is a wildcard, so `?q=%` returns every row |
-| `backend/app/connectors/` | Source-DB access. **All source SQL must pass `safety.guard_sql()`** — single SELECT/CTE, side-effect keyword denylist, *and* a denylist of read-side functions that reach the filesystem/network/OS (`read_csv`, `load_file`, `postgres_scan`, `xp_cmdshell`, …). `dialects.py` is the 9-engine registry (schemes, read-only enforcement, optional drivers, DDL catalog queries) |
+| `backend/app/api/_filters.py` | **The LIKE-escaping chokepoint.** Every `?q=` filter builds its pattern here — `contains_pattern()` for a substring match, bare `escape_like()` when the call site needs a different shape (`audit.py` does a prefix match) — and passes `escape=LIKE_ESCAPE` at the call site. An unescaped `%`/`_` is a wildcard, so `?q=%` returns every row |
+| `backend/app/connectors/` | Source-DB access. **All source SQL must pass `safety.guard_sql()`** — single SELECT/CTE, side-effect keyword denylist, a denylist of read-side functions that reach the filesystem/network/OS (`read_text`, `read_csv`, `glob`, `load_file`, `postgres_scan`, `xp_cmdshell`, …), *and* a rejection of a bare string literal in table position after `FROM`/`JOIN` (`SELECT * FROM '/etc/passwd'` is a DuckDB replacement scan — a host-file read with no function call to match). Both of the last two are regex/masking heuristics, **not a parser** — a backstop, not the primary control. `dialects.py` is the 9-engine registry (schemes, read-only enforcement, optional drivers, DDL catalog queries) and is where the *primary* control lives for engines with a kill switch: DuckDB opens `read_only=True` **and** `enable_external_access=false` |
 | `backend/app/core/lineage.py` | sqlglot view parsing → table-level lineage graph + check-health overlay |
 | `backend/app/core/check_types.py` | Check registry: type → param schema + violation-SQL compiler |
 | `backend/app/core/profiler.py` | Profiling engine (SQL aggregates + pandas sample stats) |
@@ -58,18 +58,29 @@ when symlinks are unavailable). Read this top-to-bottom before making changes.
 | `backend/tests/` | pytest suite — keep green |
 | `frontend/src/pages/` | One file per page; `DatasetDetailPage` is tabbed — 12 tabs, each a route (Profile/Code/Schema/Lineage/Contract/Monitors/Checks/Runs/Exceptions/Dashboards/Knowledge/Root cause); the list is the `TABS` const at the top of the file |
 | `frontend/src/api/` | Typed API client (`client.ts`, `types.ts`) — mirror backend schemas here |
-| `frontend/src/lib/useUnsavedGuard.ts` | The standard way to guard a dirty editor. Any page holding unsaved analyst typing calls it; it intercepts in-app navigation *and* `beforeunload` and asks via the shared confirm dialog. Do not hand-roll a `beforeunload` listener or call `window.confirm` |
+| `frontend/src/lib/useUnsavedGuard.ts` | The standard way to guard a dirty editor. Any page holding unsaved analyst typing calls it; it patches the react-router *navigator* (`push`/`replace`/`go`), so in-app navigation — `<Link>` and `useNavigate()` alike — asks via the shared confirm dialog, and it adds a `beforeunload` listener for tab close / reload. **Known limitation: browser Back/Forward (`popstate`) is not intercepted** — this app mounts a plain `<BrowserRouter>`, which exposes no cancellable hook for it (that is also why the hook can't use `useBlocker`). It returns a `bypass(fn)` handle for navigations the user has already agreed to (e.g. leaving after deleting the record being edited). Do not hand-roll a `beforeunload` listener or call `window.confirm` |
 | `data/` | `generate_sample_data.py` (synthetic shop DB with injected DQ issues), `download_public_data.py` (NYC taxi → DuckDB) |
 | `scripts/` | `dev.ps1` / `dev.sh` bootstrap helpers |
-| `.github/workflows/ci.yml` | CI, on PRs and pushes to `main`. Backend: ruff over `app`/`tests`/`scripts`/`data`, static validation of the shipped configs (compose, Grafana dashboard JSON), pytest. Frontend: typecheck + build, vitest. Jobs and steps get added — **read the workflow** rather than trusting this row |
+| `.github/workflows/ci.yml` | CI, on PRs and pushes to `main`, **plus a weekly `schedule` cron** on which only `dependency-audit` runs (every other job is gated `if: github.event_name != 'schedule'` — a CVE lands without a commit to trigger on, but rebuilding an unchanged `main` proves nothing). Backend: ruff over `app`/`tests`/`scripts`/`data`, static validation of the shipped configs (compose, Grafana dashboard JSON), pytest. Frontend: typecheck + build, vitest, CSP-hash drift check. Plus a Postgres migration up/down/up job and a job that builds the images, boots the compose stack and drives `scripts/e2e_smoke.py` through it. Jobs and steps get added — **read the workflow** rather than trusting this row |
 
 ## Golden rules
 
-1. **Never write to a source database, and never let it read the host.** Every query against a
-   user's data source must go through `app/connectors/safety.py: guard_sql()` (single
-   SELECT/CTE, side-effect keyword denylist, read-side file/network/OS function denylist,
-   forced LIMIT) and connectors open read-only where the driver supports it. This includes
-   LLM-authored SQL. A new engine or extension usually means new function names to deny.
+1. **Never write to a source database, and never let it read the host.** Two layers, and the
+   order matters:
+   - **Driver level — the real control.** Connectors open read-only where the driver supports
+     it, and switch off host access where the engine has such a switch: DuckDB gets
+     `read_only=True` *and* `enable_external_access=false` (`connectors/dialects.py`).
+     `read_only=True` alone stops writes but not reads — a DuckDB *replacement scan*
+     (`SELECT * FROM '/etc/passwd'`) reads a host file with no function call involved.
+     The cost is real and intended: a DuckDB source can then read nothing but its own
+     database file — no `read_csv`, no httpfs/S3, no `ATTACH`.
+   - **Statement level — a backstop.** Every query, including LLM-authored SQL, goes through
+     `app/connectors/safety.py: guard_sql()`: single SELECT/CTE, side-effect keyword denylist,
+     read-side file/network/OS *function* denylist, a rejection of a string literal in table
+     position after `FROM`/`JOIN`, and a forced LIMIT via `enforce_limit()`. This is regex over
+     masked SQL, not a parser — treat it as defence in depth for engines that grow the same
+     feature, never as the thing standing between a source and the filesystem. A new engine or
+     extension usually means new function names to deny.
 2. **Never commit secrets.** Config comes from env vars (see `.env.example`). The app DB and
    sample DBs (`*.sqlite`, `*.duckdb`, `backend/dqsentinel.db`) are gitignored — never force-add them.
 3. **Keep frontend and backend decoupled.** The only contract is the JSON API. If you change a
@@ -168,15 +179,21 @@ Push coherent checkpoints to `main` frequently (CI gates them) rather than batch
   `components/confirm.tsx` — never `window.confirm`/`window.prompt` (they are unstyled,
   unlabelled, and untestable). Mutations must invalidate the query keys their result changes.
 - **User text in a SQL filter is data, not pattern.** Route every `?q=` through
-  `api/_filters.py` (`contains_pattern` + `escape=LIKE_ESCAPE`).
+  `api/_filters.py` — `contains_pattern()` for a substring match, `escape_like()` when the
+  call site builds its own shape — and always pass `escape=LIKE_ESCAPE`.
 - **Commits**: imperative subject, scope prefix (`backend:`, `frontend:`, `data:`, `ci:`), body
   explains why, reference issues.
 - **API**: REST-ish under `/api/v1`. Everything except `/api/v1/health` and `/api/v1/auth/login`
   requires a Bearer JWT. Role gates: `viewer` (read), `editor` (mutate checks/triage), `admin`
-  (connections/users). The global role is a *ceiling*; per-connection grants narrow it. Any
-  router that returns or mutates connection-scoped rows filters through
-  `security.visible_connection_ids()` — a new list/detail endpoint that skips it leaks across
-  tenants (#72).
+  (connections/users). The global role is a *ceiling*; per-connection grants narrow it.
+  **Every endpoint that reads or writes connection-scoped rows must scope through
+  `app/security.py`** — `visible_connection_ids()` / `visible_dataset_ids()` to filter a list,
+  `assert_connection_visible()` / `assert_dataset_visible()` for a read by id (404, never 403,
+  so ids can't be probed), and `assert_connection_role()` for a mutation. There is no
+  finished list of "the routers that need this": the sweep has had to be extended every time a
+  router was added, so audit the endpoint you are touching rather than assuming it was covered.
+  A skipped check leaks — or writes — across tenants (#72); `tests/test_router_scoping.py`
+  pins the ones found so far.
 
 ## LLM integration notes
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -12,25 +12,31 @@ from app.core.monitors import (
 )
 from app.db import get_db
 from app.models import utcnow
-from app.security import get_current_user, require_role
+from app.security import (
+    assert_connection_role,
+    assert_dataset_visible,
+    get_current_user,
+    require_role,
+)
 
 router = APIRouter(prefix="/datasets/{dataset_id}/monitor-pack", tags=["monitor-packs"])
 
 
-def _get_dataset(db: Session, dataset_id: int) -> models.Dataset:
-    ds = db.get(models.Dataset, dataset_id)
-    if ds is None:
-        raise HTTPException(404, "Dataset not found")
-    return ds
+def _get_dataset(db: Session, dataset_id: int, user: models.User) -> models.Dataset:
+    """Visible-or-404: a monitor pack describes and materializes checks the
+    scheduler then executes against the dataset's SOURCE, so the global role is
+    not enough (#72/#159). Missing and invisible return the SAME 404 body so
+    dataset ids can't be probed."""
+    return assert_dataset_visible(db, user, dataset_id)
 
 
 @router.get("", response_model=schemas.MonitorPackOut)
 def get_monitor_pack(
     dataset_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
-    ds = _get_dataset(db, dataset_id)
+    ds = _get_dataset(db, dataset_id, user)
     pack = ensure_monitor_pack(db, ds)
     normalized = normalize_monitor_pack_config(pack.config)
     if pack.config != normalized:
@@ -47,7 +53,10 @@ def update_monitor_pack(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role("editor")),
 ):
-    ds = _get_dataset(db, dataset_id)
+    ds = _get_dataset(db, dataset_id, user)
+    # Disabling the pack silently stops ALL monitoring on this dataset, so a mutation
+    # needs editor ON its connection — not merely the global editor role (#159).
+    assert_connection_role(db, user, ds.connection_id, "editor")
     pack = ensure_monitor_pack(db, ds)
     before = {
         "enabled": pack.enabled,
@@ -81,7 +90,9 @@ def reconcile_now(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role("editor")),
 ):
-    ds = _get_dataset(db, dataset_id)
+    ds = _get_dataset(db, dataset_id, user)
+    # Reconcile materializes/retires managed checks against the source (#159).
+    assert_connection_role(db, user, ds.connection_id, "editor")
     pack = ensure_monitor_pack(db, ds)
     audit(
         db,

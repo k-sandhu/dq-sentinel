@@ -62,6 +62,15 @@ def _create_engine(spec: DialectSpec, url: str | URL, kwargs: dict[str, Any]) ->
 def _readonly_engine(dsn: str) -> Engine:
     url = make_url(dsn)
     spec = _spec_from_dsn(dsn)
+    if spec.kind == "duckdb" and url.query:
+        # duckdb-engine merges the DSN's query string into DuckDB's own config
+        # (create_connect_args -> url_config -> duckdb.connect(config=...)), and it
+        # merges it AFTER our connect_args. A connection authored with
+        # `?enable_external_access=true` would therefore override the engine-level
+        # kill switch in dialects.py and reopen host-file reads (#267). Nothing in
+        # the query string is needed to open a .duckdb file, so the whole config
+        # surface is dropped rather than denylisting one key that can be renamed.
+        url = url.difference_update_query(list(url.query))
     kwargs = spec.engine_options(url)
     if spec.kind == "sqlite":
         # Reopen via URI with mode=ro so writes fail at the driver level.

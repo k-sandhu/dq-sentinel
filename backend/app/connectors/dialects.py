@@ -47,6 +47,11 @@ def _duckdb_options(url: URL) -> dict[str, Any]:
     # (replacement scans, glob(), read_csv/read_parquet, httpfs, ATTACH) regardless
     # of any gap in the regex guard. Opening the .duckdb database file named by the
     # DSN is unaffected: that file is the database, not an "external" resource.
+    # It does cost a capability: a catalog object *defined over* an external file
+    # (`CREATE VIEW v AS SELECT * FROM read_parquet(...)`) is refused as well — see
+    # the notes below. That is deliberate; a per-connection opt-out would reopen #267.
+    # sa.py strips the DSN query string first, because duckdb-engine merges it into
+    # this same config and would otherwise let the DSN turn the switch back on.
     return {"connect_args": {"read_only": True, "config": {"enable_external_access": "false"}}}
 
 
@@ -188,7 +193,11 @@ REGISTRY: dict[str, DialectSpec] = {
             dsn_example="duckdb:///C:/data/analytics.duckdb",
             notes=(
                 "Opened with read_only=True and enable_external_access=false, so DuckDB "
-                "rejects writes and any file/network read from SQL at the driver level."
+                "rejects writes and any file/network read from SQL at the driver level; "
+                "DSN query parameters are dropped so the setting cannot be overridden. "
+                "Trade-off: objects whose definition reads an EXTERNAL file — a view over "
+                "read_parquet/read_csv, a lake table — are refused too, so point this at a "
+                "database file that holds its own data."
             ),
             engine_options=_duckdb_options,
         ),

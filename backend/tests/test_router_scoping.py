@@ -516,6 +516,258 @@ def test_contract_writes_scoped_to_grants(client, admin_headers, source_db):
         assert client.delete(f"{QH}/connections/{cid}", headers=h).status_code == 204
 
 
+# ------------------------------------------------------------ checks (#72) ----
+def _check(client, headers, dataset_id, name, column="id"):
+    r = client.post(
+        f"{QH}/checks",
+        json={
+            "dataset_id": dataset_id,
+            "check_type": "not_null",
+            "column_name": column,
+            "name": name,
+        },
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def test_check_writes_scoped_to_grants(client, admin_headers, source_db):
+    """Authoring a check decides what the scheduler will EXECUTE against a source,
+    and `POST /checks/{id}/run` executes it immediately, so create/generate/patch/
+    run/archive all need editor ON the dataset's connection — not just the global
+    editor role. Missing and invisible are indistinguishable (identical 404 body)."""
+    h = admin_headers
+    sfx = uuid4().hex[:8]
+    a = _conn(client, h, f"rs-ck-A-{sfx}", source_db)
+    b = _conn(client, h, f"rs-ck-B-{sfx}", source_db)
+    ds_b = _register_people(client, h, b["id"])
+    chk_b = _check(client, h, ds_b["id"], f"rs-ck-onB-{sfx}")
+
+    alice = _mk_user(client, h, f"rs-ck-alice-{sfx}@x.com")  # global editor, granted A only
+    _grant(client, h, alice["id"], a["id"], "editor")
+    ah = _login(client, f"rs-ck-alice-{sfx}@x.com")
+
+    # create/generate keyed by dataset_id: 404, identical to a nonexistent dataset.
+    ds_missing = client.post(
+        f"{QH}/checks",
+        json={"dataset_id": 999999999, "check_type": "not_null", "column_name": "id"},
+        headers=ah,
+    )
+    assert ds_missing.status_code == 404, ds_missing.text
+    for resp in (
+        client.post(
+            f"{QH}/checks",
+            json={"dataset_id": ds_b["id"], "check_type": "not_null", "column_name": "id"},
+            headers=ah,
+        ),
+        client.post(f"{QH}/checks/generate", json={"dataset_id": ds_b["id"]}, headers=ah),
+    ):
+        assert resp.status_code == 404, resp.text
+        assert resp.json()["detail"] == ds_missing.json()["detail"]
+
+    # check-keyed mutations: 404, identical to a nonexistent check id.
+    chk_missing = client.patch(f"{QH}/checks/999999999", json={"name": "x"}, headers=ah)
+    assert chk_missing.status_code == 404, chk_missing.text
+    cpath = f"{QH}/checks/{chk_b['id']}"
+    for resp in (
+        client.patch(cpath, json={"name": f"rs-ck-hijacked-{sfx}"}, headers=ah),
+        client.post(f"{cpath}/run", headers=ah),
+        client.delete(cpath, headers=ah),
+    ):
+        assert resp.status_code == 404, resp.text
+        assert resp.json()["detail"] == chk_missing.json()["detail"]
+
+    # Nothing on B changed: no rename, still active, and no run was executed.
+    still = client.get(cpath, headers=h).json()
+    assert still["name"] == f"rs-ck-onB-{sfx}" and still["status"] == "active"
+    assert client.get(f"{QH}/runs", params={"check_id": chk_b["id"]}, headers=h).json() == []
+    # ...and the list never enumerates B's checks for alice.
+    assert client.get(f"{QH}/checks", params={"dataset_id": ds_b["id"]}, headers=ah).json() == []
+    assert chk_b["id"] not in {c["id"] for c in client.get(f"{QH}/checks", headers=ah).json()}
+    assert chk_b["id"] in {c["id"] for c in client.get(f"{QH}/checks", headers=h).json()}
+
+    for cid in (a["id"], b["id"]):
+        assert client.delete(f"{QH}/connections/{cid}", headers=h).status_code == 204
+
+
+def test_check_viewer_grant_cannot_author_or_run(client, admin_headers, source_db):
+    """Visible but viewer-granted -> 403 (existence is already known), and a
+    zero-grant editor keeps full legacy authoring/run access."""
+    h = admin_headers
+    sfx = uuid4().hex[:8]
+    b = _conn(client, h, f"rs-ckv-B-{sfx}", source_db)
+    ds_b = _register_people(client, h, b["id"])
+    chk_b = _check(client, h, ds_b["id"], f"rs-ckv-onB-{sfx}")
+    cpath = f"{QH}/checks/{chk_b['id']}"
+
+    carol = _mk_user(client, h, f"rs-ckv-carol-{sfx}@x.com")  # global editor, VIEWER grant on B
+    _grant(client, h, carol["id"], b["id"], "viewer")
+    ch = _login(client, f"rs-ckv-carol-{sfx}@x.com")
+
+    assert client.get(cpath, headers=ch).status_code == 200  # reading is fine
+    assert client.post(
+        f"{QH}/checks",
+        json={"dataset_id": ds_b["id"], "check_type": "not_null", "column_name": "id"},
+        headers=ch,
+    ).status_code == 403
+    assert client.post(
+        f"{QH}/checks/generate", json={"dataset_id": ds_b["id"]}, headers=ch
+    ).status_code == 403
+    assert client.patch(cpath, json={"name": "hijacked"}, headers=ch).status_code == 403
+    assert client.post(f"{cpath}/run", headers=ch).status_code == 403
+    assert client.delete(cpath, headers=ch).status_code == 403
+
+    # Zero-grant editor: unchanged legacy behavior end to end.
+    _mk_user(client, h, f"rs-ckv-nory-{sfx}@x.com")
+    nh = _login(client, f"rs-ckv-nory-{sfx}@x.com")
+    legacy = _check(client, nh, ds_b["id"], f"rs-ckv-legacy-{sfx}", column="status")
+    lpath = f"{QH}/checks/{legacy['id']}"
+    assert client.patch(lpath, json={"severity": "warn"}, headers=nh).status_code == 200
+    ran = client.post(f"{lpath}/run", headers=nh)
+    assert ran.status_code == 200, ran.text
+    # generate has no profile yet -> 409 from the endpoint's own precondition, which
+    # proves the grant gate let a zero-grant editor through.
+    assert client.post(
+        f"{QH}/checks/generate", json={"dataset_id": ds_b["id"]}, headers=nh
+    ).status_code == 409
+    assert client.delete(lpath, headers=nh).status_code == 204
+
+    assert client.delete(f"{QH}/connections/{b['id']}", headers=h).status_code == 204
+
+
+# ---------------------------------------------------- monitor packs (#72) -----
+def test_monitor_pack_scoped_to_grants(client, admin_headers, source_db):
+    """A monitor pack materializes + schedules checks against the dataset's SOURCE,
+    and disabling it silently stops all monitoring — so reads are grant-gated and
+    every mutation needs editor ON the connection."""
+    h = admin_headers
+    sfx = uuid4().hex[:8]
+    a = _conn(client, h, f"rs-mp-A-{sfx}", source_db)
+    b = _conn(client, h, f"rs-mp-B-{sfx}", source_db)
+    ds_b = _register_people(client, h, b["id"])
+
+    alice = _mk_user(client, h, f"rs-mp-alice-{sfx}@x.com")  # global editor, granted A only
+    _grant(client, h, alice["id"], a["id"], "editor")
+    ah = _login(client, f"rs-mp-alice-{sfx}@x.com")
+
+    base = f"{QH}/datasets/{ds_b['id']}/monitor-pack"
+    missing = client.get(f"{QH}/datasets/999999999/monitor-pack", headers=ah)
+    assert missing.status_code == 404, missing.text
+    for resp in (
+        client.get(base, headers=ah),
+        client.patch(base, json={"enabled": False}, headers=ah),
+        client.post(f"{base}/reconcile", headers=ah),
+    ):
+        assert resp.status_code == 404, resp.text
+        assert resp.json()["detail"] == missing.json()["detail"]
+
+    # Monitoring on B was NOT silently disabled.
+    assert client.get(base, headers=h).json()["enabled"] is True
+
+    # Visible but viewer-granted: read yes, mutate no.
+    carol = _mk_user(client, h, f"rs-mp-carol-{sfx}@x.com")
+    _grant(client, h, carol["id"], b["id"], "viewer")
+    ch = _login(client, f"rs-mp-carol-{sfx}@x.com")
+    assert client.get(base, headers=ch).status_code == 200
+    assert client.patch(base, json={"enabled": False}, headers=ch).status_code == 403
+    assert client.post(f"{base}/reconcile", headers=ch).status_code == 403
+    assert client.get(base, headers=h).json()["enabled"] is True
+
+    # Zero-grant editor keeps full legacy access.
+    _mk_user(client, h, f"rs-mp-nory-{sfx}@x.com")
+    nh = _login(client, f"rs-mp-nory-{sfx}@x.com")
+    assert client.get(base, headers=nh).status_code == 200
+    assert client.patch(base, json={"enabled": True}, headers=nh).status_code == 200
+    assert client.post(f"{base}/reconcile", headers=nh).status_code == 200
+
+    for cid in (a["id"], b["id"]):
+        assert client.delete(f"{QH}/connections/{cid}", headers=h).status_code == 204
+
+
+# ------------------------------------------------------- RCA sessions (#72) ---
+def _rca_session(dataset_id: int, question: str) -> int:
+    """Insert a completed RCA session directly (starting one needs an LLM)."""
+    from app.db import session_factory
+    from app.models import RcaSession
+
+    with session_factory()() as db:
+        s = RcaSession(
+            dataset_id=dataset_id,
+            question=question,
+            status="complete",
+            report_md="rows from someone else's source",
+            transcript=[{"type": "sql", "content": "SELECT email FROM people"}],
+            report_json={"version": 1, "likely_cause": "leaked evidence"},
+        )
+        db.add(s)
+        db.commit()
+        return s.id
+
+
+def test_rca_sessions_scoped_to_grants(client, admin_headers, source_db):
+    """An RCA session carries the agent's SQL transcript plus `report_json` evidence
+    — rows and schema from the dataset's source — so reads are grant-gated and
+    starting one (the agent writes SQL against the source) needs editor there."""
+    h = admin_headers
+    sfx = uuid4().hex[:8]
+    a = _conn(client, h, f"rs-rca-A-{sfx}", source_db)
+    b = _conn(client, h, f"rs-rca-B-{sfx}", source_db)
+    ds_b = _register_people(client, h, b["id"])
+    sid = _rca_session(ds_b["id"], f"rs-rca-q-{sfx}")
+
+    alice = _mk_user(client, h, f"rs-rca-alice-{sfx}@x.com")  # global editor, granted A only
+    _grant(client, h, alice["id"], a["id"], "editor")
+    ah = _login(client, f"rs-rca-alice-{sfx}@x.com")
+
+    # by-id read: 404, identical to a nonexistent session id.
+    missing = client.get(f"{QH}/rca/999999999", headers=ah)
+    invisible = client.get(f"{QH}/rca/{sid}", headers=ah)
+    assert missing.status_code == invisible.status_code == 404, invisible.text
+    assert missing.json()["detail"] == invisible.json()["detail"]
+    # list: B's session never appears, admin's does.
+    assert client.get(f"{QH}/rca", params={"dataset_id": ds_b["id"]}, headers=ah).json() == []
+    assert sid not in {s["id"] for s in client.get(f"{QH}/rca", headers=ah).json()}
+    assert sid in {
+        s["id"]
+        for s in client.get(f"{QH}/rca", params={"dataset_id": ds_b["id"]}, headers=h).json()
+    }
+    # start: 404, identical to a nonexistent dataset (and BEFORE the LLM 503).
+    ds_missing = client.post(
+        f"{QH}/rca/start", json={"dataset_id": 999999999, "question": "probe"}, headers=ah
+    )
+    started = client.post(
+        f"{QH}/rca/start", json={"dataset_id": ds_b["id"], "question": "probe"}, headers=ah
+    )
+    assert ds_missing.status_code == started.status_code == 404, started.text
+    assert ds_missing.json()["detail"] == started.json()["detail"]
+
+    # Visible but viewer-granted: read yes, start no.
+    carol = _mk_user(client, h, f"rs-rca-carol-{sfx}@x.com")
+    _grant(client, h, carol["id"], b["id"], "viewer")
+    ch = _login(client, f"rs-rca-carol-{sfx}@x.com")
+    assert client.get(f"{QH}/rca/{sid}", headers=ch).status_code == 200
+    assert client.post(
+        f"{QH}/rca/start", json={"dataset_id": ds_b["id"], "question": "probe"}, headers=ch
+    ).status_code == 403
+
+    # Zero-grant editor keeps full legacy access: reads the session, is listed, and
+    # reaches the LLM precondition (503 here) instead of being blocked by the gate.
+    _mk_user(client, h, f"rs-rca-nory-{sfx}@x.com")
+    nh = _login(client, f"rs-rca-nory-{sfx}@x.com")
+    assert client.get(f"{QH}/rca/{sid}", headers=nh).status_code == 200
+    assert sid in {
+        s["id"]
+        for s in client.get(f"{QH}/rca", params={"dataset_id": ds_b["id"]}, headers=nh).json()
+    }
+    assert client.post(
+        f"{QH}/rca/start", json={"dataset_id": ds_b["id"], "question": "probe"}, headers=nh
+    ).status_code == 503
+
+    for cid in (a["id"], b["id"]):
+        assert client.delete(f"{QH}/connections/{cid}", headers=h).status_code == 204
+
+
 # ------------------------------------------- LIKE wildcard escaping (#282) ----
 def test_q_filter_escapes_like_wildcards_saved_queries(client, admin_headers, source_db):
     """`?q=%` must search for a literal percent sign, not match every row."""

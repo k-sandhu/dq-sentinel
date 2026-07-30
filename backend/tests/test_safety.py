@@ -1,3 +1,5 @@
+import time
+
 import pytest
 
 from app.connectors.safety import SqlNotAllowed, enforce_limit, guard_sql
@@ -182,12 +184,58 @@ def test_allows_lookalike_identifiers_and_literals(sql):
         "SELECT * FROM orders o, customers c, '/tmp/secret.csv'",
         "SELECT * FROM orders AS o, '/tmp/secret.csv'",
         "SELECT * FROM 'https://evil.example/x.csv'",  # network replacement scan
+        # A table item is not always a bare word. Each of these hid the replacement
+        # scan behind an item the comma-list prefix could not count.
+        "SELECT * FROM \"orders\", '/tmp/secret.csv'",  # quoted identifier
+        "SELECT * FROM [orders], '/tmp/secret.csv'",  # bracket-quoted (SQL Server)
+        "SELECT * FROM `orders`, '/tmp/secret.csv'",  # backtick-quoted (MySQL)
+        "SELECT * FROM\"orders\",'/tmp/secret.csv'",  # ...and with no whitespace at all
+        "SELECT * FROM[orders],'/tmp/secret.csv'",
+        "SELECT * FROM`orders`,'/tmp/secret.csv'",
+        "SELECT * FROM (VALUES (1)) v, '/tmp/secret.csv'",  # parenthesised, nested
+        "SELECT * FROM (SELECT * FROM (SELECT 1) a) b, '/tmp/secret.csv'",
+        "SELECT * FROM (SELECT 1) s (a), '/tmp/secret.csv'",  # alias column list
+        "SELECT * FROM orders AS o (a, b), '/tmp/secret.csv'",
+        "SELECT * FROM a JOIN b USING (id), '/tmp/secret.csv'",
+        "SELECT * FROM a NATURAL JOIN b, '/tmp/secret.csv'",
+        # A join condition sits between the item and the comma.
+        "SELECT * FROM orders o JOIN customers c ON o.id = c.id, '/tmp/secret.csv'",
+        # Prefixed string literals are still string literals.
+        "SELECT * FROM t, E'/tmp/secret.csv'",
+        "SELECT * FROM t, N'/tmp/secret.csv'",
+        "SELECT * FROM t, U&'/tmp/secret.csv'",
+        "SELECT * FROM t, _utf8'/tmp/secret.csv'",
+        "SELECT * FROM E'/tmp/secret.csv'",
+        "SELECT * FROM'/tmp/secret.csv'",  # no whitespace before the literal
+        "SELECT * FROM t,'/tmp/secret.csv'",
+        "SELECT * FROM t,E'/tmp/secret.csv'",
+        # Table functions and modifiers do not end the item list either.
+        "SELECT * FROM generate_series(1, 3) g, '/tmp/secret.csv'",
+        "SELECT * FROM t TABLESAMPLE BERNOULLI (10), '/tmp/secret.csv'",
     ],
 )
 def test_rejects_string_literal_in_table_position(sql):
     with pytest.raises(SqlNotAllowed) as excinfo:
         guard_sql(sql)
     assert "table position" in str(excinfo.value)
+
+
+def test_rejects_string_literal_after_a_long_from_list():
+    """The item list must not be walked past by padding it out — the old pattern
+    stopped counting after 32 items and then allowed the 33rd."""
+    tables = ", ".join(f"t{i}" for i in range(64))
+    with pytest.raises(SqlNotAllowed) as excinfo:
+        guard_sql(f"SELECT * FROM {tables}, '/tmp/secret.csv'")
+    assert "table position" in str(excinfo.value)
+
+
+def test_guard_sql_stays_linear_in_exempted_from_expressions():
+    """REG-2: the enclosing-call lookup used to rebuild the paren stack from position
+    0 for every match, making guard_sql quadratic — this query took ~30s."""
+    sql = "SELECT " + ", ".join("SUBSTRING(c FROM '1')" for _ in range(4000)) + " FROM t"
+    start = time.perf_counter()
+    assert guard_sql(sql)
+    assert time.perf_counter() - start < 1.0
 
 
 def test_rejects_glob_directory_listing():
@@ -219,6 +267,25 @@ def test_rejects_glob_directory_listing():
         # SQLite's GLOB *operator* is not a call and must stay legal.
         "SELECT * FROM t WHERE name GLOB 'a*'",
         "SELECT * FROM t WHERE name NOT GLOB '*.tmp'",
+        # REG-1: `from`/`join` are the PREFIX of everyday column names. Matching them
+        # without a trailing word boundary made the backstop accuse ordinary analyst
+        # SQL of path traversal, and guard_sql sits on the workbench / saved-query /
+        # dashboard-SQL / LLM-SQL / custom_sql hot path.
+        "SELECT COALESCE(from_date, 'unknown') AS d FROM invoices",
+        "SELECT NULLIF(join_key, '') FROM edges",
+        "SELECT joined_at, 'active' AS status FROM users",
+        "SELECT * FROM t ORDER BY from_date, 'x'",
+        "SELECT COALESCE(to_date, 'n/a') AS d FROM periods",
+        "SELECT from_currency, 'USD' AS target FROM fx_rates",
+        "SELECT from_account, to_account, 'transfer' AS kind FROM ledger",
+        "SELECT * FROM t GROUP BY from_date, 'x'",
+        "SELECT * FROM t ORDER BY joined_at DESC, 'x'",
+        "SELECT CASE WHEN from_date IS NULL THEN 'missing' ELSE 'ok' END FROM contracts",
+        # A join condition is part of the FROM clause; the literal after it is not a
+        # table item, and neither is one in the ORDER BY that follows.
+        "SELECT * FROM a JOIN b ON a.x = b.x AND b.s = 'q' ORDER BY a.id, 'x'",
+        "SELECT * FROM t o JOIN u USING (id) WHERE o.k = 'x'",
+        "SELECT * FROM (VALUES (1, 'a'), (2, 'b')) AS v (id, name)",
     ],
 )
 def test_allows_from_in_function_arguments_and_ordinary_literals(sql):

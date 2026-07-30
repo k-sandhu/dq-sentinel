@@ -12,6 +12,7 @@ Defense layers:
 """
 
 import re
+from dataclasses import dataclass
 
 # Keywords that indicate writes/DDL/session changes. Checked on a masked copy of the
 # SQL with comments, string/dollar-quoted literals, and quoted identifiers hidden,
@@ -174,13 +175,34 @@ _DOLLAR_QUOTE_START = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$")
 # smuggling one in can only cause an extra *rejection* here, never a bypass.
 _LITERAL_MARK = "\x00"
 
-# FROM/JOIN followed by a literal, optionally after a few comma-separated plain table
-# items (`FROM orders o, '/etc/passwd'` is the same replacement scan). Each repetition
-# must consume a comma, so the bounded quantifier cannot blow up.
-_LITERAL_IN_TABLE_POSITION = re.compile(
-    r"(?i)\b(from|join)\s*"
-    r"(?:[\w.$]+(?:\s+(?:as\s+)?[\w$]+)?\s*,\s*){0,32}" + re.escape(_LITERAL_MARK)
+# In that same variant a quoted identifier collapses to this sentinel rather than to a
+# space, so `FROM "orders", '/etc/passwd'` still shows a countable table item before
+# the comma. It is deliberately a *distinct* character used only here: the other
+# variants keep masking identifiers to a space, which is what the keyword denylist,
+# the `;` split and the column-list rules were written against.
+_IDENTIFIER_MARK = "\x01"
+
+
+# One bare-word run of the masked SQL: an identifier or number, with an optional
+# trailing `&` so the `U&'...'` literal prefix stays a single run. The identifier
+# sentinel is NOT in this class — it is a whole token on its own, and letting it join
+# a run would turn `FROM"orders"` into the word `from<mark>` and lose the keyword.
+_TOKEN_RUN = re.compile(r"[\w$.]+&?")
+
+# Words after which a FROM/JOIN item list has ended, so a later comma belongs to some
+# other list (`SELECT * FROM t ORDER BY from_date, 'x'`). `AS`, `ON`, `USING`, the
+# join qualifiers and table modifiers are deliberately absent: they sit INSIDE a FROM
+# clause, and `FROM a JOIN b ON a.k = b.k, '/etc/passwd'` is still a replacement scan.
+_FROM_CLAUSE_ENDS: frozenset[str] = frozenset(
+    {
+        "select", "where", "group", "having", "by", "window", "qualify",
+        "order", "limit", "offset", "fetch", "union", "intersect", "except", "minus",
+    }
 )
+
+# Tokens a table item may directly follow: the keyword that opens the list, or the
+# comma that separates it from the previous item.
+_TABLE_ITEM_STARTS: frozenset[str] = frozenset({"from", "join", ","})
 
 # The SQL-standard constructs that legitimately put FROM inside a function's argument
 # list: EXTRACT(YEAR FROM '2024-01-01'), SUBSTRING(x FROM 'regex'),
@@ -238,7 +260,11 @@ def _consume_dollar_quoted_string(sql: str, start: int) -> int | None:
 
 
 def _strip_comments_literals_and_identifiers(
-    sql: str, *, keep_identifier_text: bool = False, literal_mark: str = " "
+    sql: str,
+    *,
+    keep_identifier_text: bool = False,
+    literal_mark: str = " ",
+    identifier_mark: str = " ",
 ) -> str:
     """Mask regions where semicolons and keywords are inert SQL text.
 
@@ -250,9 +276,10 @@ def _strip_comments_literals_and_identifiers(
     call. The keyword denylist keeps using the fully masked variant, where
     ``SELECT "delete" FROM t`` stays legal.
 
-    ``literal_mark`` replaces each string / dollar-quoted literal. The default space
-    erases it entirely; the table-position check passes a sentinel so it can still see
-    *that* a literal was there without seeing its (attacker-controlled) contents.
+    ``literal_mark`` replaces each string / dollar-quoted literal and
+    ``identifier_mark`` each masked quoted identifier. The default space erases them
+    entirely; the table-position check passes sentinels so it can still see *that* a
+    literal / an identifier was there without seeing its (attacker-controlled) contents.
     """
     pieces: list[str] = []
     i = 0
@@ -288,7 +315,7 @@ def _strip_comments_literals_and_identifiers(
             # Only a single bare word can be a hidden function name; anything else
             # (`"URL (raw)"`, `[Cluster (k)]`) is just a column and must stay masked.
             keep = keep_identifier_text and _BARE_IDENTIFIER.fullmatch(inner) is not None
-            pieces.append(inner if keep else " ")
+            pieces.append(inner if keep else identifier_mark)
             i = end
             continue
         if ch == "$":
@@ -327,20 +354,86 @@ def _matching_paren(masked: str, open_index: int) -> int | None:
     return None
 
 
-def _enclosing_call_name(masked: str, index: int) -> str | None:
-    """Name of the function whose argument list encloses ``index``.
+@dataclass
+class _Frame:
+    """Scanner state for one parenthesis depth."""
 
-    ``None`` at statement level or inside a grouping / subquery paren — ``(SELECT
-    ...)``, ``AS (...)``, ``IN (...)`` — because those are not function calls. Literals
-    and comments are already masked, so no paren counted here is inert text.
+    call: str | None  # function whose argument list this is; None for a grouping paren
+    in_from: bool = False  # currently inside a FROM/JOIN item list at this depth
+    keyword: str = ""  # the FROM/JOIN that opened that list (for the message)
+    prev: str = ""  # previous significant token, coarse-grained
+
+
+def _literal_in_table_position(marked: str) -> str | None:
+    """FROM/JOIN keyword whose item list holds a bare string literal, else ``None``.
+
+    ONE left-to-right pass with a stack of frames — one per parenthesis depth, each
+    carrying the enclosing call name and whether a FROM/JOIN item list is open at that
+    depth. A literal is in table position when it is the token right after the
+    keyword or right after a comma in that list, at the same depth: ``FROM '/etc/
+    passwd'``, ``FROM "orders", '/etc/passwd'``, ``FROM (VALUES (1)) v, '/etc/
+    passwd'``, ``FROM a JOIN b ON a.k = b.k, '/etc/passwd'``.
+
+    Being a single pass (rather than rebuilding the paren stack per match) keeps
+    guard_sql linear, and tracking depth explicitly means there is no cap on item
+    count or on parenthesis nesting to walk past. ``EXTRACT(YEAR FROM 'x')`` and
+    friends are exempt because the frame naming the call is right there.
     """
-    stack: list[str | None] = []
-    for i, ch in enumerate(masked[:index]):
+    frames = [_Frame(call=None)]
+    i, n = 0, len(marked)
+    while i < n:
+        ch = marked[i]
+        if ch.isspace():
+            i += 1
+            continue
         if ch == "(":
-            stack.append(_word_ending_at(masked, i))
-        elif ch == ")" and stack:
-            stack.pop()
-    return stack[-1] if stack else None
+            frames.append(_Frame(call=_word_ending_at(marked, i), prev="("))
+            i += 1
+            continue
+        if ch == ")":
+            if len(frames) > 1:
+                frames.pop()
+            frames[-1].prev = ")"
+            i += 1
+            continue
+        frame = frames[-1]
+        if ch == _IDENTIFIER_MARK:
+            frame.prev = "word"  # a masked quoted identifier is a whole table item
+            i += 1
+            continue
+        if ch == _LITERAL_MARK:
+            if (
+                frame.in_from
+                and frame.prev in _TABLE_ITEM_STARTS
+                and frame.call not in _FROM_ARGUMENT_FUNCTIONS
+            ):
+                return frame.keyword.upper()
+            frame.prev = "literal"
+            i += 1
+            continue
+        run = _TOKEN_RUN.match(marked, i)
+        if run is None:
+            frame.prev = "," if ch == "," else "operator"
+            i += 1
+            continue
+        i = run.end()
+        word = run.group(0).lower()
+        if word in ("from", "join"):
+            frame.in_from = True
+            frame.keyword = word
+            frame.prev = word
+            continue
+        if word in _FROM_CLAUSE_ENDS:
+            frame.in_from = False
+            frame.prev = "word"
+            continue
+        if i < n and marked[i] == _LITERAL_MARK:
+            # E'' / N'' / X'' / U&'' / _utf8'' — a prefix flush against the literal,
+            # not a token of its own, so it must not hide the comma before it.
+            # Checked after the keywords: `FROM'/etc/passwd'` needs no whitespace.
+            continue
+        frame.prev = "word"
+    return None
 
 
 def _is_definition_column_list(masked: str, match: re.Match[str]) -> bool:
@@ -389,12 +482,13 @@ def guard_sql(sql: str) -> str:
     # Engine-agnostic backstop for replacement scans (DuckDB reads a quoted path in
     # table position as a file). The engine-level switch in dialects.py is the primary
     # defense; this keeps the guard honest for any engine that grows the same feature.
-    marked = _strip_comments_literals_and_identifiers(cleaned, literal_mark=_LITERAL_MARK)
-    for scan in _LITERAL_IN_TABLE_POSITION.finditer(marked):
-        if _enclosing_call_name(marked, scan.start()) in _FROM_ARGUMENT_FUNCTIONS:
-            continue  # EXTRACT(... FROM 'x') / SUBSTRING(x FROM 'y') / TRIM(... FROM 'z')
+    marked = _strip_comments_literals_and_identifiers(
+        cleaned, literal_mark=_LITERAL_MARK, identifier_mark=_IDENTIFIER_MARK
+    )
+    keyword = _literal_in_table_position(marked)
+    if keyword is not None:
         raise SqlNotAllowed(
-            f"String literal not allowed in table position after {scan.group(1).upper()}: "
+            f"String literal not allowed in table position after {keyword}: "
             "some engines read it as a path to a file on the database host"
         )
     return cleaned

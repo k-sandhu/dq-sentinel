@@ -11,8 +11,9 @@ root-cause analyst that investigates with read-only SQL and reports back with ev
 ## What it does
 
 1. **Connect** — register SQLite / DuckDB / PostgreSQL / MySQL / SQL Server / Snowflake /
-   BigQuery / Trino / ClickHouse sources (always opened **read-only** where the engine allows;
-   every query passes a SQL safety guard that allows only single SELECT/WITH statements).
+   BigQuery / Trino / ClickHouse sources (always opened **read-only** where the engine allows,
+   with host access switched off where the engine has such a switch; every query passes a SQL
+   safety guard that allows only single SELECT/WITH statements — see *Security model*).
    Non-core drivers are optional extras: `pip install "dqsentinel[snowflake]"` etc.
 2. **Profile** — per-column stats pushed down as SQL aggregates plus sampled quantiles,
    string-format inference (email/uuid/url/date), primary-key and freshness candidates.
@@ -132,19 +133,31 @@ python scripts/e2e_smoke.py   # 38 assertions over the live workflow, against a 
 | `backend/app/core/check_types.py` | Check registry + how to add a type |
 | `backend/app/llm/` | `providers.py` (the provider abstraction), check generation, exploration agent, RCA agent, chat agent, prompts |
 | `backend/app/connectors/safety.py` | The SQL guard everything goes through |
-| `backend/app/connectors/dialects.py` | 9-engine dialect registry: schemes, read-only enforcement, optional drivers, DDL catalog queries |
+| `backend/app/connectors/dialects.py` | 9-engine dialect registry: schemes, read-only + host-access enforcement, optional drivers, DDL catalog queries |
 | `backend/app/core/lineage.py` | sqlglot view parsing → lineage graph with check-health overlay |
 | `data/` | Sample-data generator + public-dataset downloader |
 | `scripts/e2e_smoke.py` | Full-workflow smoke test |
 
 ## Security model (v0.1)
 
-- Sources opened read-only at the driver level **and** statement-guarded (single SELECT/WITH,
-  keyword denylist, a denylist of read-side functions that reach the filesystem/network/OS,
-  forced row limits) — including all LLM-authored SQL.
+- **A source database cannot write, and cannot read its host.** Two layers, and the driver one
+  is the one that counts:
+  - *Driver level.* Connections open read-only where the engine allows it, and host access is
+    switched off where the engine has a switch. DuckDB opens with `read_only=True` **and**
+    `enable_external_access=false`, because `read_only=True` alone does not stop *reads*: a
+    DuckDB replacement scan (`SELECT * FROM '/etc/passwd'`) reads a host file with no function
+    call involved. The trade is deliberate — a registered DuckDB source can then read nothing
+    but its own database file (no `read_csv`, no httpfs/S3, no `ATTACH`).
+  - *Statement level.* Every query, including all LLM-authored SQL, passes `guard_sql()`:
+    single SELECT/WITH, keyword denylist, a denylist of read-side functions that reach the
+    filesystem/network/OS, a rejection of a string literal in table position after
+    `FROM`/`JOIN`, and forced row limits. This is pattern matching over masked SQL rather than
+    a parser — defence in depth for engines that grow the same feature, not the primary control.
 - JWT auth (HS256), bcrypt passwords, role-gated mutations (`viewer`/`editor`/`admin`) plus
-  per-connection grants that narrow a role to specific sources; bootstrap admin seeded once,
-  and `DQ_ENV=prod` refuses to boot on the default secret key or admin password.
+  per-connection grants that narrow a role to specific sources (editable in Settings → Users);
+  connection-scoped endpoints resolve an invisible id to the same 404 as a missing one, so ids
+  can't be probed. Bootstrap admin seeded once, and `DQ_ENV=prod` refuses to boot on the
+  default secret key or admin password.
 - Privileged and state-changing actions (users, grants, connections, checks, triage, knowledge,
   contracts, SLAs) are recorded in an append-only **audit log** with an admin-only viewer in
   Settings.

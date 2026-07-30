@@ -10,7 +10,9 @@ may contain breaking changes.
 Two batches so far: the UX-benchmark fixes that shipped as PRs #276–#280, and
 the remediation of the July 2026 end-to-end system audit
 (`docs/system-audit-2026-07.md`, issues #281–#295, which also closed out the
-older #72, #261 and #273).
+older #72, #261 and #273). The audit remediation then went through two
+adversarial review rounds; where a round found that a fix did not hold, the
+entry below describes what actually shipped, not what was first attempted.
 
 ### Added
 
@@ -34,11 +36,26 @@ older #72, #261 and #273).
   Previously the frontend consumed a `report_json` the backend never wrote. (#287)
 - `frontend/src/lib/useUnsavedGuard.ts` — the shared unsaved-changes guard now
   wired into the dashboard, knowledge, contract and dataset editors, so in-app
-  navigation asks before discarding analyst typing. (#284)
-- `backend/app/api/_filters.py` — the single chokepoint (`contains_pattern` +
-  `LIKE_ESCAPE`) that every `?q=` substring filter builds its pattern with.
+  navigation (`<Link>` and `useNavigate()` alike) asks before discarding analyst
+  typing, alongside the existing `beforeunload` cover for tab close. **Known
+  limitation:** browser Back/Forward is not intercepted — the app mounts a plain
+  `<BrowserRouter>`, which offers no cancellable hook for `popstate`. (#284)
+- `backend/app/api/_filters.py` — the single chokepoint every `?q=` filter builds
+  its pattern with: `contains_pattern()` for a substring match, bare
+  `escape_like()` where the call site needs a different shape, and
+  `escape=LIKE_ESCAPE` at every call site.
 - Weekly Dependabot updates for pip, npm and GitHub Actions, staggered across the
-  week and grouped so routine churn arrives as one PR. (#292)
+  week and grouped so routine churn arrives as one PR, plus an advisory
+  `dependency-audit` CI job (`pip-audit` over `backend/requirements.lock`, `npm
+  audit --omit=dev`). It runs on every PR **and on a weekly cron** — a CVE is
+  disclosed against code that did not change, so a commit-triggered job never
+  fires when it matters. On the scheduled trigger only the audit runs; the four
+  heavy jobs are gated off it, because rebuilding an unchanged `main` proves
+  nothing. The job is `continue-on-error`, so a fresh disclosure surfaces without
+  turning every PR red until an upstream fix exists. (#292)
+- CI additionally runs migrations up/down/up against real PostgreSQL (#291) and
+  builds the shipped images, boots the compose stack under the `DQ_ENV=prod`
+  posture and drives `scripts/e2e_smoke.py` through it (#292).
 
 ### Changed
 
@@ -64,7 +81,12 @@ older #72, #261 and #273).
 - README / AGENTS.md / this changelog re-verified against the code: the check
   registry is 14 types, the dataset page has 12 tabs, the LLM layer is
   provider-agnostic, the smoke test makes 38 assertions, and the audit log and
-  Alembic migrations moved from "roadmap" to "shipped". (#295)
+  Alembic migrations moved from "roadmap" to "shipped". Re-verified a second time
+  after review, because the first pass documented security fixes as originally
+  written rather than as remediated — the docs now describe both defence layers,
+  name the guard as a backstop rather than the control, and describe the grant
+  sweep as an invariant instead of a list that goes stale on the next router.
+  (#295)
 
 ### Fixed
 
@@ -91,23 +113,71 @@ older #72, #261 and #273).
   query history) are namespaced per user, so a second sign-in on a shared machine
   no longer inherits the previous user's state; timestamps name their time zone.
   (#294)
+- Honest copy and states across the surfaces the review rounds exercised:
+  unregistering a dataset no longer trips the unsaved-changes guard (answering
+  "keep editing" stranded the analyst on a deleted dataset); contract deletion no
+  longer promises a restore path that does not exist; a custom-dashboard SQL
+  widget distinguishes "the connection was deleted" from "you are not authorized",
+  and the dashboards list stops offering viewers rows that would 403; editing an
+  SLA no longer discards the typed edits its own Cancel protects; the home KPI
+  advertises MTTR only, because nothing computes MTTD; and the assistant's live
+  region no longer replays history when the session is switched.
 
 ### Security
 
-- **`guard_sql()` now denies read-side functions that escape the database** —
-  host-file readers, HTTP/object-store scanners, cross-engine federation and OS
-  command execution (`read_csv`, `read_text`, `load_file`, `postgres_scan`,
-  `xp_cmdshell`, …). `SELECT read_text('/etc/passwd')` is a single SELECT with no
-  write keyword, so the previous keyword denylist let it through. (#281, #267)
+- **A source database can no longer read the host it runs on.** Two layers ship,
+  and they are not interchangeable:
+  - *Driver level — the control that actually holds on DuckDB.* DuckDB
+    connections now open with `enable_external_access=false` alongside
+    `read_only=True` (`backend/app/connectors/dialects.py`). `read_only=True`
+    stops writes only; DuckDB's **replacement scan** turns a bare string literal
+    in table position into a host-file read — `SELECT * FROM '/etc/passwd'` —
+    with no function call for any denylist to match. The switch disables every
+    file/network access originating from SQL: replacement scans, `glob()`,
+    `read_csv`/`read_parquet`, httpfs, `ATTACH`. **What it costs:** a registered
+    DuckDB source can now read nothing but the `.duckdb` file its DSN names, so
+    ad-hoc `read_csv('…')`, S3/HTTP reads and cross-file `ATTACH` stop working
+    through a DQ Sentinel connection. That trade is deliberate.
+  - *Statement level — an engine-agnostic backstop.* `guard_sql()` now also
+    denies read-side functions that escape the database (`read_text`, `read_csv`,
+    `glob`, `load_file`, `postgres_scan`, `xp_cmdshell`, …) and rejects a string
+    literal in table position after `FROM`/`JOIN`. `SELECT read_text('/etc/passwd')`
+    is a single SELECT with no write keyword, so the previous keyword denylist let
+    it straight through. **Known limitation:** this is regular-expression matching
+    over masked SQL, not a parser. It exists to cover engines that grow the same
+    feature and to fail closed on obvious shapes — it is not what stands between
+    DuckDB and the filesystem.
+
+  Ordinary analyst SQL stays legal: a quoted identifier is unwrapped only when it
+  is a single bare word (`SELECT "URL (raw)"`, `[Cluster (k)]` remain columns, not
+  calls), CTE and table-alias **column lists** (`WITH url (id, addr) AS (…)`) are
+  exempted structurally, and the standard `FROM`-inside-a-call forms
+  (`EXTRACT(YEAR FROM '2024-01-01')`, `SUBSTRING(x FROM 'y')`, `TRIM(BOTH FROM
+  ' x ')`, `OVERLAY(… FROM 2)`) are exempted from the table-position rule.
+  (#281, #267)
 - **Unhandled exceptions return a clean JSON 500** carrying the request id, via a
   global ASGI middleware; the traceback goes to the server log only. A malformed
   JWT subject now returns 401 rather than 500. (#282)
 - **`?q=` filters escape LIKE wildcards.** A typed `%` or `_` matched every row —
-  an over-broad read on grant-scoped surfaces, and a backtracking hazard. (#273,
-  #282)
-- **Connection grants are enforced on the remaining global surfaces** — saved
-  queries, ad-hoc dashboards, custom dashboards and lineage — closing routers
-  that returned rows from connections the caller had no grant on. (#72)
+  an over-broad read on grant-scoped surfaces, and a backtracking hazard. Every
+  `?q=` now builds its pattern in `backend/app/api/_filters.py` and passes
+  `escape=LIKE_ESCAPE`, including the audit log's *prefix* filter (which needs
+  bare `escape_like()` rather than `contains_pattern()`, since a leading `%`
+  would silently widen it). (#273, #282)
+- **Connection grants are enforced wherever connection-scoped rows are read or
+  written.** The sweep started with the global surfaces that returned rows from
+  connections the caller had no grant on — saved queries, ad-hoc dashboards,
+  custom dashboards, lineage — and review then found data contracts skipped
+  entirely, where a global editor could author *and activate* a contract on an
+  ungranted connection: a cross-connection **write**, since activation
+  materializes scheduled checks. Deliberately not enumerated here, because that
+  list has grown every time anyone looked: the invariant is that an endpoint
+  touching connection-scoped rows resolves through `backend/app/security.py` —
+  `visible_connection_ids()` / `visible_dataset_ids()` to filter a list,
+  `assert_connection_visible()` / `assert_dataset_visible()` for a read by id
+  (404, never 403, so ids can't be probed), `assert_connection_role()` for a
+  mutation. `backend/tests/test_router_scoping.py` pins each endpoint found so
+  far; assume a newly added router is unscoped until it is checked. (#72, #159)
 - **Containers run unprivileged**: the backend image creates and drops to a
   dedicated non-root user, the frontend image is built on
   `nginx-unprivileged`, and compose publishes the API on `127.0.0.1:8000` only,

@@ -215,9 +215,12 @@ def test_bare_mysql_scheme_defaults_to_pymysql():
 # so a gap in the regex guard is not a host-file read. duckdb is a core dependency.
 
 
-@pytest.fixture
-def duckdb_connector(tmp_path):
-    """A read-only Connector over a real .duckdb file, plus a secret file beside it."""
+def _seed_duckdb(tmp_path, *, external_view: bool = False) -> tuple[str, str]:
+    """Build a .duckdb file with a secret CSV beside it; returns (db, secret) paths.
+
+    With ``external_view`` the catalog also holds a view whose *definition* reads that
+    CSV — an object that only resolves when external access is on.
+    """
     import duckdb
 
     secret = tmp_path / "secret.csv"
@@ -228,9 +231,20 @@ def duckdb_connector(tmp_path):
         con.execute("CREATE TABLE orders (id INTEGER, amount DOUBLE)")
         con.execute("INSERT INTO orders VALUES (1, 10.5), (2, 20.0)")
         con.execute("CREATE VIEW orders_v AS SELECT * FROM orders")
+        if external_view:
+            con.execute(
+                f"CREATE VIEW lake_v AS SELECT * FROM read_csv_auto('{secret.as_posix()}')"
+            )
     finally:
         con.close()
-    return Connector(f"duckdb:///{db.as_posix()}"), secret.as_posix(), tmp_path.as_posix()
+    return db.as_posix(), secret.as_posix()
+
+
+@pytest.fixture
+def duckdb_connector(tmp_path):
+    """A read-only Connector over a real .duckdb file, plus a secret file beside it."""
+    db, secret = _seed_duckdb(tmp_path)
+    return Connector(f"duckdb:///{db}"), secret, tmp_path.as_posix()
 
 
 def test_duckdb_still_reads_the_database_file(duckdb_connector):
@@ -283,6 +297,49 @@ def test_duckdb_external_access_setting_is_off(duckdb_connector):
     connector, _secret, _dir = duckdb_connector
     with connector.engine.connect() as conn:
         assert conn.execute(text("SELECT current_setting('enable_external_access')")).scalar() is False
+
+
+def test_duckdb_external_access_cannot_be_re_enabled_from_the_dsn(tmp_path):
+    """duckdb-engine merges the DSN query string into DuckDB's config AFTER our
+    connect_args, so `?enable_external_access=true` used to hand host-file reads back
+    to whoever authored the connection (#267). sa.py strips that surface."""
+    from sqlalchemy import text
+
+    db, secret = _seed_duckdb(tmp_path)
+    connector = Connector(f"duckdb:///{db}?enable_external_access=true")
+    try:
+        with connector.engine.connect() as conn:
+            setting = conn.execute(text("SELECT current_setting('enable_external_access')"))
+            assert setting.scalar() is False
+            with pytest.raises(Exception) as ei:  # noqa: PT011 - driver-specific type
+                conn.execute(text(f"SELECT * FROM '{secret}'")).fetchall()
+        assert "Permission Error" in str(ei.value)
+        # ...and the database file itself still opens and reads normally.
+        assert connector.run_select("SELECT * FROM orders").rows == [[1, 10.5], [2, 20.0]]
+    finally:
+        connector.engine.dispose()
+
+
+def test_duckdb_refuses_catalog_objects_backed_by_external_files(tmp_path):
+    """CMP-1, the documented cost of the kill switch: a view DEFINED over an external
+    file cannot be read either, so a DuckDB catalog that fronts a lake is unusable
+    here. Locked in deliberately — a per-connection opt-out would reopen #267."""
+    db, _secret = _seed_duckdb(tmp_path, external_view=True)
+    connector = Connector(f"duckdb:///{db}")
+    try:
+        # ordinary tables and views over them are unaffected
+        assert connector.run_select("SELECT * FROM orders").rows == [[1, 10.5], [2, 20.0]]
+        assert connector.run_select("SELECT * FROM orders_v").rows == [[1, 10.5], [2, 20.0]]
+        with pytest.raises(Exception) as ei:  # noqa: PT011 - driver-specific type
+            connector.run_select("SELECT * FROM lake_v")
+        assert "Permission Error" in str(ei.value)
+    finally:
+        connector.engine.dispose()
+    # ...and the limitation is stated where admins choosing an engine will read it,
+    # naming the construct that stops working rather than only the setting.
+    notes = REGISTRY["duckdb"].notes
+    assert "read_parquet" in notes
+    assert "DSN query parameters are dropped" in notes
 
 
 # ---- API surface ----

@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Weekly dependency audit (#292). A CVE is disclosed against code that has not
+  # changed, so a trigger tied to commits never fires when it matters. Mondays
+  # 07:00 UTC. Only `dependency-audit` runs on this trigger — every other job is
+  # gated off it below, because rebuilding an unchanged main proves nothing and
+  # burns 30 minutes of runner time.
+  schedule:
+    - cron: "0 7 * * 1"
 
 # One in-flight run per ref. On a PR a follow-up push supersedes the previous
 # run instead of queueing behind it — these jobs build images and boot a stack,
@@ -24,6 +31,7 @@ permissions:
 
 jobs:
   backend:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -47,6 +55,7 @@ jobs:
         run: pytest -q
 
   frontend:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -100,6 +109,7 @@ jobs:
   # PostgreSQL — a PG-only migration bug bricked api+worker startup (#291).
   # Exercise the real engine, both directions.
   migrations-postgres:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -142,6 +152,7 @@ jobs:
   # caught a broken Dockerfile, a non-root permission problem, or a healthcheck
   # that never goes green.
   stack:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -209,6 +220,10 @@ jobs:
   # Advisory only: a new CVE disclosure should show up here, not turn every PR
   # red until an upstream fix ships. Dependabot (.github/dependabot.yml) does the
   # actual bumping.
+  #
+  # Deliberately NOT gated on the event: this is the one job that must also run on
+  # the weekly `schedule` trigger above, since vulnerabilities appear without a
+  # commit to trigger on.
   dependency-audit:
     runs-on: ubuntu-latest
     timeout-minutes: 15
