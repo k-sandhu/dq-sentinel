@@ -75,7 +75,12 @@ all-connectors = [
     "trino[sqlalchemy]>=0.330",
     "clickhouse-sqlalchemy>=0.3",
 ]
-dev = ["pytest>=8.2", "ruff>=0.6"]
+# ruff is pinned, not floored: a linter that resolves to "latest" at CI time
+# turns an unrelated upstream release into a red build on untouched files
+# (ruff 0.16 added DTZ005/FURB122 and did exactly that). Dependabot proposes
+# bumps as reviewable PRs instead. Keep this in step with the version in
+# .github/workflows/ci.yml if that job ever installs ruff separately.
+dev = ["pytest>=8.2", "ruff==0.16.0"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
