@@ -2,9 +2,14 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { useState } from "react";
 import { Link } from "react-router";
 import { api } from "../api/client";
+import { qk } from "../api/queryKeys";
 import type {
   AuditPage,
+  Connection,
   Dataset,
+  Grant,
+  GrantIn,
+  GrantRole,
   Health,
   McpServer,
   NotificationRule,
@@ -691,6 +696,292 @@ function NotificationsCard() {
   );
 }
 
+// ── Per-connection grants (#288) ────────────────────────────────────────────────
+// Mirrors backend/app/security.py: ROLE_RANK + connection_role(). Kept here (not
+// in a shared lib) because the grants editor is the only surface that has to
+// *explain* the rule to an admin.
+const ROLE_RANK: Record<Role, number> = { viewer: 0, editor: 1, admin: 2 };
+
+/** Effective role on one connection for a *granted* user: least privilege — the
+ *  lower-ranked of their global role and the grant's role. A grant scopes access
+ *  and never elevates it, so a global viewer with an editor grant stays a viewer.
+ *  Global admins bypass grants entirely and are handled by the caller. */
+function effectiveRole(globalRole: Role, grantRole: GrantRole): Role {
+  return ROLE_RANK[grantRole] <= ROLE_RANK[globalRole] ? grantRole : globalRole;
+}
+
+/** Admin-only editor for one user's per-connection grants (#288). Until this
+ *  existed the endpoints were curl-only, so an admin could not see *why* a
+ *  teammate's Home panels showed less data. */
+function UserGrantsModal({ target, onClose }: { target: User; onClose: () => void }) {
+  const qc = useQueryClient();
+  const confirm = useConfirm();
+  const [connectionId, setConnectionId] = useState("");
+  const [newRole, setNewRole] = useState<GrantRole>("viewer");
+  const [, setTick] = useState(0); // forces a re-render so a cancelled <select> snaps back
+
+  const grantsKey = qk.grants.byUser(target.id);
+  const { data: grants, isLoading, error } = useQuery({
+    queryKey: grantsKey,
+    queryFn: () => api.get<Grant[]>(`/auth/users/${target.id}/grants`),
+  });
+  const { data: connections, isLoading: connectionsLoading } = useQuery({
+    queryKey: qk.connections.list(),
+    queryFn: () => api.get<Connection[]>("/connections"),
+  });
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: grantsKey });
+  const save = useMutation({
+    mutationFn: (body: GrantIn) => api.post<Grant>(`/auth/users/${target.id}/grants`, body),
+    onSuccess: () => {
+      setConnectionId("");
+      setNewRole("viewer");
+      invalidate();
+    },
+  });
+  const revoke = useMutation({
+    mutationFn: (cid: number) => api.del(`/auth/users/${target.id}/grants/${cid}`),
+    onSuccess: invalidate,
+  });
+
+  const rows = grants ?? [];
+  const scoped = rows.length > 0;
+  const grantedIds = new Set(rows.map((g) => g.connection_id));
+  const addable = (connections ?? []).filter((c) => !grantedIds.has(c.id));
+  const busy = save.isPending || revoke.isPending;
+  const isGlobalAdmin = target.role === "admin";
+
+  const addGrant = async () => {
+    const cid = Number(connectionId);
+    const conn = connections?.find((c) => c.id === cid);
+    if (!conn) return;
+    // The FIRST grant flips the user from "sees everything at their global role"
+    // to grant-only visibility — never let that happen silently.
+    if (!scoped) {
+      const ok = await confirm({
+        title: isGlobalAdmin ? "Record a grant for an admin?" : "Restrict this user to granted connections?",
+        confirmLabel: "Grant access",
+        body: isGlobalAdmin ? (
+          <>
+            <strong>{target.email}</strong> is a global admin, and admins bypass grants — they will
+            keep seeing every connection. This grant is stored but only starts scoping them if you
+            lower their role, at which point they would see <strong>only {conn.name}</strong>.
+          </>
+        ) : (
+          <>
+            <strong>{target.email}</strong> has no grants today, so they can see{" "}
+            <strong>every connection</strong> at their global {target.role} role. Adding this first
+            grant switches them to grant-only visibility: from now on they will see{" "}
+            <strong>only {conn.name}</strong> until you grant more.
+          </>
+        ),
+      });
+      if (!ok) return;
+    }
+    save.mutate({ connection_id: cid, role: newRole });
+  };
+
+  const changeRole = async (g: Grant, role: GrantRole) => {
+    if (role === g.role) return;
+    const ok = await confirm({
+      title: "Change grant role",
+      confirmLabel: "Change role",
+      body: (
+        <>
+          Change <strong>{target.email}</strong>'s access to <strong>{g.connection_name}</strong>{" "}
+          from <strong>{g.role}</strong> to <strong>{role}</strong>?{" "}
+          {isGlobalAdmin
+            ? "They are a global admin, so this is recorded but changes nothing until you lower their role."
+            : `This takes effect immediately and can never exceed their global ${target.role} role.`}
+        </>
+      ),
+    });
+    if (ok) save.mutate({ connection_id: g.connection_id, role });
+    else setTick((t) => t + 1);
+  };
+
+  const removeGrant = async (g: Grant) => {
+    const last = rows.length === 1;
+    const ok = await confirm({
+      title: "Remove connection grant",
+      danger: true,
+      confirmLabel: "Remove grant",
+      body: isGlobalAdmin ? (
+        <>
+          Remove the stored <strong>{g.connection_name}</strong> grant for{" "}
+          <strong>{target.email}</strong>? They are a global admin, so admins bypass grants and
+          their visibility does not change — this only clears the scoping that would apply if you
+          lowered their role.
+        </>
+      ) : last ? (
+        <>
+          Remove <strong>{target.email}</strong>'s last grant (
+          <strong>{g.connection_name}</strong>)? With zero grants they revert to global-role
+          visibility and will see <strong>every connection</strong> again at their {target.role}{" "}
+          role — this widens their access, it does not remove it.
+        </>
+      ) : (
+        <>
+          Remove <strong>{target.email}</strong>'s access to <strong>{g.connection_name}</strong>?
+          They will no longer see that connection, its datasets, checks, or exceptions.
+        </>
+      ),
+    });
+    if (ok) revoke.mutate(g.connection_id);
+  };
+
+  return (
+    <Modal
+      wide
+      title={`Connection access — ${target.email}`}
+      onClose={onClose}
+      dirty={connectionId !== ""}
+      footer={<button onClick={onClose}>Done</button>}
+    >
+      <p style={{ fontSize: 12.5, color: "var(--text-light)", margin: "0 0 12px", lineHeight: 1.55 }}>
+        A grant scopes <em>which</em> connections this user can see and at what level. Least
+        privilege: a grant never elevates — the effective access is the lower of their global role
+        and the grant role, so a global viewer with an editor grant is still read-only. Home,
+        datasets, checks, and exceptions are all filtered by these grants.
+      </p>
+
+      {isGlobalAdmin ? (
+        <div className="empty compact" style={{ textAlign: "left", marginBottom: 12 }}>
+          <strong>{target.email} is a global admin.</strong> Admins bypass grants entirely and can
+          see every connection, so anything set here only takes effect if you lower their role.
+        </div>
+      ) : (
+        <div className="empty compact" style={{ textAlign: "left", marginBottom: 12 }}>
+          {scoped ? (
+            <>
+              <strong>Scoped.</strong> {target.email} sees only the{" "}
+              {rows.length === 1 ? "connection" : `${rows.length} connections`} listed below.
+              Removing the last grant restores access to every connection.
+            </>
+          ) : (
+            <>
+              <strong>No grants.</strong> {target.email} currently sees every connection at their
+              global {target.role} role. Adding the first grant switches them to grant-only
+              visibility.
+            </>
+          )}
+        </div>
+      )}
+
+      <ErrorBox error={error || save.error || revoke.error} />
+
+      {isLoading ? (
+        <Spinner />
+      ) : !rows.length ? (
+        <div className="empty compact">No connection grants for this user.</div>
+      ) : (
+        <div className="table-wrap" style={{ marginBottom: 14 }}>
+          <table className="data">
+            <thead>
+              <tr>
+                <th>Connection</th>
+                <th>Granted role</th>
+                <th>Effective access</th>
+                <th>Granted</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((g) => {
+                const effective = isGlobalAdmin ? "admin" : effectiveRole(target.role, g.role);
+                return (
+                  <tr key={g.id}>
+                    <td style={{ fontWeight: 600, color: "var(--text-dark)" }}>
+                      {g.connection_name || `#${g.connection_id}`}
+                    </td>
+                    <td>
+                      <select
+                        value={g.role}
+                        aria-label={`Granted role for ${g.connection_name || `connection #${g.connection_id}`}`}
+                        disabled={busy}
+                        onChange={(e) => changeRole(g, e.target.value as GrantRole)}
+                        style={{ marginTop: 0, width: 110 }}
+                      >
+                        <option value="viewer">viewer</option>
+                        <option value="editor">editor</option>
+                      </select>
+                    </td>
+                    <td>
+                      <span className="badge">{effective}</span>
+                      {!isGlobalAdmin && effective !== g.role && (
+                        <span style={{ fontSize: 11.5, color: "var(--text-light)", marginLeft: 6 }}>
+                          capped by their global {target.role} role
+                        </span>
+                      )}
+                    </td>
+                    <td style={{ color: "var(--text-light)", whiteSpace: "nowrap" }}>
+                      {fmtDateTime(g.created_at)}
+                    </td>
+                    <td style={{ textAlign: "right" }}>
+                      <button
+                        className="small danger"
+                        disabled={busy}
+                        onClick={() => removeGrant(g)}
+                        aria-label={`Remove grant for ${g.connection_name || `connection #${g.connection_id}`}`}
+                      >
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="form-row">
+        <label className="field" style={{ marginBottom: 0 }}>
+          Grant access to connection
+          <select
+            value={connectionId}
+            disabled={!addable.length || busy}
+            onChange={(e) => setConnectionId(e.target.value)}
+          >
+            <option value="">Select a connection…</option>
+            {addable.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+          <div className="field-hint">
+            {connectionsLoading
+              ? "Loading connections…"
+              : !connections?.length
+                ? "No connections registered yet."
+                : !addable.length
+                  ? "Every connection is already granted to this user."
+                  : "Only connections without a grant are listed; change an existing one in the table above."}
+          </div>
+        </label>
+        <label className="field" style={{ marginBottom: 0 }}>
+          Grant role
+          <select
+            value={newRole}
+            disabled={!addable.length || busy}
+            onChange={(e) => setNewRole(e.target.value as GrantRole)}
+          >
+            <option value="viewer">viewer — read this connection</option>
+            <option value="editor">editor — also manage its checks &amp; triage</option>
+          </select>
+          <div className="field-hint">Capped at their global {target.role} role.</div>
+        </label>
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+        <button className="primary" onClick={addGrant} disabled={!connectionId || busy}>
+          <Icon name="plus" size={13} /> Add grant
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 function NewUserModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
   const [email, setEmail] = useState("");
@@ -754,6 +1045,7 @@ export default function SettingsPage() {
   const confirm = useConfirm();
   const [, setTick] = useState(0);
   const [inviting, setInviting] = useState(false);
+  const [grantsFor, setGrantsFor] = useState<User | null>(null);
 
   const { data: health } = useQuery({ queryKey: ["health"], queryFn: () => api.get<Health>("/health") });
   const { data: users, isLoading, error } = useQuery({
@@ -822,9 +1114,16 @@ export default function SettingsPage() {
       {isAdmin(user) ? (
         <>
         <div className="card" style={{ marginBottom: 18 }}>
-          <div className="card-pad" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: 8 }}>
-            <h3>Users</h3>
-            <button className="primary small" onClick={() => setInviting(true)}>
+          <div className="card-pad" style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", paddingBottom: 8 }}>
+            <div>
+              <h3>Users</h3>
+              <p style={{ fontSize: 12.5, color: "var(--text-light)", margin: "4px 0 0" }}>
+                The global role is the ceiling on what someone can do anywhere. Per-connection
+                grants narrow that down to specific sources — use <strong>Manage access</strong> to
+                see and change which connections a teammate can reach.
+              </p>
+            </div>
+            <button className="primary small" onClick={() => setInviting(true)} style={{ flex: "none" }}>
               <Icon name="plus" size={13} /> Invite user
             </button>
           </div>
@@ -841,6 +1140,7 @@ export default function SettingsPage() {
                     <th>Role</th>
                     <th>Status</th>
                     <th>Created</th>
+                    <th>Connection access</th>
                     <th />
                   </tr>
                 </thead>
@@ -878,6 +1178,15 @@ export default function SettingsPage() {
                       </td>
                       <td>{u.is_active ? <StatusPill value="active" /> : <StatusPill value="disabled" />}</td>
                       <td style={{ color: "var(--text-light)" }}>{fmtDateTime(u.created_at)}</td>
+                      <td>
+                        <button
+                          className="small"
+                          onClick={() => setGrantsFor(u)}
+                          aria-label={`Manage connection access for ${u.email}`}
+                        >
+                          <Icon name="shield" size={13} /> Manage access
+                        </button>
+                      </td>
                       <td style={{ textAlign: "right" }}>
                         {u.id !== user?.id && (
                           <button
@@ -920,6 +1229,7 @@ export default function SettingsPage() {
         </div>
       )}
       {inviting && <NewUserModal onClose={() => setInviting(false)} />}
+      {grantsFor && <UserGrantsModal target={grantsFor} onClose={() => setGrantsFor(null)} />}
     </div>
   );
 }

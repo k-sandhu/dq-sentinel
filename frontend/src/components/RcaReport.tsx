@@ -28,6 +28,18 @@ function Transcript({ steps }: { steps: TranscriptStep[] }) {
               </div>
             );
           }
+          if (s.type === "tool") {
+            // Non-SQL tool calls (e.g. get_table_code). Without this the step was
+            // dropped and its result block below read as orphaned.
+            const input =
+              s.content == null ? "" : typeof s.content === "string" ? s.content : JSON.stringify(s.content, null, 2);
+            return (
+              <div key={i}>
+                <div style={{ fontSize: 12, fontWeight: 700, marginTop: 8 }}>{"▸ "}{s.name || "tool call"}</div>
+                {input && input !== "{}" && <pre className="sql">{input}</pre>}
+              </div>
+            );
+          }
           if (s.type === "result") {
             return (
               <pre key={i} className="result" style={s.error ? { borderColor: "var(--danger)", color: "var(--danger-dark)" } : undefined}>
@@ -288,6 +300,17 @@ function StructuredReport({ session, report }: { session: RcaSession; report: Rc
         <h4>Recommended actions</h4>
         <ActionsList actions={actions} session={session} />
       </section>
+
+      {/* The narrative report is still written alongside the structured one — keep it
+          reachable rather than dropping it when the structured view renders. */}
+      {session.report_md.trim() && (
+        <details className="step" style={{ marginTop: 18 }}>
+          <summary>Full narrative report</summary>
+          <div className="body">
+            <Markdown>{session.report_md}</Markdown>
+          </div>
+        </details>
+      )}
     </>
   );
 }

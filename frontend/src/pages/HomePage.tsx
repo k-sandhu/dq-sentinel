@@ -1,17 +1,20 @@
 import { useQuery } from "@tanstack/react-query";
-import { type CSSProperties, type ReactNode, useState } from "react";
+import { type CSSProperties, Fragment, type ReactNode, useState } from "react";
 import { Link } from "react-router";
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api/client";
+import { qk } from "../api/queryKeys";
 import type {
   Dashboard,
   DashboardConsole,
+  Reliability,
   ScorecardSloStatus,
   ScorecardSummary,
 } from "../api/types";
+import { rollupFilterHref } from "../components/datasets/datasetsFilters";
 import RunsTable from "../components/RunsTable";
 import { EmptyState, ErrorBox, Icon, Spinner } from "../components/ui";
-import { fmtNum, fmtPct } from "../lib/format";
+import { fmtDuration, fmtNum, fmtPct } from "../lib/format";
 
 const TOOLTIP_STYLE = {
   fontSize: 12,
@@ -92,15 +95,60 @@ function Kpi({
   );
 }
 
+function mean(values: number[]): number | null {
+  return values.length === 0 ? null : values.reduce((s, v) => s + v, 0) / values.length;
+}
+
+/**
+ * Headline MTTD/MTTR for the status tile, aggregated from `GET /sla/reliability`.
+ *
+ * The API reports these per-SLA on the latest evaluation, and both stay `null`
+ * until an incident has actually been detected and resolved inside that SLA's
+ * window — so "no number" is the normal state on a young deployment. The tile used
+ * to hardcode a bare "—", which reads as "your MTTR is unknown/broken"; say which
+ * of the three real reasons applies instead (#294).
+ */
+function mttHeadline(
+  rel: Reliability | undefined,
+  isLoading: boolean,
+  error: unknown,
+): { value: string; foot: string } {
+  if (error) return { value: "—", foot: "reliability data unavailable" };
+  if (isLoading || !rel) return { value: "…", foot: "loading…" };
+  if (rel.total === 0) return { value: "—", foot: "no SLAs defined yet — define one" };
+
+  const latest = rel.slas.map((s) => s.latest).filter((l) => l != null);
+  const mttd = mean(latest.map((l) => l.mttd_seconds).filter((v): v is number => v != null));
+  const mttr = mean(latest.map((l) => l.mttr_seconds).filter((v): v is number => v != null));
+  const scored = latest.filter((l) => l.mttd_seconds != null || l.mttr_seconds != null).length;
+  if (scored === 0) {
+    return {
+      value: "—",
+      foot: `needs resolved incidents — none yet across ${fmtNum(rel.total)} SLA${rel.total === 1 ? "" : "s"}`,
+    };
+  }
+  return {
+    value: `${fmtDuration(mttd)} / ${fmtDuration(mttr)}`,
+    foot: `mean across ${fmtNum(scored)} of ${fmtNum(rel.total)} SLAs`,
+  };
+}
+
 function StatusTier({
   summary,
   dashboard,
   openIncidents,
+  reliability,
+  reliabilityLoading,
+  reliabilityError,
 }: {
   summary: ScorecardSummary | undefined;
   dashboard: Dashboard | undefined;
   openIncidents: number | null;
+  reliability: Reliability | undefined;
+  reliabilityLoading: boolean;
+  reliabilityError: unknown;
 }) {
+  const mtt = mttHeadline(reliability, reliabilityLoading, reliabilityError);
   const passingPct =
     summary && summary.active_checks > 0
       ? (summary.passing_checks / summary.active_checks) * 100
@@ -141,11 +189,7 @@ function StatusTier({
         tone={openExc ? "danger" : "ok"}
         to="/exceptions"
       />
-      <Kpi
-        label="MTTD / MTTR"
-        value="—"
-        foot={<Link to="/reliability">per-SLA · Reliability →</Link>}
-      />
+      <Kpi label="MTTD / MTTR" value={mtt.value} foot={mtt.foot} to="/reliability" />
       <Kpi
         label="Coverage"
         value={coverage == null ? "—" : fmtPct(coverage / 100)}
@@ -306,6 +350,50 @@ function NeedsAttention({ console: c, summary }: { console: DashboardConsole | u
 
 type RiskFilter = "all" | "failing" | "exceptions";
 
+/**
+ * Ownership cell: domain and team are links into the Datasets rollup drill-in
+ * (`/datasets?domain=…`), which is what makes the "Filtered by" strip reachable —
+ * before this the strip and its URL params had no producer anywhere in the app
+ * (#294). Owner stays plain text: there is no owner filter on that page.
+ */
+function OwnerCell({
+  domain,
+  team,
+  owner,
+  fallback,
+}: {
+  domain: string | null;
+  team: string | null;
+  owner: string | null;
+  fallback: string;
+}) {
+  const parts: ReactNode[] = [];
+  if (domain)
+    parts.push(
+      <Link key="domain" to={rollupFilterHref("domain", domain)} title={`Show all datasets in the ${domain} domain`}>
+        {domain}
+      </Link>,
+    );
+  if (team)
+    parts.push(
+      <Link key="team" to={rollupFilterHref("team", team)} title={`Show all datasets owned by ${team}`}>
+        {team}
+      </Link>,
+    );
+  if (owner) parts.push(<span key="owner">{owner}</span>);
+  if (parts.length === 0) return <>{fallback || "—"}</>;
+  return (
+    <>
+      {parts.map((part, i) => (
+        <Fragment key={i}>
+          {i > 0 && " / "}
+          {part}
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
 function DatasetsByRisk({
   summary,
   dashboard,
@@ -321,7 +409,12 @@ function DatasetsByRisk({
         score: d.score,
         status: d.slo_status,
         exceptions: d.open_exceptions,
-        owner: [d.domain, d.team, d.owner].filter(Boolean).join(" / "),
+        // Kept as separate fields (not a pre-joined string) so domain/team can each
+        // link into their own Datasets drill-in.
+        domain: d.domain || null,
+        team: d.team || null,
+        owner: d.owner || null,
+        ownerFallback: "",
       }))
     : (dashboard?.worst_datasets ?? []).map((d) => ({
         id: d.id,
@@ -329,7 +422,10 @@ function DatasetsByRisk({
         score: null as number | null,
         status: null as ScorecardSloStatus | null,
         exceptions: d.open_exceptions,
-        owner: d.connection_name,
+        domain: d.domain,
+        team: d.team,
+        owner: d.owner,
+        ownerFallback: d.connection_name,
       }));
   const shown = rows.filter((r) =>
     filter === "all"
@@ -374,7 +470,7 @@ function DatasetsByRisk({
                 <th>Score</th>
                 <th>SLO</th>
                 <th className="num">Open exceptions</th>
-                <th>Owner</th>
+                <th>Domain / team / owner</th>
               </tr>
             </thead>
             <tbody>
@@ -392,7 +488,9 @@ function DatasetsByRisk({
                       fmtNum(r.exceptions)
                     )}
                   </td>
-                  <td>{r.owner || "—"}</td>
+                  <td>
+                    <OwnerCell domain={r.domain} team={r.team} owner={r.owner} fallback={r.ownerFallback} />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -409,6 +507,9 @@ export default function HomePage() {
   const dashboardQuery = useQuery({ queryKey: ["dashboard"], queryFn: () => api.get<Dashboard>("/dashboard"), refetchInterval: 30_000 });
   const summaryQuery = useQuery({ queryKey: ["scorecards", "summary"], queryFn: () => api.get<ScorecardSummary>("/scorecards/summary"), refetchInterval: 60_000, retry: false });
   const consoleQuery = useQuery({ queryKey: ["dashboard", "console"], queryFn: () => api.get<DashboardConsole>("/dashboard/console"), refetchInterval: 60_000, retry: false });
+  // Shares the ["reliability"] cache key with /reliability, so the drill-through is
+  // already warm and the tile can't disagree with the page it links to.
+  const reliabilityQuery = useQuery({ queryKey: qk.reliability.get(), queryFn: () => api.get<Reliability>("/sla/reliability"), refetchInterval: 120_000, retry: false });
 
   const dashboard = dashboardQuery.data;
   const summary = summaryQuery.data;
@@ -439,7 +540,14 @@ export default function HomePage() {
       </div>
 
       {/* Tier 1 — status */}
-      <StatusTier summary={summary} dashboard={dashboard} openIncidents={openIncidents} />
+      <StatusTier
+        summary={summary}
+        dashboard={dashboard}
+        openIncidents={openIncidents}
+        reliability={reliabilityQuery.data}
+        reliabilityLoading={reliabilityQuery.isLoading}
+        reliabilityError={reliabilityQuery.error}
+      />
 
       {/* Tier 2 — trend + attention */}
       <div className="split" style={{ margin: "16px 0" }}>

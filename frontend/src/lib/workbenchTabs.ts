@@ -1,6 +1,12 @@
 // Multi-tab editor state for the Workbench (#104). Tabs are local worksheets; only
-// their id/title/sql persist to localStorage (results stay in memory). Restoring the
-// last session is a nicety, so all access is best-effort and tolerant of bad data.
+// their id/title/sql persist (results stay in memory). Restoring the last session is
+// a nicety, so all access is best-effort and tolerant of bad data.
+//
+// Persistence goes through the prefs chokepoint (#294) so worksheets land in the
+// signed-in user's namespace — un-namespaced, the next analyst on a shared machine
+// opened the Workbench to someone else's in-progress SQL.
+
+import { getPref, PREF_KEYS, setPref } from "./prefs";
 
 export interface WorkbenchTab {
   id: string;
@@ -13,7 +19,6 @@ export interface WorkbenchTabsState {
   activeId: string;
 }
 
-const KEY = "dq-workbench-tabs";
 const CAP = 12;
 
 export function newTabId(): string {
@@ -32,29 +37,23 @@ export function deriveTabTitle(sql: string, index: number): string {
 }
 
 export function loadTabsState(): WorkbenchTabsState | null {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<WorkbenchTabsState>;
-    if (!parsed || !Array.isArray(parsed.tabs) || parsed.tabs.length === 0) return null;
-    const tabs = parsed.tabs
-      .filter((t): t is WorkbenchTab => !!t && typeof t.id === "string" && typeof t.sql === "string")
-      .slice(0, CAP);
-    if (tabs.length === 0) return null;
-    const activeId = tabs.some((t) => t.id === parsed.activeId) ? parsed.activeId! : tabs[0].id;
-    return { tabs, activeId };
-  } catch {
-    return null;
-  }
+  const parsed = getPref<Partial<WorkbenchTabsState> | null>(PREF_KEYS.workbenchTabs, null);
+  if (!parsed || !Array.isArray(parsed.tabs) || parsed.tabs.length === 0) return null;
+  const tabs = parsed.tabs
+    .filter((t): t is WorkbenchTab => !!t && typeof t.id === "string" && typeof t.sql === "string")
+    .slice(0, CAP);
+  if (tabs.length === 0) return null;
+  const activeId = tabs.some((t) => t.id === parsed.activeId) ? parsed.activeId! : tabs[0].id;
+  return { tabs, activeId };
 }
 
 export function persistTabsState(state: WorkbenchTabsState): void {
-  try {
-    localStorage.setItem(
-      KEY,
-      JSON.stringify({ tabs: state.tabs.slice(0, CAP), activeId: state.activeId }),
-    );
-  } catch {
-    /* storage unavailable — tabs still work for this session */
-  }
+  // Called on every keystroke in the SQL editor — deliberately silent so the
+  // `dq:prefs` subscribers (sidebar favorites, recents strips) aren't woken per
+  // character. Nothing outside the Workbench reads this key.
+  setPref(
+    PREF_KEYS.workbenchTabs,
+    { tabs: state.tabs.slice(0, CAP), activeId: state.activeId },
+    { notify: false },
+  );
 }

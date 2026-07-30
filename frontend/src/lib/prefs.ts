@@ -1,10 +1,12 @@
 /**
  * Typed client-side user preferences (favorites, recently-viewed, default
- * landing, plus the exceptions workspace's saved views / hidden columns).
+ * landing, the exceptions workspace's saved views / hidden columns, and the
+ * Workbench's worksheet tabs + query history).
  *
- * ── v1 storage backend: localStorage ──────────────────────────────────────────
- * Everything is persisted in localStorage, namespaced under the PREF_KEYS below.
- * This is a deliberate v1 trade-off: zero backend, instant reads, no migration.
+ * ── v1 storage backend: localStorage, namespaced per user ─────────────────────
+ * Everything is persisted in localStorage under the PREF_KEYS below, with the
+ * signed-in user's id appended (see `physicalKey`). This is a deliberate v1
+ * trade-off: zero backend, instant reads.
  *
  * ── v2-swap contract (READ THIS BEFORE ADDING STORAGE) ────────────────────────
  * Enterprise users work across machines (office desktop, laptop, VDI) and will
@@ -20,8 +22,12 @@
  * ── privacy ───────────────────────────────────────────────────────────────────
  * Store dataset IDs only — never names or row data. Prefs then carry nothing
  * meaningful without API access, so they share (and never exceed) the exposure
- * surface of the JWT that already lives in this same localStorage.
+ * surface of the JWT that already lives in this same localStorage. The one
+ * exception is the Workbench query history, which necessarily stores the SQL the
+ * analyst typed — which is exactly why the per-user namespace below exists.
  */
+
+import { getToken } from "../api/client";
 
 export const PREF_KEYS = {
   favorites: "dq_favs", // number[] dataset ids, most-recently-starred first
@@ -29,18 +35,98 @@ export const PREF_KEYS = {
   landing: "dq_landing", // LandingPref
   views: "dq_views_v1", // SavedView[] (exceptions workspace, #63)
   cols: "dq_cols_v1", // string[] of hidden column ids (exceptions table, #63)
+  workbenchTabs: "dq-workbench-tabs", // WorkbenchTabsState (#104)
+  workbenchHistory: "dq-workbench-history", // QueryHistoryEntry[] (#104)
 } as const;
 
 export type PrefKey = (typeof PREF_KEYS)[keyof typeof PREF_KEYS];
 
+// ── per-user namespacing (#294) ────────────────────────────────────────────────
+// On a shared VDI/desk machine the un-namespaced keys handed the next analyst the
+// previous one's saved views, landing page, worksheet tabs and full SQL history.
+// The namespace is derived from the JWT that is already in this same storage, NOT
+// from `useAuth()`, because prefs are read synchronously during the first paint —
+// long before `GET /auth/me` resolves. That removes the "user id not known yet"
+// case entirely: whenever there is a session there is an id.
+//
+// Appearance keys (`dq-theme`, `dq-density`, …) stay deliberately un-namespaced:
+// index.html's pre-paint bootstrap reads them verbatim before any token is parsed,
+// and a theme choice is a machine-level display setting, not analyst state.
+
+const NS_SEP = "::";
+
+let nsCache: { token: string | null; ns: string | null } = { token: null, ns: null };
+
+/** Decode the `sub` (user id) claim from the stored JWT. Signature is irrelevant
+ *  here — this only picks a storage bucket; the server still validates the token
+ *  on every request. Returns null when signed out or the token is unreadable. */
+function currentUserNs(): string | null {
+  let token: string | null = null;
+  try {
+    token = getToken();
+  } catch {
+    return null;
+  }
+  if (!token) return null;
+  if (nsCache.token === token) return nsCache.ns;
+
+  let ns: string | null = null;
+  try {
+    const payload = token.split(".")[1];
+    if (payload) {
+      const b64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+      const json = atob(b64.padEnd(Math.ceil(b64.length / 4) * 4, "="));
+      const sub = (JSON.parse(json) as { sub?: unknown }).sub;
+      if (typeof sub === "string" && sub) ns = sub;
+      else if (typeof sub === "number") ns = String(sub);
+    }
+  } catch {
+    ns = null; // hand-edited / foreign token — fall back to the shared bucket
+  }
+  nsCache = { token, ns };
+  return ns;
+}
+
+/** Storage key for a logical pref key: per-user while signed in, the bare
+ *  (pre-namespacing) key when signed out. */
+function physicalKey(key: string): string {
+  const ns = currentUserNs();
+  return ns ? `${key}${NS_SEP}${ns}` : key;
+}
+
+/**
+ * One-time adoption of a value written before namespacing existed. The first
+ * signed-in reader claims the legacy key and *removes* it, so a second analyst on
+ * the same machine can't inherit it too. Single-user machines therefore keep their
+ * prefs across the upgrade; on a genuinely shared machine whoever logs in first
+ * adopts them once — which is no worse than the status quo it replaces.
+ */
+function adoptLegacy(key: string, physical: string): string | null {
+  const legacy = localStorage.getItem(key);
+  if (legacy == null) return null;
+  localStorage.setItem(physical, legacy);
+  localStorage.removeItem(key);
+  return legacy;
+}
+
 /** Read a JSON-serialized preference. Returns `fallback` on miss or any error. */
 export function getPref<T>(key: string, fallback: T): T {
   try {
-    const raw = localStorage.getItem(key);
+    const physical = physicalKey(key);
+    let raw = localStorage.getItem(physical);
+    if (raw == null && physical !== key) raw = adoptLegacy(key, physical);
     return raw == null ? fallback : (JSON.parse(raw) as T);
   } catch {
     return fallback;
   }
+}
+
+export interface SetPrefOptions {
+  /** Fire the `dq:prefs` window event (default true). Pass `false` for
+   *  high-frequency writes nothing subscribes to — the Workbench re-persists its
+   *  worksheet SQL on every keystroke, and waking every `subscribePrefs` listener
+   *  per character would re-render the sidebar while the analyst types. */
+  notify?: boolean;
 }
 
 /**
@@ -49,12 +135,13 @@ export function getPref<T>(key: string, fallback: T): T {
  * other mounted components (e.g. the sidebar Favorites group) can re-read
  * without a remount — see `subscribePrefs`.
  */
-export function setPref<T>(key: string, value: T): void {
+export function setPref<T>(key: string, value: T, opts: SetPrefOptions = {}): void {
   try {
-    localStorage.setItem(key, JSON.stringify(value));
+    localStorage.setItem(physicalKey(key), JSON.stringify(value));
   } catch {
     /* storage unavailable — degrade silently */
   }
+  if (opts.notify === false) return;
   try {
     window.dispatchEvent(new CustomEvent(PREFS_EVENT, { detail: { key } }));
   } catch {
@@ -74,9 +161,12 @@ export function subscribePrefs(handler: () => void): () => void {
 // ── raw (non-JSON) prefs ────────────────────────────────────────────────────────
 // The appearance axes (#172) store plain strings under `dq-*` keys that the
 // pre-paint bootstrap in index.html reads VERBATIM, so they can't go through the
-// JSON-encoding getPref/setPref. These raw helpers keep them on the same prefs
-// chokepoint (one place to swap for a server-backed store) and fire the same
-// `dq:prefs` event so live components (the appearance drawer) stay in sync.
+// JSON-encoding getPref/setPref — and for the same reason they are NOT per-user
+// namespaced (#294): the bootstrap runs before any token is parsed, and making it
+// user-aware would trade a flash-of-wrong-theme for a leak that is cosmetic only.
+// These raw helpers keep them on the same prefs chokepoint (one place to swap for
+// a server-backed store) and fire the same `dq:prefs` event so live components
+// (the appearance drawer) stay in sync.
 
 /** Read a raw string preference, or `null` on miss / unavailable storage. */
 export function getRawPref(key: string): string | null {

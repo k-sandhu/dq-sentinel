@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api, ApiError } from "../api/client";
 import { qk } from "../api/queryKeys";
 import type { Dataset, Profile } from "../api/types";
-import { canEdit, useAuth } from "../auth";
+import { canEdit, isAdmin, useAuth } from "../auth";
+import { useConfirm } from "../components/confirm";
 import { Breadcrumbs, ErrorBox, Icon, NotFoundState, Spinner, StatusPill } from "../components/ui";
 import { fmtNum, timeAgo } from "../lib/format";
 import { isFavorite, pushRecent, subscribePrefs, toggleFavorite } from "../lib/prefs";
@@ -30,26 +31,15 @@ export default function DatasetDetailPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const qc = useQueryClient();
+  const confirm = useConfirm();
+  const unregisterHintId = useId();
   const active: Tab = TABS.includes(tab as Tab) ? (tab as Tab) : "profile";
-  // Tabs with in-progress form state report unsaved edits here so a tab switch can
-  // warn first (BF-3 for Knowledge, #D4 for Contract — both hold a lot of typing).
-  const knowledgeDirty = useRef(false);
-  const contractDirty = useRef(false);
 
-  const goTab = (t: Tab) => {
-    const dirtyTab =
-      active === "knowledge" && knowledgeDirty.current
-        ? "knowledge"
-        : active === "contract" && contractDirty.current
-          ? "contract"
-          : null;
-    if (
-      dirtyTab &&
-      !window.confirm(`You have unsaved changes to this table's ${dirtyTab}. Leave without saving?`)
-    )
-      return;
-    navigate(`/datasets/${datasetId}/${t}`);
-  };
+  // Tabs are routes, so the tabs that hold in-progress typing (Knowledge BF-3,
+  // Contract #D4) guard this switch themselves via useUnsavedGuard — the same
+  // shared dialog that now also covers sidebar links and global search (#284).
+  // This page no longer needs its own dirty bookkeeping or a native confirm().
+  const goTab = (t: Tab) => navigate(`/datasets/${datasetId}/${t}`);
 
   // A mistyped link ("/datasets/not-a-number") must land on the designed
   // not-found, not a 422 error box — and must not fire /datasets/NaN requests.
@@ -73,6 +63,30 @@ export default function DatasetDetailPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.profile.detail(datasetId) });
       qc.invalidateQueries({ queryKey: qk.datasets.all });
+    },
+  });
+
+  // Unregister (#289): DELETE /datasets/{id} was wired but unreachable from the UI,
+  // so a mis-registered table polluted health rollups and coverage % forever unless
+  // an admin deleted the whole connection. Admin-only, type-to-confirm, and the
+  // cascade is spelled out honestly in the dialog (see core/deletion.py).
+  const unregister = useMutation({
+    mutationFn: () => api.del<void>(`/datasets/${datasetId}`),
+    onSuccess: () => {
+      // Drop this dataset's own cache entries FIRST so the list invalidation below
+      // can't refetch a row that no longer exists (a 404 flash on the way out).
+      qc.removeQueries({ queryKey: qk.datasets.detail(datasetId) });
+      qc.removeQueries({ queryKey: qk.profile.detail(datasetId) });
+      navigate("/datasets", { replace: true });
+      // Rollups that counted this dataset must recompute immediately.
+      qc.invalidateQueries({ queryKey: qk.datasets.all });
+      qc.invalidateQueries({ queryKey: qk.dashboard.all });
+      qc.invalidateQueries({ queryKey: qk.dashboardConsole.all });
+      qc.invalidateQueries({ queryKey: qk.scorecards.all });
+      qc.invalidateQueries({ queryKey: qk.reliability.all });
+      qc.invalidateQueries({ queryKey: qk.catalog.all });
+      qc.invalidateQueries({ queryKey: qk.checks.all });
+      qc.invalidateQueries({ queryKey: qk.savedQueries.all });
     },
   });
 
@@ -129,9 +143,63 @@ export default function DatasetDetailPage() {
               {runProfile.isPending ? "Profiling…" : "Profile now"}
             </button>
           )}
+          {/* Admin-only (the endpoint gates on the global admin role). The reason is
+              visible text, not a title on a disabled control, so it reaches keyboard
+              and screen-reader users too. */}
+          <button
+            type="button"
+            className="danger"
+            disabled={!isAdmin(user) || unregister.isPending}
+            aria-describedby={isAdmin(user) ? undefined : unregisterHintId}
+            title={isAdmin(user) ? "Remove this dataset from DQ Sentinel (the source table is not touched)" : undefined}
+            onClick={async () => {
+              if (
+                await confirm({
+                  title: "Unregister dataset",
+                  danger: true,
+                  confirmLabel: "Unregister dataset",
+                  typeToConfirm: dataset.table_name,
+                  body: (
+                    <>
+                      <p style={{ margin: "0 0 8px" }}>
+                        This removes <strong>{datasetLabel}</strong> from DQ Sentinel. The table in{" "}
+                        <strong>{dataset.connection_name}</strong> is <strong>not</strong> touched — DQ
+                        Sentinel only ever reads from your sources.
+                      </p>
+                      <p style={{ margin: "0 0 4px" }}>Permanently deleted with it:</p>
+                      <ul style={{ margin: "0 0 8px", paddingLeft: 18 }}>
+                        <li>
+                          all {dataset.active_checks} active check(s) and every archived check on this
+                          dataset, plus their entire run history
+                        </li>
+                        <li>
+                          all exceptions raised on it ({dataset.open_exceptions} currently open) and their
+                          triage history
+                        </li>
+                        <li>profiles, schema-history snapshots and any pinned schema baseline</li>
+                        <li>root-cause analyses, incidents and their timelines</li>
+                        <li>ad-hoc dashboards, notification rules, and SLAs scoped to it or its checks</li>
+                        <li>its dataset-level scorecard history</li>
+                      </ul>
+                      <p style={{ margin: 0 }}>
+                        Saved workbench queries pinned here are kept — they just lose the pin. Re-registering
+                        the table later starts from an empty history. This cannot be undone.
+                      </p>
+                    </>
+                  ),
+                })
+              )
+                unregister.mutate();
+            }}
+          >
+            <Icon name="x" size={13} /> {unregister.isPending ? "Unregistering…" : "Unregister"}
+          </button>
+          {!isAdmin(user) && (
+            <span id={unregisterHintId} className="badge">admin only</span>
+          )}
         </div>
       </div>
-      <ErrorBox error={runProfile.error} />
+      <ErrorBox error={runProfile.error || unregister.error} />
 
       <div className="tabs">
         {TABS.map((t) => (
@@ -153,7 +221,7 @@ export default function DatasetDetailPage() {
       {active === "code" && <CodeTab datasetId={datasetId} />}
       {active === "schema" && <SchemaTab datasetId={datasetId} />}
       {active === "lineage" && <LineageTab dataset={dataset} />}
-      {active === "contract" && <ContractTab dataset={dataset} dirtyRef={contractDirty} />}
+      {active === "contract" && <ContractTab dataset={dataset} />}
       {active === "monitors" && (
         <MonitorPackTab
           datasetId={datasetId}
@@ -166,7 +234,7 @@ export default function DatasetDetailPage() {
       {active === "runs" && <RunsTab datasetId={datasetId} />}
       {active === "exceptions" && <ExceptionsTab datasetId={datasetId} />}
       {active === "dashboards" && <DashboardsTab datasetId={datasetId} hasProfile={!!profileQuery.data} />}
-      {active === "knowledge" && <KnowledgeTab datasetId={datasetId} dirtyRef={knowledgeDirty} />}
+      {active === "knowledge" && <KnowledgeTab datasetId={datasetId} />}
       {active === "rca" && <RcaTab datasetId={datasetId} />}
     </div>
   );

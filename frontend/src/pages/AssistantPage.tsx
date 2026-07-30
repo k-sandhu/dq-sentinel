@@ -206,19 +206,38 @@ export default function AssistantPage() {
             </EmptyState>
           ) : (
             <>
-              {messages.map((m) => (
-                <MessageView key={m.id} message={m} />
-              ))}
-              {(liveSteps.length > 0 || busy) && (
-                <div className="chat-msg assistant">
-                  <StepList steps={liveSteps} />
-                  {status && (
-                    <div className="chat-status">
-                      <span className="spinner" /> {status}
-                    </div>
-                  )}
-                </div>
-              )}
+              {/* Live regions (#294): the turn streams in visually only, so a screen
+                  reader heard nothing between "sent" and "done".
+                  - `role="log"` + `aria-relevant="additions"` announces whole
+                    *appended* nodes — a finished message, a new agent step — rather
+                    than re-reading the transcript or narrating every token.
+                  - The status line carries its own `role="status"`; because it lives
+                    inside the log, its insertion is announced by the log and its
+                    later text changes ("Thinking…" → "Running run sql…") by its own
+                    polite region, so no separate always-mounted region is needed.
+                  The empty state sits outside the log so its suggestion chips are
+                  not announced as conversation. */}
+              <div
+                className="chat-log"
+                role="log"
+                aria-live="polite"
+                aria-relevant="additions"
+                aria-label="Conversation"
+              >
+                {messages.map((m) => (
+                  <MessageView key={m.id} message={m} />
+                ))}
+                {(liveSteps.length > 0 || busy) && (
+                  <div className="chat-msg assistant">
+                    <StepList steps={liveSteps} />
+                    {status && (
+                      <div className="chat-status" role="status">
+                        <span className="spinner" /> {status}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
               {messages.length === 0 && !busy && socket.state === "open" && (
                 <EmptyState title="What do you want to know?" hint="Try one of these:">
                   <div className="chat-suggestions">

@@ -142,9 +142,17 @@ function useRecentDatasets(enabled: boolean): SearchHit[] {
   }, [enabled, datasets, recentEntries]);
 }
 
+const SEARCH_LISTBOX_ID = "global-search-listbox";
+const searchOptionId = (index: number) => `global-search-option-${index}`;
+
 /** Global command palette: debounced GET /search?q=…, hits grouped by entity
  *  type, arrow-key navigation, Enter to jump. "/" and Ctrl/Cmd+K both focus it;
- *  empty focus shows "Recently viewed" datasets from prefs when available. */
+ *  empty focus shows "Recently viewed" datasets from prefs when available.
+ *
+ *  Wired as an ARIA 1.2 combobox (#294): the input keeps DOM focus and owns the
+ *  listbox via aria-controls + aria-activedescendant, so the arrow-key highlight is
+ *  actually reported instead of being a CSS class nobody can perceive, and the hit
+ *  count is announced politely on every result change. */
 function GlobalSearch() {
   const navigate = useNavigate();
   const [term, setTerm] = useState("");
@@ -221,6 +229,7 @@ function GlobalSearch() {
   }
 
   let flatCursor = -1; // running index across groups so highlight maps to `flat`
+  const activeOption = visible && flat.length > 0 ? Math.min(activeIndex, flat.length - 1) : -1;
   return (
     <div className="global-search" ref={boxRef}>
       <Icon name="search" size={15} />
@@ -229,6 +238,13 @@ function GlobalSearch() {
         type="text"
         placeholder="Search datasets, checks, connections…"
         aria-label="Search datasets, checks, connections"
+        role="combobox"
+        aria-expanded={visible}
+        aria-controls={visible ? SEARCH_LISTBOX_ID : undefined}
+        aria-haspopup="listbox"
+        aria-autocomplete="list"
+        aria-activedescendant={activeOption >= 0 ? searchOptionId(activeOption) : undefined}
+        autoComplete="off"
         value={term}
         onChange={(e) => {
           setTerm(e.target.value);
@@ -253,38 +269,75 @@ function GlobalSearch() {
         }}
       />
       {!term && <span className="kbd search-kbd">Ctrl K</span>}
+      {/* Polite result count. Always mounted so the region exists before its text
+          changes; empty while the popup is closed. */}
+      <span className="sr-only" role="status">
+        {visible
+          ? flat.length === 0
+            ? "No results"
+            : `${flat.length} result${flat.length === 1 ? "" : "s"}`
+          : ""}
+      </span>
       {visible && (
         <div className="search-pop">
-          {showRecents && <div className="nav-section">Recently viewed</div>}
-          {debounced.length > 0 && flat.length === 0 ? (
-            <div className="search-empty">No matches for “{debounced}”</div>
-          ) : (
-            SEARCH_GROUPS.map((group) => {
-              const groupHits = hits.filter((h) => h.type === group.type);
-              if (groupHits.length === 0) return null;
-              return (
-                <div key={group.type}>
-                  {!showRecents && <div className="nav-section">{group.label}</div>}
-                  {groupHits.map((h) => {
-                    flatCursor += 1;
-                    const idx = flatCursor;
-                    return (
-                      <button
-                        key={`${h.type}-${h.id}`}
-                        type="button"
-                        className={`search-hit${idx === activeIndex ? " active" : ""}`}
-                        onMouseEnter={() => setActiveIndex(idx)}
-                        onClick={() => go(h.url)}
-                      >
-                        <span className="title">{h.title}</span>
-                        <span className="meta">{h.subtitle}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              );
-            })
-          )}
+          {/* The listbox is always rendered while open (even when empty) so the
+              input's aria-controls never dangles; the empty line is decorative
+              because the polite "No results" status above already says it. */}
+          <div
+            id={SEARCH_LISTBOX_ID}
+            role="listbox"
+            aria-label={showRecents ? "Recently viewed datasets" : "Search results"}
+          >
+            {debounced.length > 0 && flat.length === 0 ? (
+              <div className="search-empty" role="presentation">
+                No matches for “{debounced}”
+              </div>
+            ) : (
+              <>
+                {/* Headings are decorative here: the listbox/group labels carry the
+                    same information to assistive tech. */}
+                {showRecents && (
+                  <div className="nav-section" role="presentation">
+                    Recently viewed
+                  </div>
+                )}
+                {SEARCH_GROUPS.map((group) => {
+                  const groupHits = hits.filter((h) => h.type === group.type);
+                  if (groupHits.length === 0) return null;
+                  return (
+                    <div key={group.type} role="group" aria-label={group.label}>
+                      {!showRecents && (
+                        <div className="nav-section" role="presentation">
+                          {group.label}
+                        </div>
+                      )}
+                      {groupHits.map((h) => {
+                        flatCursor += 1;
+                        const idx = flatCursor;
+                        return (
+                          // A div, not a button: focus stays on the combobox input
+                          // and the active option is conveyed by
+                          // aria-activedescendant, so options must not be tab stops.
+                          <div
+                            key={`${h.type}-${h.id}`}
+                            id={searchOptionId(idx)}
+                            role="option"
+                            aria-selected={idx === activeOption}
+                            className={`search-hit${idx === activeOption ? " active" : ""}`}
+                            onMouseEnter={() => setActiveIndex(idx)}
+                            onClick={() => go(h.url)}
+                          >
+                            <span className="title">{h.title}</span>
+                            <span className="meta">{h.subtitle}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>

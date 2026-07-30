@@ -1,7 +1,9 @@
+import type { QueryClient } from "@tanstack/react-query";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { api } from "../api/client";
+import { qk } from "../api/queryKeys";
 import type { Check, CheckBulkTransitionOut, CheckTypeInfo, Run } from "../api/types";
 import { canEdit, useAuth } from "../auth";
 import { checkTypeLabel, originLabel } from "../lib/checkMeta";
@@ -10,6 +12,34 @@ import CheckHistory from "./CheckHistory";
 import { useConfirm } from "./confirm";
 import CheckParamsForm, { validateParams } from "./CheckParamsForm";
 import { EmptyState, ErrorBox, Icon, Modal, SeverityBadge, StatusPill } from "./ui";
+
+/**
+ * Invalidate every cache a check mutation can stale (#285).
+ *
+ * A check transition changes far more than the checks list. The dataset header
+ * and the datasets index render `active_checks` / `open_exceptions` rollups, the
+ * home dashboard counts active/proposed/failing checks, and a dataset's monitor
+ * pack embeds the managed check rows verbatim. Invalidating only ["checks"] left
+ * the header saying "3 active checks" while the table under it listed 4 — the
+ * app contradicting itself inside one viewport.
+ *
+ * `qk.datasets.all` is the bare ["datasets"] prefix, so one call covers the
+ * index, the per-connection list AND `qk.datasets.detail(id)` — no per-id call
+ * is needed (and none is possible here: this table also renders the cross-
+ * dataset /checks page, where rows span many datasets). Same for
+ * `qk.monitorPack.all`, which mirrors MonitorPackTab invalidating `qk.checks.all`
+ * in the other direction.
+ *
+ * Exported so the dataset Checks tab shares exactly one definition of "what a
+ * check mutation dirties" instead of drifting from this one.
+ */
+export function invalidateCheckCaches(qc: QueryClient): void {
+  qc.invalidateQueries({ queryKey: qk.checks.all });
+  qc.invalidateQueries({ queryKey: qk.runs.all });
+  qc.invalidateQueries({ queryKey: qk.dashboard.all });
+  qc.invalidateQueries({ queryKey: qk.datasets.all });
+  qc.invalidateQueries({ queryKey: qk.monitorPack.all });
+}
 
 function paramsSummary(c: Check): string {
   const entries = Object.entries(c.params ?? {});
@@ -22,7 +52,7 @@ function paramsSummary(c: Check): string {
 function EditCheckModal({ check, onClose }: { check: Check; onClose: () => void }) {
   const qc = useQueryClient();
   const { data: types } = useQuery({
-    queryKey: ["check-types"],
+    queryKey: qk.checkTypes.list(),
     queryFn: () => api.get<CheckTypeInfo[]>("/checks/types"),
   });
   const [name, setName] = useState(check.name);
@@ -52,7 +82,9 @@ function EditCheckModal({ check, onClose }: { check: Check; onClose: () => void 
         params,
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["checks"] });
+      // An edit can move severity/schedule/params, all of which feed the dataset
+      // and dashboard rollups — same invalidation set as every other mutation.
+      invalidateCheckCaches(qc);
       onClose();
     },
   });
@@ -147,11 +179,9 @@ export default function ChecksTable({
   const [bulkError, setBulkError] = useState<string | null>(null);
   const [bulkNotice, setBulkNotice] = useState<string | null>(null);
 
-  const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ["checks"] });
-    qc.invalidateQueries({ queryKey: ["runs"] });
-    qc.invalidateQueries({ queryKey: ["dashboard"] });
-  };
+  // Shared by activate / dismiss / bulk-transition / archive / pause / resume /
+  // run-now — every one of them moves a dataset rollup (#285).
+  const invalidate = () => invalidateCheckCaches(qc);
 
   const setStatus = useMutation({
     mutationFn: ({ id, status }: { id: number; status: string }) =>

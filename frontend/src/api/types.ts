@@ -35,6 +35,12 @@ export interface Grant {
   created_at: string;
 }
 
+/** POST /auth/users/{user_id}/grants body — upsert on (user, connection). */
+export interface GrantIn {
+  connection_id: number;
+  role: GrantRole;
+}
+
 export interface Connection {
   id: number;
   name: string;
@@ -540,13 +546,17 @@ export interface RcaAction {
   kind: "fix_data" | "fix_pipeline" | "adjust_check" | "investigate";
 }
 
+/** Structured RCA payload (backend `RcaReport` in schemas.py). The API fills every
+ *  key from the agent's submit_report call; the optional markers only cover payloads
+ *  stored by an older/other producer, which `version` lets us render best-effort.
+ *  `confidence` is genuinely null when the model did not state one. */
 export interface RcaReport {
   version?: number;
   hypotheses?: RcaHypothesis[];
   evidence?: RcaEvidence[];
   likely_cause?: string;
   recommended_actions?: RcaAction[];
-  confidence?: "low" | "medium" | "high";
+  confidence?: "low" | "medium" | "high" | null;
 }
 
 export interface RcaSession {
@@ -565,11 +575,15 @@ export interface RcaSession {
   finished_at: string | null;
 }
 
+/** One step appended by the agent loop (backend llm/client.py: run_agent_loop).
+ *  text -> content: string; sql -> sql + purpose; tool -> name + content: the tool
+ *  input object; result -> content: string + error; final -> content: the report. */
 export interface TranscriptStep {
-  type: "text" | "sql" | "result" | "final";
+  type: "text" | "sql" | "tool" | "result" | "final";
   content?: unknown;
   sql?: string;
   purpose?: string;
+  name?: string;
   error?: boolean;
 }
 

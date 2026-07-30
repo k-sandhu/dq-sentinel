@@ -332,10 +332,12 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
   background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
   box-shadow: var(--shadow-pop); padding: 5px; max-height: 380px; overflow-y: auto;
 }
+/* Rendered as role="option" divs (not buttons) so the combobox input keeps focus
+   and aria-activedescendant carries the highlight — restore the pointer cursor. */
 .search-hit {
   display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
   width: 100%; border: none; background: transparent; border-radius: 6px;
-  padding: 7px 10px; text-align: left; min-height: 0;
+  padding: 7px 10px; text-align: left; min-height: 0; cursor: pointer;
 }
 .search-hit:hover, .search-hit.active { background: var(--hover); border: none; }
 .search-hit .title { color: var(--text-dark); font-weight: 700; font-size: 13px; }
@@ -1502,6 +1504,10 @@ th.star-col, td.star-col { width: 34px; padding-left: 12px; padding-right: 0; te
 .recents-strip { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 12px; }
 .recents-strip .recents-label { font-size: 11px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: var(--text-light); }
 .recents-strip .filter-chip { font-weight: 600; }
+/* Active domain/team drill-in chips above the datasets table — same rhythm as the
+   recents strip (the strip had no rule of its own until #294 gave it a producer). */
+.dataset-filter-strip { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 12px; }
+.dataset-filter-strip .recents-label { font-size: 11px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: var(--text-light); }
 
 /* ---------- workbench (#104) ---------- */
 /* CodeMirror SQL editor: wrap it to match card chrome. Token colors + light/dark

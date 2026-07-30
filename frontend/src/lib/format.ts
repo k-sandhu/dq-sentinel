@@ -21,15 +21,48 @@ function parseUtc(iso: string): Date {
   return new Date(iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z");
 }
 
+/**
+ * Absolute timestamp, rendered in the viewer's local zone.
+ *
+ * Two honesty rules (#294):
+ *  - **Always name the zone.** These stamps are read side-by-side with UTC
+ *    warehouse/scheduler logs by distributed teams; an unlabelled "03:15" is
+ *    silently mis-read by everyone whose offset isn't zero. `timeZoneName:
+ *    "short"` appends the viewer's zone ("UTC", "EST", "GMT+5:30").
+ *  - **Show the year when it isn't this one.** A bare "Jan 4" on a two-year-old
+ *    audit row reads as this January.
+ */
 export function fmtDateTime(iso: string | null | undefined): string {
   if (!iso) return "—";
   const d = parseUtc(iso);
+  if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleString(undefined, {
+    year: d.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
     month: "short",
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+    timeZoneName: "short",
   });
+}
+
+/** Date-only stamp (no clock, so no zone cue needed). UTC-normalized like the
+ *  rest — the backend serializes naive-UTC, so `new Date(iso)` would shift the
+ *  displayed day by the viewer's offset. */
+export function fmtDate(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = parseUtc(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+/** Compact duration for MTTD/MTTR-style seconds ("45s", "12m", "1.4h", "2.1d"). */
+export function fmtDuration(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return "—";
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+  if (seconds < 86400) return `${(seconds / 3600).toFixed(1)}h`;
+  return `${(seconds / 86400).toFixed(1)}d`;
 }
 
 export function timeAgo(iso: string | null | undefined): string {

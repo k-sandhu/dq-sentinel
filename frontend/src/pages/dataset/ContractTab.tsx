@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState, type MutableRefObject } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { api, ApiError } from "../../api/client";
 import { qk } from "../../api/queryKeys";
 import type {
+  CheckTypeInfo,
   ColumnInfo,
   ContractClauseConformance,
   DataContract,
@@ -17,9 +18,38 @@ import type {
 } from "../../api/types";
 import { canEdit, useAuth } from "../../auth";
 import { fmtDateTime } from "../../lib/format";
-import { ErrorBox, Icon, Spinner, StatusPill } from "../../components/ui";
+import { useUnsavedGuard } from "../../lib/useUnsavedGuard";
+import CheckParamsForm, { validateParams } from "../../components/CheckParamsForm";
+import { invalidateCheckCaches } from "../../components/ChecksTable";
+import { useConfirm } from "../../components/confirm";
+import { ErrorBox, Icon, Modal, Spinner, StatusPill } from "../../components/ui";
 
-interface ContractColumn {
+/* ---------------------------------------------------------------------------
+ * Stable row identity (#283)
+ *
+ * The schema/quality editors are lists of rows whose own inputs edit the row's
+ * values. A React `key` derived from any of those values (the old
+ * `key={`${col.name}-${i}`}`) changes on every keystroke, so React unmounts and
+ * remounts the row — which destroys the focused input and made renaming or
+ * hand-adding a contract column impossible.
+ *
+ * Rows therefore carry `_rowId`: a client-only identifier minted once when the
+ * row enters the draft, never derived from and never touched by an edit. It is
+ * stripped by `normalizeSpec`, so it reaches neither the API payload, the ODCS
+ * export, nor the dirty comparison.
+ * ------------------------------------------------------------------------- */
+let rowSeq = 0;
+function nextRowId(): string {
+  rowSeq += 1;
+  return `row-${rowSeq}`;
+}
+
+interface RowIdentity {
+  /** Client-only React key. Stripped before the spec leaves this component. */
+  _rowId?: string;
+}
+
+interface ContractColumn extends RowIdentity {
   name: string;
   dtype?: string;
   nullable?: boolean;
@@ -27,7 +57,7 @@ interface ContractColumn {
   description?: string;
 }
 
-interface QualityClause {
+interface QualityClause extends RowIdentity {
   id: string;
   name: string;
   check_type: string;
@@ -69,18 +99,25 @@ function asSpec(value: Record<string, unknown> | null | undefined): ContractSpec
   return { ...(value ?? {}) } as ContractSpec;
 }
 
+function stripRowId<T extends RowIdentity>(row: T): T {
+  if (row._rowId === undefined) return row;
+  const copy = { ...row };
+  delete copy._rowId;
+  return copy;
+}
+
 function normalizeSpec(spec: ContractSpec): ContractSpec {
   return {
     version: spec.version ?? 1,
     schema: {
-      columns: spec.schema?.columns ?? [],
+      columns: (spec.schema?.columns ?? []).map(stripRowId),
       allow_extra_columns: spec.schema?.allow_extra_columns ?? true,
       compare_types: spec.schema?.compare_types ?? false,
       enforce_nullable: spec.schema?.enforce_nullable ?? false,
     },
     freshness: spec.freshness ?? {},
     volume: spec.volume ?? {},
-    quality: spec.quality ?? [],
+    quality: (spec.quality ?? []).map(stripRowId),
     owner: spec.owner ?? {},
     consumers: spec.consumers ?? [],
     terms: spec.terms ?? "",
@@ -88,88 +125,84 @@ function normalizeSpec(spec: ContractSpec): ContractSpec {
   };
 }
 
+/** Mint a fresh row id for every row of a spec that is entering the draft. */
+function withRowIds(spec: ContractSpec): ContractSpec {
+  return {
+    ...spec,
+    schema: {
+      ...(spec.schema ?? {}),
+      columns: (spec.schema?.columns ?? []).map((c) => ({ ...c, _rowId: nextRowId() })),
+    },
+    quality: (spec.quality ?? []).map((q) => ({ ...q, _rowId: nextRowId() })),
+  };
+}
+
+/** Clause ids are semantic (they key conformance and the materialized check's
+ *  rationale marker), so a new clause must not reuse one that already exists —
+ *  `quality-${length + 1}` collided after a middle clause was removed. */
+function nextClauseId(existing: QualityClause[]): string {
+  const taken = new Set(existing.map((q) => q.id));
+  let n = existing.length + 1;
+  while (taken.has(`quality-${n}`)) n += 1;
+  return `quality-${n}`;
+}
+
 function clauseTone(status: string) {
   return status === "pass" ? "ok" : status === "breached" ? "danger" : "neutral";
 }
 
-/** Params editor for one quality clause. Keeps a local text draft so intermediate
- *  (not-yet-valid) keystrokes aren't eaten, parses on change, and commits parsed
- *  params only when valid — showing an inline error otherwise. It never writes into
- *  any other field (the old handler stuffed "Invalid params JSON" into `rationale`,
- *  silently corrupting exported ODCS, #D3). */
-function QualityParamsInput({
-  value,
-  onChange,
-}: {
-  value: Record<string, unknown>;
-  onChange: (params: Record<string, unknown>) => void;
-}) {
-  const [text, setText] = useState(() => JSON.stringify(value ?? {}));
-  const [invalid, setInvalid] = useState(false);
-  // Re-seed from upstream only when it structurally differs from what we already
-  // hold (e.g. a contract reload / clause reset), never while the user is mid-edit.
-  useEffect(() => {
-    try {
-      if (JSON.stringify(JSON.parse(text || "{}")) !== JSON.stringify(value ?? {})) {
-        setText(JSON.stringify(value ?? {}));
-        setInvalid(false);
-      }
-    } catch {
-      /* keep the in-progress (invalid) text as-is */
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
-  return (
-    <input
-      className={invalid ? "input-error" : undefined}
-      value={text}
-      placeholder='{"values":[]}'
-      title={invalid ? "Invalid JSON — fix to save these params" : undefined}
-      onChange={(e) => {
-        const next = e.target.value;
-        setText(next);
-        try {
-          onChange(JSON.parse(next || "{}") as Record<string, unknown>);
-          setInvalid(false);
-        } catch {
-          setInvalid(true);
-        }
-      }}
-    />
+/** One-line preview of a clause's params for the row button. */
+function paramsSummary(params: Record<string, unknown> | undefined): string {
+  const entries = Object.entries(params ?? {}).filter(
+    ([, v]) => v !== undefined && v !== null && v !== "" && !(Array.isArray(v) && v.length === 0),
   );
+  if (!entries.length) return "";
+  return entries
+    .map(([k, v]) => `${k}=${Array.isArray(v) ? v.join(", ") : typeof v === "object" ? JSON.stringify(v) : String(v)}`)
+    .join(" · ");
 }
 
 function clauseLabel(clause: ContractClauseConformance) {
   return `${clause.kind}: ${clause.label}`;
 }
 
-export default function ContractTab({
-  dataset,
-  dirtyRef,
-}: {
-  dataset: Dataset;
-  dirtyRef?: MutableRefObject<boolean>;
-}) {
+const DELETE_ROLE_HINT = "Editor or admin role required to delete a data contract";
+
+export default function ContractTab({ dataset }: { dataset: Dataset }) {
   const { user } = useAuth();
   const editable = canEdit(user);
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const [mode, setMode] = useState<"form" | "yaml" | "versions">("form");
   const [name, setName] = useState("");
   const [version, setVersion] = useState("0.1.0");
   const [draft, setDraft] = useState<ContractSpec>(normalizeSpec({}));
   const [yamlText, setYamlText] = useState("");
   const [saved, setSaved] = useState(false);
+  const [deletedId, setDeletedId] = useState<number | null>(null);
+  const [paramsRowId, setParamsRowId] = useState<string | null>(null);
 
   const contractQuery = useQuery({
     queryKey: qk.contract.detail(dataset.id),
     queryFn: () => api.get<DataContract>(`/datasets/${dataset.id}/contract`),
     retry: (count, error) => error instanceof ApiError && error.status === 404 ? false : count < 2,
   });
-  const contract = contractQuery.data;
+  // TanStack keeps the last good data when a refetch errors, so the 404 that
+  // follows a delete would otherwise leave the tab happily editing a contract
+  // that no longer exists. Drop it explicitly until the refetch settles (if the
+  // dataset has an older contract, that one loads and takes over normally).
+  const contract = contractQuery.data?.id === deletedId ? undefined : contractQuery.data;
 
   const columnsQuery = useQuery({
     queryKey: qk.columns.detail(dataset.id),
     queryFn: () => api.get<ColumnInfo[]>(`/datasets/${dataset.id}/columns`),
+  });
+
+  // Same registry the Checks tab uses, so quality clauses get typed param fields
+  // instead of hand-written JSON (#294).
+  const checkTypesQuery = useQuery({
+    queryKey: qk.checkTypes.list(),
+    queryFn: () => api.get<CheckTypeInfo[]>("/checks/types"),
   });
 
   const conformanceQuery = useQuery({
@@ -205,15 +238,16 @@ export default function ContractTab({
     if (!contract) return;
     setName(contract.name);
     setVersion(contract.version);
-    setDraft(normalizeSpec(asSpec(contract.spec)));
+    setDraft(withRowIds(normalizeSpec(asSpec(contract.spec))));
   }, [contract]);
 
   useEffect(() => {
     if (exportQuery.data?.yaml && !yamlText) setYamlText(exportQuery.data.yaml);
   }, [exportQuery.data, yamlText]);
 
-  // Report unsaved edits to the parent so a tab switch warns first, and guard a
-  // full page unload — the Contract tab holds as much typing as Knowledge (#D4).
+  // The Contract tab holds as much typing as Knowledge (#D4), so it gets the same
+  // guard: the dataset tab strip, any link out of the page, and tab close all ask
+  // before the draft is thrown away (#284).
   const dirty = useMemo(() => {
     if (!contract) return false;
     return (
@@ -223,26 +257,12 @@ export default function ContractTab({
     );
   }, [contract, name, version, draft]);
 
-  useEffect(() => {
-    if (dirtyRef) dirtyRef.current = dirty;
-    return () => {
-      if (dirtyRef) dirtyRef.current = false;
-    };
-  }, [dirty, dirtyRef]);
-
-  useEffect(() => {
-    if (!dirty) return;
-    const handler = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = "";
-    };
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
-  }, [dirty]);
+  useUnsavedGuard(dirty, "Your unsaved edits to this data contract will be discarded.");
 
   const create = useMutation({
     mutationFn: () => api.post<DataContract>(`/datasets/${dataset.id}/contract`, {}),
     onSuccess: (created) => {
+      setDeletedId(null);
       qc.setQueryData(qk.contract.detail(dataset.id), created);
       qc.invalidateQueries({ queryKey: qk.contract.all });
     },
@@ -273,41 +293,106 @@ export default function ContractTab({
     },
   });
 
+  // DELETE /datasets/{id}/contract/{contract_id} — editor role, 204 (#289).
+  const remove = useMutation({
+    mutationFn: (target: DataContract) => api.del<void>(`/datasets/${dataset.id}/contract/${target.id}`),
+    onSuccess: (_result, target) => {
+      setDeletedId(target.id);
+      setMode("form");
+      setSaved(false);
+      setParamsRowId(null);
+      qc.removeQueries({ queryKey: qk.contractConformance.detail(dataset.id, target.id) });
+      qc.removeQueries({ queryKey: qk.contractExport.detail(dataset.id, target.id) });
+      qc.removeQueries({ queryKey: qk.contractVersions.detail(dataset.id, target.id) });
+      qc.removeQueries({ queryKey: qk.contractDiff.all });
+      // Refetch: the dataset may still have an older contract behind this one.
+      qc.invalidateQueries({ queryKey: qk.contract.all });
+      // The server archives the checks this contract materialized, which moves
+      // the dataset/dashboard "active checks" rollups too (#285).
+      invalidateCheckCaches(qc);
+    },
+  });
+
   const importYaml = useMutation({
     mutationFn: () => api.post<DataContract>(`/datasets/${dataset.id}/contract/import`, { yaml: yamlText }),
     onSuccess: (created) => {
+      setDeletedId(null);
       qc.setQueryData(qk.contract.detail(dataset.id), created);
       qc.invalidateQueries({ queryKey: qk.contract.all });
       setMode("form");
     },
   });
 
+  const materializedCheckIds = useMemo(() => {
+    const mat = (draft.materialized ?? {}) as { checks?: { check_id?: number }[] };
+    return new Set((mat.checks ?? []).map((c) => c.check_id).filter((id): id is number => typeof id === "number"));
+  }, [draft.materialized]);
+
   const addSourceColumns = () => {
     const existing = new Set((draft.schema?.columns ?? []).map((c) => c.name.toLowerCase()));
     const additions = (columnsQuery.data ?? [])
       .filter((c) => !existing.has(c.name.toLowerCase()))
-      .map((c) => ({ name: c.name, dtype: c.dtype, nullable: c.nullable, required: true }));
+      .map((c) => ({ name: c.name, dtype: c.dtype, nullable: c.nullable, required: true, _rowId: nextRowId() }));
     setDraft((spec) => ({
       ...spec,
       schema: { ...(spec.schema ?? {}), columns: [...(spec.schema?.columns ?? []), ...additions] },
     }));
   };
 
+  const askDelete = async () => {
+    if (!contract) return;
+    const target = contract;
+    const materialized = materializedCheckIds.size;
+    const ok = await confirm({
+      title: "Delete data contract",
+      danger: true,
+      confirmLabel: "Delete contract",
+      typeToConfirm: target.name,
+      body: (
+        <>
+          <p style={{ marginTop: 0 }}>
+            This permanently deletes <strong>{target.name}</strong> (v{target.version}) and all{" "}
+            {target.version_count} saved version snapshot{target.version_count === 1 ? "" : "s"}. Version history
+            and diffs cannot be recovered.
+          </p>
+          <p>
+            The checks this contract materialized{materialized ? ` (${materialized} in the current spec)` : ""} are{" "}
+            <strong>archived, not deleted</strong>: they stop running immediately, but their runs and exceptions
+            are kept and they can be restored from the Checks tab.
+          </p>
+          <p style={{ marginBottom: 0 }}>
+            The dataset, its profile, and any checks created outside this contract are untouched.
+          </p>
+        </>
+      ),
+    });
+    if (ok) remove.mutate(target);
+  };
+
   const quality = draft.quality ?? [];
   const schemaColumns = draft.schema?.columns ?? [];
   const conformance = conformanceQuery.data;
+  const checkTypes = checkTypesQuery.data;
 
-  const materializedCheckIds = useMemo(() => {
-    const mat = (draft.materialized ?? {}) as { checks?: { check_id?: number }[] };
-    return new Set((mat.checks ?? []).map((c) => c.check_id).filter((id): id is number => typeof id === "number"));
-  }, [draft.materialized]);
+  const editingIndex = paramsRowId === null ? -1 : quality.findIndex((q) => q._rowId === paramsRowId);
+  const editingClause = editingIndex >= 0 ? quality[editingIndex] : undefined;
+  const editingType = checkTypes?.find((t) => t.key === editingClause?.check_type);
 
   if (contractQuery.isLoading) return <Spinner label="Loading contract..." />;
-  if (!contract && contractQuery.error instanceof ApiError && contractQuery.error.status === 404) {
+  if (
+    !contract &&
+    (deletedId !== null || (contractQuery.error instanceof ApiError && contractQuery.error.status === 404))
+  ) {
     return (
       <div className="contract-empty">
         <div className="card card-pad">
           <h3>No data contract yet</h3>
+          {deletedId !== null && (
+            <div className="info-box">
+              Contract deleted. Any checks it materialized were archived, not deleted — restore them from the
+              Checks tab if you still need them.
+            </div>
+          )}
           <p className="muted">
             Create a draft from the current profile, table knowledge, and source schema, or import an ODCS YAML
             contract.
@@ -367,9 +452,20 @@ export default function ContractTab({
               </button>
             </>
           )}
+          {/* Shown to everyone, disabled with the reason for viewers, so the
+              lifecycle is discoverable instead of silently missing (#289). */}
+          <button
+            type="button"
+            className="danger"
+            onClick={askDelete}
+            disabled={!editable || remove.isPending}
+            title={editable ? "Delete this contract and its version history" : DELETE_ROLE_HINT}
+          >
+            <Icon name="x" size={13} /> {remove.isPending ? "Deleting..." : "Delete contract"}
+          </button>
         </div>
       </div>
-      <ErrorBox error={save.error || activate.error || importYaml.error || conformanceQuery.error} />
+      <ErrorBox error={save.error || activate.error || remove.error || importYaml.error || conformanceQuery.error} />
       {saved && <div className="info-box">Contract saved.</div>}
       {activate.data && (
         <div className="info-box">
@@ -463,16 +559,18 @@ export default function ContractTab({
               </div>
               <div className="contract-table-editor">
                 {schemaColumns.map((col, i) => (
-                  <div className="contract-column-row" key={`${col.name}-${i}`}>
+                  // Keyed by the row's own identity, never by `col.name` — that
+                  // is what this row's first input edits (#283).
+                  <div className="contract-column-row" key={col._rowId ?? `col-${i}`}>
                     <input value={col.name} onChange={(e) => updateColumn(i, { name: e.target.value })} placeholder="column" />
                     <input value={col.dtype ?? ""} onChange={(e) => updateColumn(i, { dtype: e.target.value })} placeholder="type" />
                     <label><input type="checkbox" checked={col.required ?? true} onChange={(e) => updateColumn(i, { required: e.target.checked })} /> required</label>
                     <label><input type="checkbox" checked={col.nullable ?? true} onChange={(e) => updateColumn(i, { nullable: e.target.checked })} /> nullable</label>
-                    <button className="ghost small" onClick={() => removeColumn(i)} aria-label="Remove column"><Icon name="x" size={13} /></button>
+                    <button className="ghost small" onClick={() => removeColumn(i)} aria-label={`Remove column ${col.name || i + 1}`}><Icon name="x" size={13} /></button>
                   </div>
                 ))}
               </div>
-              <button className="small" onClick={() => setDraft((s) => ({ ...s, schema: { ...(s.schema ?? {}), columns: [...(s.schema?.columns ?? []), { name: "", dtype: "", required: true, nullable: true }] } }))}>
+              <button className="small" onClick={() => setDraft((s) => ({ ...s, schema: { ...(s.schema ?? {}), columns: [...(s.schema?.columns ?? []), { name: "", dtype: "", required: true, nullable: true, _rowId: nextRowId() }] } }))}>
                 <Icon name="plus" size={13} /> Add column
               </button>
             </fieldset>
@@ -518,35 +616,91 @@ export default function ContractTab({
             </div>
             <fieldset disabled={!editable} className="plain-fieldset">
               <div className="contract-quality-list">
-                {quality.map((q, i) => (
-                  <div className="contract-quality-row" key={`${q.id}-${i}`}>
-                    <input value={q.name} onChange={(e) => updateQuality(i, { name: e.target.value })} placeholder="Name" />
-                    <select value={q.check_type} onChange={(e) => updateQuality(i, { check_type: e.target.value })}>
-                      <option value="not_null">not_null</option>
-                      <option value="unique">unique</option>
-                      <option value="accepted_values">accepted_values</option>
-                      <option value="range">range</option>
-                      <option value="regex_match">regex_match</option>
-                      <option value="custom_sql">custom_sql</option>
-                    </select>
-                    <select value={q.column ?? ""} onChange={(e) => updateQuality(i, { column: e.target.value || null })}>
-                      <option value="">table</option>
-                      {(columnsQuery.data ?? []).map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
-                    </select>
-                    <select value={q.severity ?? "error"} onChange={(e) => updateQuality(i, { severity: e.target.value as Severity })}>
-                      <option value="info">info</option>
-                      <option value="warn">warn</option>
-                      <option value="error">error</option>
-                    </select>
-                    <QualityParamsInput value={q.params ?? {}} onChange={(params) => updateQuality(i, { params })} />
-                    <button className="ghost small" onClick={() => removeQuality(i)} aria-label="Remove quality clause"><Icon name="x" size={13} /></button>
-                  </div>
-                ))}
+                {quality.map((q, i) => {
+                  const specs = checkTypes?.find((t) => t.key === q.check_type)?.params;
+                  const paramErrors = validateParams(specs ?? [], q.params ?? {});
+                  const missing = Object.keys(paramErrors);
+                  const summary = paramsSummary(q.params);
+                  const errId = `clause-params-err-${q._rowId ?? i}`;
+                  return (
+                    // Keyed by row identity: the clause `id` can repeat across
+                    // imported clauses and the old `-${i}` suffix shifted every
+                    // row below a removed one (#283).
+                    <div className="contract-quality-row" key={q._rowId ?? `${q.id}-${i}`}>
+                      <input value={q.name} onChange={(e) => updateQuality(i, { name: e.target.value })} placeholder="Name" />
+                      <select value={q.check_type} onChange={(e) => updateQuality(i, { check_type: e.target.value })}>
+                        <option value="not_null">not_null</option>
+                        <option value="unique">unique</option>
+                        <option value="accepted_values">accepted_values</option>
+                        <option value="range">range</option>
+                        <option value="regex_match">regex_match</option>
+                        <option value="custom_sql">custom_sql</option>
+                      </select>
+                      <select value={q.column ?? ""} onChange={(e) => updateQuality(i, { column: e.target.value || null })}>
+                        <option value="">table</option>
+                        {(columnsQuery.data ?? []).map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
+                      </select>
+                      <select value={q.severity ?? "error"} onChange={(e) => updateQuality(i, { severity: e.target.value as Severity })}>
+                        <option value="info">info</option>
+                        <option value="warn">warn</option>
+                        <option value="error">error</option>
+                      </select>
+                      {/* Typed param fields (shared with the Checks editor)
+                          instead of hand-written JSON (#294). */}
+                      <div style={{ minWidth: 0 }}>
+                        <button
+                          type="button"
+                          className="small"
+                          aria-label={`Edit parameters for ${q.name || q.check_type}`}
+                          aria-describedby={missing.length ? errId : undefined}
+                          title={summary || "No parameters set"}
+                          style={{ width: "100%", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                          onClick={() => setParamsRowId(q._rowId ?? null)}
+                        >
+                          {summary || "Set parameters…"}
+                        </button>
+                        {missing.length > 0 && (
+                          <span id={errId} className="field-error">
+                            Needs {missing.join(", ")}
+                          </span>
+                        )}
+                      </div>
+                      <button className="ghost small" onClick={() => removeQuality(i)} aria-label={`Remove quality clause ${q.name || i + 1}`}><Icon name="x" size={13} /></button>
+                    </div>
+                  );
+                })}
                 {quality.length === 0 && <div className="muted">No quality clauses yet.</div>}
               </div>
             </fieldset>
           </div>
         </div>
+      )}
+
+      {mode === "form" && editable && editingClause && (
+        <Modal
+          title={`Parameters — ${editingClause.name || editingClause.check_type}`}
+          onClose={() => setParamsRowId(null)}
+          footer={
+            <button className="primary" onClick={() => setParamsRowId(null)}>
+              Done
+            </button>
+          }
+        >
+          {/* Fully controlled: every edit lands in the contract draft straight
+              away, so closing this dialog can never discard analyst input. The
+              contract itself is still saved with the Save button. */}
+          <div className="field-hint" style={{ marginBottom: 10 }}>
+            {editingType?.description ?? `Parameters for ${editingClause.check_type}.`}
+          </div>
+          {checkTypesQuery.isLoading && <Spinner label="Loading parameter schema..." />}
+          <ErrorBox error={checkTypesQuery.error} />
+          <CheckParamsForm
+            specs={editingType?.params}
+            params={editingClause.params ?? {}}
+            onChange={(params) => updateQuality(editingIndex, { params })}
+            errors={validateParams(editingType?.params ?? [], editingClause.params ?? {})}
+          />
+        </Modal>
       )}
 
       {mode === "yaml" && (
@@ -598,6 +752,7 @@ export default function ContractTab({
   function updateColumn(index: number, patch: Partial<ContractColumn>) {
     setDraft((spec) => {
       const cols = [...(spec.schema?.columns ?? [])];
+      // Spread-then-patch keeps `_rowId`, so the row's React key survives the edit.
       cols[index] = { ...cols[index], ...patch };
       return { ...spec, schema: { ...(spec.schema ?? {}), columns: cols } };
     });
@@ -611,13 +766,23 @@ export default function ContractTab({
   }
 
   function addQuality() {
-    setDraft((spec) => ({
-      ...spec,
-      quality: [
-        ...(spec.quality ?? []),
-        { id: `quality-${(spec.quality ?? []).length + 1}`, name: "New clause", check_type: "not_null", severity: "error", params: {} },
-      ],
-    }));
+    setDraft((spec) => {
+      const items = spec.quality ?? [];
+      return {
+        ...spec,
+        quality: [
+          ...items,
+          {
+            id: nextClauseId(items),
+            _rowId: nextRowId(),
+            name: "New clause",
+            check_type: "not_null",
+            severity: "error",
+            params: {},
+          },
+        ],
+      };
+    });
   }
 
   function updateQuality(index: number, patch: Partial<QualityClause>) {
@@ -629,6 +794,10 @@ export default function ContractTab({
   }
 
   function removeQuality(index: number) {
+    // Drop the params dialog target first if it is the clause being removed
+    // (side effects must not live inside a state updater).
+    const target = (draft.quality ?? [])[index];
+    if (target?._rowId && target._rowId === paramsRowId) setParamsRowId(null);
     setDraft((spec) => ({ ...spec, quality: (spec.quality ?? []).filter((_, i) => i !== index) }));
   }
 }

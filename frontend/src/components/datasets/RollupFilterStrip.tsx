@@ -1,7 +1,8 @@
 import type { ActiveRollupFilter, RollupFilterKey } from "./datasetsFilters";
 
-/** The "Filtered by scorecard" strip — clearable domain/team chips that mirror the
- *  URL rollup filters a scorecard drill-in sets. Renders nothing when none active. */
+/** The active-filter strip: clearable domain/team chips mirroring the URL rollup
+ *  filters a drill-in set (Home's risk worklist links here via `rollupFilterHref`;
+ *  scorecard rollups will too). Renders nothing when no filter is active. */
 export function RollupFilterStrip({
   filters,
   onClear,
@@ -11,8 +12,8 @@ export function RollupFilterStrip({
 }) {
   if (filters.length === 0) return null;
   return (
-    <div className="dataset-filter-strip">
-      <span className="recents-label">Filtered by scorecard</span>
+    <div className="dataset-filter-strip" aria-label="Active dataset filters">
+      <span className="recents-label">Filtered by</span>
       <div className="chip-row">
         {filters.map((filter) => (
           <button
@@ -20,9 +21,10 @@ export function RollupFilterStrip({
             type="button"
             className="filter-chip on"
             onClick={() => onClear(filter.key)}
+            aria-label={`Clear ${filter.label.toLowerCase()} filter: ${filter.value}`}
             title={`Clear ${filter.label.toLowerCase()} filter`}
           >
-            {filter.label}: {filter.value} ✕
+            {filter.label}: {filter.value} <span aria-hidden="true">✕</span>
           </button>
         ))}
       </div>

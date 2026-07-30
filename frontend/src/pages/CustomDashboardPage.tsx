@@ -20,9 +20,11 @@ import WidgetConfigModal, { defaultWidget } from "../components/dashboards/Widge
 import WidgetFrame from "../components/dashboards/WidgetFrame";
 import WidgetGrid from "../components/dashboards/WidgetGrid";
 import { useAuth } from "../auth";
+import { useConfirm } from "../components/confirm";
 import { EmptyState, ErrorBox, Icon, Modal, Spinner } from "../components/ui";
 import { timeAgo } from "../lib/format";
 import { clearLanding, getLanding, setLanding } from "../lib/prefs";
+import { useUnsavedGuard } from "../lib/useUnsavedGuard";
 
 const WIDGET_TYPES: { type: WidgetType; label: string; desc: string }[] = [
   { type: "metric", label: "Metric", desc: "A single count from the exceptions queue, with tone thresholds." },
@@ -49,6 +51,7 @@ export default function CustomDashboardPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { user } = useAuth();
+  const confirm = useConfirm();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const { data: dash, isLoading, error } = useQuery({
@@ -89,16 +92,12 @@ export default function CustomDashboardPage() {
     );
   }, [editing, draft, dash, name, description, visibility]);
 
-  // Warn on tab close / reload with unsaved changes.
-  useEffect(() => {
-    if (!dirty) return;
-    const handler = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = "";
-    };
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
-  }, [dirty]);
+  // Ask before an unsaved builder draft is lost — to a sidebar/breadcrumb link,
+  // a global-search hit, or a tab close (#284). Previously only tab close warned.
+  const guard = useUnsavedGuard(
+    dirty,
+    "Your unsaved changes to this dashboard's widgets and settings will be discarded.",
+  );
 
   function beginEdit() {
     if (!dash) return;
@@ -110,8 +109,18 @@ export default function CustomDashboardPage() {
     setEditing(true);
   }
 
-  function cancelEdit() {
-    if (dirty && !window.confirm("Discard unsaved changes to this dashboard?")) return;
+  async function cancelEdit() {
+    if (
+      dirty &&
+      !(await confirm({
+        title: "Discard unsaved changes?",
+        body: "Your unsaved changes to this dashboard's widgets and settings will be discarded.",
+        confirmLabel: "Discard changes",
+        cancelLabel: "Keep editing",
+        danger: true,
+      }))
+    )
+      return;
     setEditing(false);
     setDraft(null);
   }
@@ -148,7 +157,9 @@ export default function CustomDashboardPage() {
       qc.invalidateQueries({ queryKey: ["custom-dashboards"] });
       // if this was the landing page, clear that pref so we don't loop into a 404
       if (getLanding() === `/dashboards/${dashboardId}`) clearLanding();
-      navigate("/dashboards");
+      // The dashboard is gone — offering to keep editing its draft would be absurd,
+      // so leave without re-prompting the unsaved guard.
+      guard.bypass(() => navigate("/dashboards"));
     },
   });
 
@@ -287,7 +298,7 @@ export default function CustomDashboardPage() {
           )}
           {editing && (
             <>
-              <button className="ghost" onClick={cancelEdit}>
+              <button className="ghost" onClick={() => void cancelEdit()}>
                 Cancel
               </button>
               <button className="primary" onClick={() => save.mutate()} disabled={save.isPending || !dirty}>

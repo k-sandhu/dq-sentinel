@@ -28,6 +28,28 @@ interface TriagePayload {
   clear_assignee?: boolean;
 }
 
+/**
+ * Drop just-triaged ids that the refetched page no longer contains (#286).
+ *
+ * Only the ids this mutation touched are candidates: a single-row triage from
+ * the detail panel must never disturb a bulk selection that spans pages, and
+ * rows nobody triaged are still exactly as visible as they were before.
+ */
+export function pruneTriagedSelection(
+  selected: ReadonlySet<number>,
+  triagedIds: readonly number[],
+  visibleIds: ReadonlySet<number>,
+): { next: Set<number>; dropped: number } {
+  const triaged = new Set(triagedIds);
+  const next = new Set<number>();
+  let dropped = 0;
+  for (const id of selected) {
+    if (triaged.has(id) && !visibleIds.has(id)) dropped += 1;
+    else next.add(id);
+  }
+  return { next, dropped };
+}
+
 export default function ExceptionsWorkspace({
   datasetId,
   runId,
@@ -44,7 +66,19 @@ export default function ExceptionsWorkspace({
   const filters = useMemo(() => parseFilters(sp), [sp]);
 
   // Selection survives paging (store ids); focus + toast are local UI state.
-  const [selected, setSelected] = useState<Set<number>>(new Set());
+  // The ref mirrors `selected` so the post-refetch prune — which runs in a
+  // promise continuation, outside React's render cycle — reads the committed
+  // set synchronously instead of a stale closure or a lagging effect.
+  const [selected, setSelectedState] = useState<Set<number>>(new Set());
+  const selectedRef = useRef<Set<number>>(selected);
+  const setSelected = useCallback(
+    (next: Set<number> | ((cur: Set<number>) => Set<number>)) => {
+      const value = typeof next === "function" ? next(selectedRef.current) : next;
+      selectedRef.current = value;
+      setSelectedState(value);
+    },
+    [],
+  );
   const [focusedId, setFocusedId] = useState<number | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -115,13 +149,13 @@ export default function ExceptionsWorkspace({
       setSelected(new Set());
       setSp(new URLSearchParams(paramStr), { replace: false });
     },
-    [setSp],
+    [setSelected, setSp],
   );
 
   const clearAll = useCallback(() => {
     setSelected(new Set());
     setSp(new URLSearchParams(), { replace: false });
-  }, [setSp]);
+  }, [setSelected, setSp]);
 
   // ----- selection -----
   const toggleSelect = useCallback((id: number) => {
@@ -131,7 +165,7 @@ export default function ExceptionsWorkspace({
       else if (next.size < SELECTION_CAP) next.add(id);
       return next;
     });
-  }, []);
+  }, [setSelected]);
 
   const toggleGroup = useCallback((ids: number[]) => {
     setSelected((cur) => {
@@ -141,7 +175,36 @@ export default function ExceptionsWorkspace({
       else ids.forEach((id) => next.size < SELECTION_CAP && next.add(id));
       return next;
     });
-  }, []);
+  }, [setSelected]);
+
+  // Triaging can push rows out of the current view (resolve inside a
+  // status=open queue). Selection is by id, so without this the bulk bar keeps
+  // counting rows that left the page and the NEXT action re-targets them —
+  // a mis-triage generator on a big queue (#286).
+  //
+  // Timing: invalidateQueries() resolves only after the active refetch settles,
+  // so we read the cache *after* the await — never the page the mutation
+  // started from. We then read whichever exception lists are ACTIVE right now,
+  // so a filter change mid-flight prunes against the page actually on screen.
+  const pruneSelectionAfterRefetch = useCallback(
+    async (triagedIds: number[]) => {
+      await qc.invalidateQueries({ queryKey: qk.exceptions.all });
+      const visible = new Set<number>();
+      for (const [, page] of qc.getQueriesData<ExceptionPage>({
+        queryKey: qk.exceptions.all,
+        type: "active",
+      })) {
+        for (const row of page?.items ?? []) visible.add(row.id);
+      }
+      const { next, dropped } = pruneTriagedSelection(selectedRef.current, triagedIds, visible);
+      if (dropped === 0) return; // two-step triage (ack -> assign) keeps its rows
+      setSelected(next);
+      // Never shrink the selection silently — say what left.
+      const msg = `${dropped} triaged row${dropped === 1 ? "" : "s"} left this view — deselected`;
+      setToast((prev) => (prev ? `${prev} · ${msg}` : msg));
+    },
+    [qc, setSelected],
+  );
 
   // ----- the one triage mutation (panel, bulk bar, and keyboard share it) -----
   const triage = useMutation({
@@ -152,11 +215,18 @@ export default function ExceptionsWorkspace({
       if (returned.length < ids.length) {
         setToast(`${ids.length - returned.length} already triaged by someone else`);
       }
-      qc.invalidateQueries({ queryKey: qk.exceptions.all });
       qc.invalidateQueries({ queryKey: qk.exceptionsFacets.all });
       qc.invalidateQueries({ queryKey: qk.exceptionViewCounts.all });
       qc.invalidateQueries({ queryKey: qk.dashboard.all });
       qc.invalidateQueries({ queryKey: qk.datasets.all });
+      // Deliberately NOT awaited: v5 keeps a mutation `isPending` until its
+      // callbacks settle, so awaiting here would leave the bulk bar disabled
+      // for as long as the refetch takes — indefinitely if it pauses offline.
+      // Until it settles the table still shows the pre-triage rows, so the
+      // selection continues to match what the analyst can see.
+      void pruneSelectionAfterRefetch(ids).catch(() => {
+        /* refetch failed: the list is stale too, so keep the selection as-is */
+      });
     },
     onError: (e) => setToast(e instanceof Error ? e.message : "Triage failed"),
   });
@@ -292,6 +362,7 @@ export default function ExceptionsWorkspace({
           exportUrl={apiParams}
           update={update}
           clearAll={clearAll}
+          onError={(message) => setToast(message)}
         />
         {(list.error || facetsQ.error) && (
           <div className="error-box">
