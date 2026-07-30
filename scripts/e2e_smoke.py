@@ -5,12 +5,19 @@ Usage:
     uvicorn app.main:app --port 8000 --app-dir backend   # in another terminal
     python scripts/e2e_smoke.py [--base http://localhost:8000]
 
+Credentials default to the dev-seeded admin (admin@example.com / admin123). A
+deployment that bootstrapped a real password — anything running with DQ_ENV=prod,
+including the docker stack and CI — is reached with --email/--password, or by
+exporting DQ_BOOTSTRAP_ADMIN_PASSWORD (the same variable the stack was booted
+with), which keeps the secret off the command line and out of process listings.
+
 Exercises the full workflow: login -> connection -> register tables -> profile
 -> knowledge -> generate checks -> activate -> run -> exceptions -> triage ->
 custom SQL check -> ML outlier check -> dashboard. Exits non-zero on failure.
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -18,6 +25,10 @@ import httpx
 
 REPO = Path(__file__).resolve().parent.parent
 SAMPLE = REPO / "samples" / "shopdb.sqlite"
+# Dev-seed defaults (backend/app/config.py). Only ever valid against a DQ_ENV=dev
+# instance — prod refuses to boot on them (#155).
+DEFAULT_EMAIL = "admin@example.com"
+DEFAULT_PASSWORD = "admin123"
 
 passed = 0
 
@@ -40,6 +51,20 @@ def main() -> None:
         help="DSN for the sample DB AS SEEN BY THE API. Defaults to the local repo path; "
         "for the docker stack use sqlite:////data/samples/shopdb.sqlite",
     )
+    # The admin the API bootstrapped, which is only admin@example.com/admin123 on a
+    # dev instance. Env fallbacks are the same DQ_BOOTSTRAP_ADMIN_* variables the API
+    # was booted with, so a stack started with a generated password needs no flag —
+    # and the password never has to appear in a command line or a CI log (#309).
+    parser.add_argument(
+        "--email",
+        default=os.environ.get("DQ_BOOTSTRAP_ADMIN_EMAIL") or DEFAULT_EMAIL,
+        help=f"admin email (default: $DQ_BOOTSTRAP_ADMIN_EMAIL, else {DEFAULT_EMAIL})",
+    )
+    parser.add_argument(
+        "--password",
+        default=os.environ.get("DQ_BOOTSTRAP_ADMIN_PASSWORD") or DEFAULT_PASSWORD,
+        help="admin password (default: $DQ_BOOTSTRAP_ADMIN_PASSWORD, else the dev seed)",
+    )
     args = parser.parse_args()
     base = f"{args.base}/api/v1"
 
@@ -55,8 +80,16 @@ def main() -> None:
     print("== health & auth ==")
     health = c.get("/health").json()
     ok("health", health["status"] == "ok", f"llm_enabled={health['llm_enabled']}")
-    r = c.post("/auth/login", json={"email": "admin@example.com", "password": "admin123"})
-    ok("login", r.status_code == 200)
+    r = c.post("/auth/login", json={"email": args.email, "password": args.password})
+    # Never echo the password — say which knob to turn instead.
+    ok(
+        "login",
+        r.status_code == 200,
+        f"as {args.email}"
+        if r.status_code == 200
+        else f"HTTP {r.status_code} as {args.email} — pass --password (or export "
+        "DQ_BOOTSTRAP_ADMIN_PASSWORD) if this instance did not seed the dev default",
+    )
     c.headers["Authorization"] = f"Bearer {r.json()['access_token']}"
 
     print("== connection & registration ==")

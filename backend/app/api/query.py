@@ -12,6 +12,7 @@ from app import models, schemas
 from app.connectors.sa import Connector, connector_for
 from app.connectors.safety import SqlNotAllowed
 from app.core import suggest as heuristics
+from app.core.errors import redact_source_error
 from app.core.profiler import jsonable, summarize_profile_for_llm
 from app.db import get_db
 from app.llm.client import llm_enabled
@@ -40,7 +41,12 @@ def execute_select(connector: Connector, sql: str, limit: int) -> schemas.QueryR
     except SqlNotAllowed as exc:
         raise HTTPException(422, str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - surface driver errors to the analyst
-        raise HTTPException(400, f"Query failed: {exc}") from exc
+        # The driver message IS the deliverable here ("no such column: emial"),
+        # so it survives — but SQLAlchemy appends the *rewritten guard SQL* and
+        # its parameters, and a connection-level failure embeds the source's
+        # host/port/user. Both go to the log only (#307).
+        reason = redact_source_error(exc, action=f"run a workbench query on {connector.kind}")
+        raise HTTPException(400, f"Query failed: {reason}") from exc
     elapsed = int((time.perf_counter() - start) * 1000)
     rows = [[jsonable(v) for v in row] for row in res.rows]
     return schemas.QueryRunOut(
@@ -76,8 +82,9 @@ def get_schema(
     _, connector = _connector(db, connection_id)
     try:
         return connector.schema_tree()
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(502, f"Could not introspect source: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001 - surface WHY, not the driver's internals
+        reason = redact_source_error(exc, action=f"read the schema of connection {connection_id}")
+        raise HTTPException(502, f"Could not introspect the source: {reason}") from exc
 
 
 @router.get("/connections/{connection_id}/ddl", response_model=schemas.DdlOut)

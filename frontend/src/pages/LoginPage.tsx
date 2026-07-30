@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { useAuth } from "../auth";
@@ -39,7 +40,9 @@ export default function LoginPage() {
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="admin@example.com"
+            /* Generic example, not the seeded account (#308): the placeholder ships in
+               every build, so it must not name a real default user. */
+            placeholder="you@company.com"
             autoFocus
             required
           />
@@ -56,9 +59,22 @@ export default function LoginPage() {
         <button className="primary" type="submit" disabled={busy} style={{ width: "100%", justifyContent: "center", marginTop: 6 }}>
           {busy ? "Signing in…" : "Sign in"}
         </button>
-        <p style={{ fontSize: 12, color: "var(--text-light)", textAlign: "center", marginBottom: 0 }}>
-          Default dev login: admin@example.com / admin123
-        </p>
+        {/*
+          Seeded-credential hint, dev builds only (#308). `import.meta.env.DEV` is
+          statically replaced by Vite at build time, so in a production bundle this
+          whole branch — the credential string included — is dead code and is
+          eliminated. It must stay an `import.meta.env.DEV` literal: hiding it behind
+          a runtime flag, a CSS rule or a variable indirection would still ship the
+          string to an unauthenticated page.
+        */}
+        {import.meta.env.DEV && (
+          <p
+            data-testid="dev-login-hint"
+            style={{ fontSize: 12, color: "var(--text-light)", textAlign: "center", marginBottom: 0 }}
+          >
+            Default dev login: admin@example.com / admin123
+          </p>
+        )}
       </form>
     </div>
   );

@@ -89,12 +89,15 @@ services:
       postgres:
         condition: service_healthy
     # The worker has no HTTP API, so the image's /api/v1/health probe does not
-    # apply — probe its Prometheus endpoint (DQ_WORKER_METRICS_PORT) instead,
-    # which only answers once the scheduler process is actually up.
+    # apply. It exposes Prometheus metrics (DQ_WORKER_METRICS_PORT) — but that
+    # port binds immediately, BEFORE migrations run, so a 200 on /metrics proves
+    # only that the process started, not that it can claim a check (#311). The
+    # probe therefore reads the endpoint and requires `dq_worker_up 1`, which
+    # app/core/scheduler.py sets only once init_db() has returned and the
+    # scheduler loop is entered. A worker wedged in a migration reports
+    # unhealthy, and `docker compose up --wait` waits for a working scheduler.
     healthcheck:
-      test:
-        ["CMD", "python", "-c",
-         "import urllib.request as u; u.urlopen('http://127.0.0.1:9100/metrics', timeout=4).read()"]
+      test: ["CMD", "python", "-m", "app.worker", "--healthcheck"]
       interval: 15s
       timeout: 5s
       start_period: 60s

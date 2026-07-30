@@ -922,6 +922,12 @@ class RcaReport(BaseModel):
     confidence: Literal["low", "medium", "high"] | None = None
 
 
+# Keys that identify a stored payload as one of *our* structured reports. Every field
+# on RcaReport is optional (so an older/thinner shape still renders), which means a
+# foreign payload would otherwise validate into an empty report — see RcaOut below.
+RCA_REPORT_KEYS = frozenset({"version", "hypotheses", "evidence", "likely_cause", "recommended_actions"})
+
+
 class RcaOut(ORMModel):
     id: int
     dataset_id: int
@@ -940,12 +946,16 @@ class RcaOut(ORMModel):
     @field_validator("report_json", mode="before")
     @classmethod
     def _tolerate_unreadable_report(cls, v: Any) -> Any:
-        """`report_json` is a free-form JSON column. A payload we can't parse
-        (older/foreign shape) must degrade to the markdown report, not 500 the
-        whole RCA tab."""
+        """`report_json` is a free-form JSON column, so serve it only when we can
+        actually read it: it must be a dict carrying at least one `RCA_REPORT_KEYS`
+        key *and* validate. Anything else — a foreign shape, a payload with none of
+        our keys, an unparseable one — becomes None so the UI falls back to the
+        markdown report (#312). Accepting a foreign payload would serve an empty
+        structured report and imply the agent found nothing; raising would 500 the
+        whole RCA tab. Neither is acceptable."""
         if v is None or isinstance(v, RcaReport):
             return v
-        if not isinstance(v, dict):
+        if not isinstance(v, dict) or not RCA_REPORT_KEYS.intersection(v):
             return None
         try:
             return RcaReport.model_validate(v)

@@ -78,9 +78,53 @@ To enable the AI features, point the provider-agnostic LLM layer at any model: s
 
 ### Quickstart (Docker)
 
+The compose stack defaults to a **production posture** (`DQ_ENV=prod`), which refuses to
+boot on a missing or known-default secret. So a bare `docker compose up` on a fresh clone
+deliberately fails — and so does copying `.env.example` to `.env`, because that file's
+placeholders are exactly the values the guard rejects. Two supported paths:
+
+**A throwaway local demo** — one command, nothing to fill in:
+
+```bash
+docker compose -f docker-compose.yml -f compose.dev.yml up --build
+# UI on http://localhost:3000 · sign in as admin@example.com / admin123
+```
+
+The overlay sets `DQ_ENV=dev` and supplies the documented throwaway credentials. It turns
+the config guard **off**: JWTs are then signed with a secret published in this repository,
+so anyone who can reach the API can mint an admin token. Localhost demos only.
+
+**Anything anyone else can reach** — keep the prod posture and supply real values. Generate
+a secret:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+put it plus a bootstrap password in a `.env` next to `docker-compose.yml` (compose loads
+that file automatically):
+
+```dotenv
+DQ_SECRET_KEY=<the value you just generated>
+DQ_BOOTSTRAP_ADMIN_PASSWORD=<a strong password you choose>
+```
+
+then:
+
 ```bash
 docker compose up --build    # UI on http://localhost:3000, Postgres-backed
 ```
+
+Set **both**. The boot guard rejects a short or known-default `DQ_SECRET_KEY`, but it only
+rejects the *literal* string `admin123` for the bootstrap password — an **empty**
+`DQ_BOOTSTRAP_ADMIN_PASSWORD` (which is what the compose default resolves to when you
+supply only the secret) passes the guard and seeds `admin@example.com` with an empty
+password. Tracked as a follow-up; until then, treat it as required, not optional.
+
+`DQ_BOOTSTRAP_ADMIN_PASSWORD` seeds the first admin **only while the user table is empty**,
+and there is no self-service password-change screen — so set it before the first boot.
+Afterwards an admin changes a password with `PATCH /api/v1/auth/users/{id}`
+(`{"password": "..."}`).
 
 ### Verify an install
 
@@ -137,6 +181,7 @@ python scripts/e2e_smoke.py   # 38 assertions over the live workflow, against a 
 | `backend/app/core/lineage.py` | sqlglot view parsing → lineage graph with check-health overlay |
 | `data/` | Sample-data generator + public-dataset downloader |
 | `scripts/e2e_smoke.py` | Full-workflow smoke test |
+| `compose.dev.yml` | Overlay that flips the compose stack to `DQ_ENV=dev` with throwaway credentials — the one-command local demo (see *Quickstart (Docker)*) |
 
 ## Security model (v0.1)
 

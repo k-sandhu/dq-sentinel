@@ -5,11 +5,15 @@ asserts the structured report survives all the way to the API — the bug was th
 `report_json` never existed, so the frontend's structured renderer was dead code.
 """
 
+from datetime import UTC, datetime
 from uuid import uuid4
+
+import pytest
 
 from app.llm import client as llm_client
 from app.llm.providers import BaseProvider, LlmResponse, ToolCall
 from app.llm.rca_agent import build_report_json
+from app.schemas import RcaOut
 
 
 class FakeProvider(BaseProvider):
@@ -237,6 +241,101 @@ def test_unreadable_stored_report_degrades_to_markdown(client, admin_headers, so
     assert body.status_code == 200, body.text
     assert body.json()["report_json"] is None
     assert body.json()["report_md"] == "markdown still readable"
+
+
+def test_foreign_stored_report_degrades_to_markdown(client, admin_headers, source_db):
+    """A payload that is valid JSON of *another* shape must not be served as a
+    structured report (#312). Every RcaReport field is optional, so it used to
+    validate into an empty report and the UI implied the agent found nothing —
+    while the narrative it did have sat unused in report_md."""
+    from app.db import session_factory
+    from app.models import RcaSession
+
+    ds_id = _dataset(client, admin_headers, source_db)
+    with session_factory()() as db:
+        session = RcaSession(
+            dataset_id=ds_id,
+            question="foreign payload",
+            status="complete",
+            report_md="the narrative is all we have",
+            report_json={"totally": "wrong shape"},
+        )
+        db.add(session)
+        db.commit()
+        session_id = session.id
+
+    body = client.get(f"/api/v1/rca/{session_id}", headers=admin_headers)
+    assert body.status_code == 200, body.text
+    assert body.json()["report_json"] is None
+    assert body.json()["report_md"] == "the narrative is all we have"
+
+
+def _rca_out(report_json) -> RcaOut:
+    """RcaOut around a stored report_json value; everything else is filler."""
+    return RcaOut.model_validate(
+        {
+            "id": 1,
+            "dataset_id": 2,
+            "check_run_id": None,
+            "question": "why",
+            "status": "complete",
+            "report_md": "# narrative",
+            "report_json": report_json,
+            "root_cause_summary": "a backfill",
+            "transcript": [],
+            "model": "fake-model",
+            "created_at": datetime(2026, 7, 1, tzinfo=UTC),
+            "finished_at": None,
+        }
+    )
+
+
+def test_rca_out_serves_a_genuine_agent_report():
+    """The gate added for #312 must not reject the shape rca_agent actually writes."""
+    stored = build_report_json(STRUCTURED_REPORT)
+    assert stored is not None and stored["version"] == 1  # what the column holds
+
+    report = _rca_out(stored).report_json
+    assert report is not None
+    assert report.version == 1
+    assert report.confidence == "high"
+    assert report.likely_cause == "The 2026-06 backfill dropped the email mapping."
+    assert [h.verdict for h in report.hypotheses] == ["supported", "inconclusive"]
+    assert [e.title for e in report.evidence] == ["Null emails by id range"]
+    assert [a.kind for a in report.recommended_actions] == ["fix_pipeline", "investigate"]
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        {"version": 1},  # ours, but empty of content
+        {"likely_cause": "a stale upstream view"},  # a thinner/older shape of ours
+        {"hypotheses": [{"statement": "s", "verdict": "supported"}]},
+        {"evidence": [{"title": "t"}]},
+        {"recommended_actions": [{"action": "a", "kind": "fix_data"}]},
+    ],
+)
+def test_rca_out_keeps_payloads_carrying_our_keys(stored):
+    assert _rca_out(stored).report_json is not None, stored
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        {"totally": "wrong shape"},  # #312: validated into an empty report
+        {},
+        {"confidence": "high"},  # a badge with nothing behind it is not a report
+        {"version": 9, "hypotheses": "not a list"},  # ours-ish, but unreadable
+        {"hypotheses": [{"statement": "s", "verdict": "maybe"}]},  # verdict off-contract
+        "a bare string",
+        [{"statement": "s"}],
+        7,
+    ],
+)
+def test_rca_out_degrades_unreadable_payloads_to_none(stored):
+    out = _rca_out(stored)
+    assert out.report_json is None, stored
+    assert out.report_md == "# narrative"  # the narrative is untouched
 
 
 def test_rca_start_still_503_without_llm(client, admin_headers, source_db):

@@ -5,7 +5,6 @@ from __future__ import annotations
 import copy
 import difflib
 import json
-import logging
 import re
 from collections.abc import Iterable
 from typing import Any
@@ -19,15 +18,16 @@ from app.api.serialize import check_out
 from app.connectors.sa import connector_for
 from app.core import schema_monitor
 from app.core.check_types import validate_check
+from app.core.errors import redact_source_error
+from app.filters import LIKE_ESCAPE, escape_like
 from app.models import utcnow
 
 CONTRACT_SPEC_VERSION = 1
 MARKER_RE = re.compile(r"\[contract:(?P<contract_id>\d+):clause:(?P<clause>[^\]]+)\]")
 
-log = logging.getLogger(__name__)
-
-#: Keep a driver error readable in the UI; the full traceback stays in the log.
-_SOURCE_ERROR_MAX_CHARS = 300
+# No module logger: every failure this module reports to a caller is a source
+# error, and those log themselves inside the redaction chokepoint (#307) so the
+# safe text and the full exception can never drift apart.
 
 
 class SourceUnavailable(RuntimeError):
@@ -39,16 +39,17 @@ class SourceUnavailable(RuntimeError):
     """
 
 
-def _source_error(exc: Exception) -> str:
-    """One-line, bounded rendering of a source-connectivity failure.
+def _source_error(exc: Exception, action: str) -> str:
+    """One-line, client-safe rendering of a source-connectivity failure.
 
-    Mirrors the connection fleet-health probe so the analyst sees the same words
-    in both places ("unable to open database file", "connection refused", ...).
+    Goes through the single redaction chokepoint (#307) so the driver's host,
+    port and service account never reach a response body or a UI error box; the
+    full exception lands in the structured log under the request id. The analyst
+    still sees why it failed ("authentication with the source failed", "the
+    source database file could not be opened", ...), and the fleet-health probe
+    renders the same words for the same failure.
     """
-    text = " ".join(f"{type(exc).__name__}: {exc}".split())
-    if len(text) > _SOURCE_ERROR_MAX_CHARS:
-        text = text[: _SOURCE_ERROR_MAX_CHARS - 3].rstrip() + "..."
-    return text
+    return redact_source_error(exc, action=action)
 
 
 def _slug(value: str, fallback: str) -> str:
@@ -90,16 +91,12 @@ def default_contract_spec(db: Session, dataset: models.Dataset) -> dict[str, Any
         except Exception as exc:  # noqa: BLE001 - an unreachable source is not a server fault
             # Without a profile the source IS the only column oracle. Silently
             # returning an empty schema would write a contract that asserts nothing,
-            # so fail loudly but cleanly (#282).
-            log.warning(
-                "Dataset %s: could not read source schema for a starter contract",
-                dataset.id,
-                exc_info=True,
-                extra={"event": "contract_default_spec_unreadable"},
-            )
+            # so fail loudly but cleanly (#282). _source_error logs the full
+            # exception under the request id and returns a redacted line (#307).
             raise SourceUnavailable(
                 "Could not read the source schema to draft a contract: "
-                f"{_source_error(exc)}. Profile the dataset or fix the connection first."
+                f"{_source_error(exc, f'draft a starter contract for dataset {dataset.id}')}. "
+                "Profile the dataset or fix the connection first."
             ) from exc
         columns = [
             {
@@ -330,6 +327,19 @@ def marker(contract_id: int, clause_id: str) -> str:
     return f"[contract:{contract_id}:clause:{clause_id}]"
 
 
+def _marker_like(mark: str) -> str:
+    """``%marker%`` with the marker's LIKE metacharacters escaped (#306).
+
+    A clause id is authored by the analyst (``quality: [{"id": "order_total"}]``),
+    so a marker routinely contains ``_`` — and ``_`` is a single-character
+    wildcard. Unescaped, clause ``a_b`` matches its SIBLING ``axb``'s marker, and
+    since the lookup takes the newest match the contract reuses the wrong check
+    and then archives the right one: a contract edit silently stops the wrong
+    monitor. Pair with ``escape=LIKE_ESCAPE`` at the call site.
+    """
+    return f"%{escape_like(mark)}%"
+
+
 def _materialized_check_items(spec: dict[str, Any] | None) -> list[dict[str, Any]]:
     materialized = (spec or {}).get("materialized")
     if not isinstance(materialized, dict):
@@ -446,7 +456,7 @@ def _existing_materialized_check(
         .filter(
             models.Check.dataset_id == contract.dataset_id,
             models.Check.status != "archived",
-            models.Check.rationale.like(f"%{mark}%"),
+            models.Check.rationale.like(_marker_like(mark), escape=LIKE_ESCAPE),
         )
         .order_by(models.Check.id.desc())
         .first()
@@ -474,13 +484,16 @@ def archive_contract_checks(
             if check.dataset_id == contract.dataset_id:
                 checks_by_id[check.id] = check
 
+    # This prefix embeds only an int id today, so escaping changes nothing — it
+    # goes through the same chokepoint anyway so the marker format can grow a
+    # user-authored segment without re-opening #306 here.
     mark = f"[contract:{contract.id}:clause:"
     for check in (
         db.query(models.Check)
         .filter(
             models.Check.dataset_id == contract.dataset_id,
             models.Check.status != "archived",
-            models.Check.rationale.like(f"%{mark}%"),
+            models.Check.rationale.like(_marker_like(mark), escape=LIKE_ESCAPE),
         )
         .all()
     ):
@@ -635,20 +648,19 @@ def _schema_conformance(contract: models.DataContract) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 - an unreachable source is not a server fault
         # Honest degradation (#282): we cannot observe the live schema, so we do not
         # know whether it conforms. Report "unknown" with the reason instead of
-        # exploding the whole conformance response with a raw 500.
-        log.warning(
-            "Contract %s: could not read source schema for dataset %s",
-            contract.id,
-            contract.dataset_id,
-            exc_info=True,
-            extra={"event": "contract_schema_unreadable"},
+        # exploding the whole conformance response with a raw 500. _source_error
+        # logs the full exception under the request id and returns a redacted
+        # line, so the reason never carries the source's host/port/user (#307).
+        reason = _source_error(
+            exc,
+            f"check schema conformance for contract {contract.id} on dataset {contract.dataset_id}",
         )
         return {
             "clause_id": "schema",
             "kind": "schema",
             "label": "Schema",
             "status": "unknown",
-            "detail": f"Could not read the source schema: {_source_error(exc)}",
+            "detail": f"Could not read the source schema: {reason}",
             "expected": {
                 "columns": expected,
                 "allow_extra_columns": schema.get("allow_extra_columns", True),
