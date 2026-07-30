@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
@@ -37,7 +37,10 @@ def list_runs(
     day: str | None = None,
     since: str | None = None,
     limit: int = 50,
-    offset: int = 0,
+    # Same split as /exceptions (#274): a too-large limit is capped, a negative
+    # page is a 422 — it has no sensible clamp target and raw it reached the
+    # driver (Postgres 500s on a negative OFFSET; SQLite quietly serves page 1).
+    offset: int = Query(default=0, ge=0, le=schemas.MAX_OFFSET),
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),
 ):
@@ -66,7 +69,11 @@ def list_runs(
         q.options(joinedload(models.CheckRun.check).joinedload(models.Check.dataset))
         .order_by(models.CheckRun.id.desc())
         .offset(offset)
-        .limit(min(limit, 200))
+        # The lower clamp matters as much as the cap: `min(limit, 200)` passed a
+        # negative straight through, and SQLite reads `LIMIT -1` as *unbounded*,
+        # so `?limit=-1` returned every visible run (#274). Matches the
+        # `min(max(limit, 1), N)` shape used by /exceptions and /incidents.
+        .limit(min(max(limit, 1), 200))
         .all()
     )
     # One GROUP BY replaces a COUNT per row (perf: a 100-run page issued 100

@@ -27,7 +27,9 @@ def list_audit(
     since: datetime | None = None,
     q: str | None = Query(default=None, description="action prefix match, e.g. 'login'"),
     limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
+    # Already rejected a negative page; the sweep in #274 added the upper bound
+    # the other list endpoints now share.
+    offset: int = Query(default=0, ge=0, le=schemas.MAX_OFFSET),
     db: Session = Depends(get_db),
     _: models.User = Depends(require_role("admin")),
 ):

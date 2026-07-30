@@ -153,7 +153,13 @@ def list_exceptions(
     filters: dict = Depends(_common_filters),
     sort: str = "newest",
     limit: int = 50,
-    offset: int = 0,
+    # `limit` clamps but `offset` 422s (#274). They are not the same kind of
+    # input: a too-large limit has an obvious server-side answer (cap it, and the
+    # envelope echoes the applied value), while a negative page has none —
+    # clamping -5 to 0 quietly answers a different question. Raw, it reached the
+    # driver: Postgres errors ("OFFSET must not be negative") -> 500, SQLite
+    # silently serves page 1.
+    offset: int = Query(default=0, ge=0, le=schemas.MAX_OFFSET),
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),
 ):
@@ -456,6 +462,7 @@ def triage(
     now = utcnow()
     for e in excs:
         touched = False
+        note_recorded = False  # the note reaches the history exactly once (#272)
         # Status change (+ event) only when it actually differs.
         if body.status is not None and body.status != e.status:
             old = e.status
@@ -465,6 +472,7 @@ def triage(
                 from_status=old, to_status=body.status, comment=body.note,
             )
             touched = True
+            note_recorded = bool(body.note)  # carried by the transition itself
         # Assignment change (+ event); assignee name goes in the comment.
         if body.assigned_to_id is not None:
             e.assigned_to_id = body.assigned_to_id
@@ -475,8 +483,15 @@ def triage(
             e.assigned_to_id = None
             record_event(db, e, "assign", user_id=user.id, comment="unassigned")
             touched = True
-        # A note with no status/assignment change is a standalone comment event.
-        if body.note and not touched:
+        # Any note the status event did not already carry becomes its own comment
+        # event (#272). The condition used to be `not touched`, so a note sent with
+        # an *assignment* was silently dropped from the append-only history: an
+        # assign event's comment slot holds a machine-written label ("assigned to
+        # X") that the UI renders as the event title and suppresses as a body, so
+        # there is nowhere in it for analyst prose to live. Keying off
+        # `note_recorded` instead of `touched` also keeps a status+note action to a
+        # single copy of the note.
+        if body.note and not note_recorded:
             record_event(db, e, "comment", user_id=user.id, comment=body.note)
         # Back-compat: `note` mirrors the latest note; marked_by/at semantics kept.
         if body.note:

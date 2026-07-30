@@ -6,11 +6,16 @@ The backing DB files are generated into a temp dir (DQ_CATALOG_DATA_DIR) so the
 test never writes into the repo's samples/.
 """
 
+import contextlib
 import os
+import sqlite3
 import tempfile
 
 import pytest
 
+# definitions/generators are pure data; app.catalog.seed is imported lazily inside the
+# test that needs it (importing it at module scope pulls in app.api -> circular import).
+from app.catalog import definitions, generators
 from app.config import get_settings
 
 API = "/api/v1/catalog"
@@ -227,3 +232,106 @@ def test_name_collision_with_user_connection_is_never_adopted(client, editor_hea
         assert any(c["id"] == decoy["id"] for c in conns), "user connection must not be deleted"
     finally:
         client.delete(f"/api/v1/connections/{decoy['id']}", headers=admin_headers)
+
+
+# --------------------------------------------------------------------------- #
+# Curated-clause integrity (#275): a clause must not certify rows the catalog   #
+# itself plants as defects, and its wording must not overstate its params.      #
+# --------------------------------------------------------------------------- #
+
+def _range_clause(entry_key: str, table_name: str, column: str):
+    entry = definitions.entry_by_key(entry_key)
+    assert entry is not None, entry_key
+    table = next(t for t in entry.tables if t.table_name == table_name)
+    return next(q for q in table.quality if q.check_type == "range" and q.column == column)
+
+
+@pytest.mark.parametrize(
+    ("entry_key", "table_name", "column", "planted"),
+    [
+        ("product-subscriptions", "subscriptions", "seats", generators._INVALID_SEATS),
+        ("marketing-clickstream", "web_events", "duration_ms", generators._INVALID_DURATIONS),
+    ],
+)
+def test_range_clause_catches_every_planted_invalid_value(entry_key, table_name, column, planted):
+    """Every value the generator plants as invalid must violate the curated clause
+    guarding that column. Mirrors the runner's bounds exactly (`col < min` /
+    `col > max` — both bounds inclusive), so `{"min": 0}` does NOT flag a 0."""
+    clause = _range_clause(entry_key, table_name, column)
+    lo, hi = clause.params.get("min"), clause.params.get("max")
+    assert planted, f"{clause.id}: nothing planted to catch"
+    for value in planted:
+        flagged = (lo is not None and value < lo) or (hi is not None and value > hi)
+        assert flagged, (
+            f"{clause.id} ({clause.name}) with params {clause.params} PASSES {column}={value}, "
+            "which the generator plants as an invalid value"
+        )
+
+
+def test_range_clause_wording_matches_its_bound():
+    """A clause name/rationale may not promise more than its params encode: a
+    'positive' clause needs min >= 1, a 'non-negative' one min == 0, and no clause
+    may claim both."""
+    for entry in definitions.CATALOG:
+        for table in entry.tables:
+            for q in table.quality:
+                if q.check_type != "range":
+                    continue
+                text = f"{q.id} {q.name} {q.rationale}".lower()
+                nonneg = "non-negative" in text or "nonneg" in text
+                positive = "positive" in text
+                where = f"{entry.key}/{table.table_name}/{q.id}"
+                assert not (nonneg and positive), (
+                    f"{where}: wording claims both 'positive' and 'non-negative' — "
+                    f"pick one and match the params ({q.params})"
+                )
+                if positive:
+                    assert q.params.get("min") is not None and q.params["min"] >= 1, (
+                        f"{where}: named 'positive' but params {q.params} admit 0"
+                    )
+                if nonneg:
+                    assert q.params.get("min") == 0, (
+                        f"{where}: named 'non-negative' but params are {q.params}"
+                    )
+
+
+def test_seats_check_flags_every_planted_bad_seat_row(client, editor_headers, admin_headers):
+    """End-to-end: the contract clause materializes into a check whose SQL flags all
+    of 0/-1/-5 in the generated data — with `{"min": 0}` the 0-seat rows pass."""
+    from app.catalog import seed
+
+    key = "product-subscriptions"
+    resp = client.post(f"{API}/{key}/connect", headers=editor_headers)
+    assert resp.status_code == 200, resp.text
+    cid = resp.json()["connection_id"]
+    try:
+        datasets = client.get(
+            f"/api/v1/datasets?connection_id={cid}", headers=admin_headers
+        ).json()
+        ds = next(d for d in datasets if d["table_name"] == "subscriptions")
+        checks = _checks(client, admin_headers, ds["id"])
+        seats = next(
+            c for c in checks if c["check_type"] == "range" and c["column_name"] == "seats"
+        )
+        assert seats["origin"] == "contract", "seats check should come from the contract clause"
+
+        path = seed.db_path(definitions.entry_by_key(key))
+        with contextlib.closing(sqlite3.connect(str(path))) as con:
+            planted = dict(
+                con.execute(
+                    "SELECT seats, COUNT(*) FROM subscriptions WHERE seats <= 0 GROUP BY seats"
+                ).fetchall()
+            )
+        assert set(planted) == set(generators._INVALID_SEATS), planted
+        assert planted[0] > 0, "generator should plant 0-seat subscriptions"
+
+        run = client.post(f"/api/v1/checks/{seats['id']}/run", headers=editor_headers)
+        assert run.status_code == 200, run.text
+        out = run.json()
+        assert out["violation_count"] == sum(planted.values()), (
+            f"expected every seats<=0 row flagged ({planted}), got {out['violation_count']}"
+        )
+        assert out["status"] == "fail"
+        assert seats["params"].get("min") == 1, "clause bound must be strictly positive"
+    finally:
+        client.delete(f"{API}/{key}/disconnect", headers=admin_headers)

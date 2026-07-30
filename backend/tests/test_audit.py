@@ -8,6 +8,7 @@ from datetime import timedelta
 from app.core.scheduler import purge_audit_log
 from app.db import session_factory
 from app.models import AuditEntry, utcnow
+from app.schemas import MAX_OFFSET
 
 
 def _audit(client, headers, **params):
@@ -187,6 +188,23 @@ def test_audit_admin_only_and_filters_and_paging(client, admin_headers):
         first_ids = {r["id"] for r in first["items"]}
         second_ids = {r["id"] for r in second["items"]}
         assert first_ids.isdisjoint(second_ids)
+
+
+def test_audit_pagination_bounds(client, admin_headers):
+    """#274 swept the list endpoints for the raw-offset pattern. /audit already
+    rejected a negative offset (`Query(0, ge=0)` since it was written); what it
+    lacked was the upper bound the other two now share.
+    """
+    h = admin_headers
+    assert client.get("/api/v1/audit", headers=h, params={"offset": -1}).status_code == 422
+    assert (
+        client.get("/api/v1/audit", headers=h, params={"offset": MAX_OFFSET + 1}).status_code == 422
+    )
+    edge = _audit(client, h, limit=5, offset=MAX_OFFSET)
+    assert edge["items"] == [] and edge["offset"] == MAX_OFFSET
+    # `limit` bounds are unchanged (this endpoint has always 422'd on them).
+    assert client.get("/api/v1/audit", headers=h, params={"limit": 0}).status_code == 422
+    assert client.get("/api/v1/audit", headers=h, params={"limit": 201}).status_code == 422
 
 
 def test_purge_respects_retention(client, admin_headers, monkeypatch):

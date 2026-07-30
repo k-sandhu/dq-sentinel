@@ -42,7 +42,13 @@ def jsonable(v: Any) -> Any:
     if isinstance(v, float):
         return None if math.isnan(v) or math.isinf(v) else v
     if isinstance(v, Decimal):
-        return float(v)
+        # Same finiteness guard as the float branch above. PostgreSQL `numeric`
+        # (and 14+ `Infinity`) can hold non-finite values, and json.dumps emits
+        # them as the bare tokens NaN/Infinity, which are invalid JSON — the
+        # INSERT into a JSON column then fails at commit, OUTSIDE runner.py's
+        # error handling, so the check 500s with no run row recorded at all.
+        f = float(v)
+        return None if math.isnan(f) or math.isinf(f) else f
     if isinstance(v, (pd.Timestamp, datetime, date)):
         return v.isoformat()
     if isinstance(v, (np.bool_,)):

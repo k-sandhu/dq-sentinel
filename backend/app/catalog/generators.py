@@ -354,6 +354,11 @@ _DEVICES = ["desktop", "mobile", "tablet"]
 _BROWSERS = ["Chrome", "Safari", "Firefox", "Edge"]
 _UTM_SOURCES = ["google", "facebook", "newsletter", "direct", "twitter", "affiliate"]
 _UTM_MEDIUMS = ["cpc", "organic", "email", "social", "referral"]
+# Client-bug durations planted for the "duration_ms non-negative" contract clause to
+# catch. Negative only: a 0 ms event is a legitimate instantaneous event (and the
+# table's known_issues call out *negative* durations), so planting 0 here would label
+# as a defect something the clause honestly does not — and should not — flag (#275).
+_INVALID_DURATIONS = (-1, -250, -60_000)
 
 
 def generate_web_events(con: Any, rng: random.Random) -> dict[str, int]:
@@ -396,7 +401,7 @@ def generate_web_events(con: Any, rng: random.Random) -> dict[str, int]:
             revenue = round(-revenue, 2)  # negative revenue
         duration = rng.randint(50, 600_000)
         if rng.random() < 0.005:
-            duration = rng.choice([0, -1, -250])  # invalid duration
+            duration = rng.choice(_INVALID_DURATIONS)  # invalid duration
         session_val = None if rng.random() < 0.003 else session  # a few null sessions
         rows.append((eid, _iso(ts), session_val, user, etype, page,
                      rng.choice(["", "https://google.com", "https://t.co/x"]),
@@ -574,6 +579,9 @@ CREATE TABLE subscriptions (
 
 _PLANS = ["free", "starter", "pro", "business", "enterprise"]
 _SUB_STATUS = ["trialing", "active", "past_due", "canceled", "paused"]
+# Seat counts planted as defects. A subscription needs at least one seat, so 0 is a
+# defect here — the "seats positive" contract clause is {"min": 1} to match (#275).
+_INVALID_SEATS = (0, -1, -5)
 
 
 def generate_product_subscriptions(con: sqlite3.Connection, rng: random.Random) -> dict[str, int]:
@@ -595,7 +603,7 @@ def generate_product_subscriptions(con: sqlite3.Connection, rng: random.Random) 
             plan = rng.choice(["Pro", "PREMIUM", "tier-2"])  # domain/casing noise
         seats = rng.choices([1, 2, 3, 5, 10, 25, 50], weights=[30, 20, 15, 15, 10, 6, 4])[0]
         if rng.random() < 0.006:
-            seats = rng.choice([0, -1, -5])  # invalid seats
+            seats = rng.choice(_INVALID_SEATS)  # invalid seats
         mrr = round({"free": 0, "starter": 29, "pro": 99, "business": 299,
                      "enterprise": 1200}.get(plan, 99) * rng.uniform(0.8, 1.2), 2)
         if rng.random() < 0.004:
