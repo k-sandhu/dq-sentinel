@@ -162,6 +162,112 @@ def test_allows_lookalike_identifiers_and_literals(sql):
     assert guard_sql(sql)
 
 
+# --- DuckDB replacement scans: a quoted path in table position (#267) ---
+# No function call is involved, so the function denylist above cannot see these.
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM '/tmp/secret.csv'",
+        "SELECT * FROM 'C:/creds.json'",
+        "select * from '/tmp/a.parquet'",  # lower case
+        "SELECT * FROM\n\t'/tmp/secret.csv'",  # newline/tab before the literal
+        "SELECT * FROM /* sneaky */ '/tmp/secret.csv'",  # comment before the literal
+        "WITH x AS (SELECT * FROM '/tmp/a.parquet') SELECT * FROM x",  # inside a CTE
+        "SELECT * FROM t WHERE a IN (SELECT * FROM '/tmp/secret.csv')",  # subquery
+        "SELECT * FROM orders JOIN '/tmp/secret.csv' s ON 1 = 1",  # join position
+        "SELECT * FROM orders LEFT JOIN '/tmp/secret.csv' ON 1 = 1",
+        "SELECT * FROM orders, '/tmp/secret.csv'",  # comma-separated FROM list
+        "SELECT * FROM orders o, customers c, '/tmp/secret.csv'",
+        "SELECT * FROM orders AS o, '/tmp/secret.csv'",
+        "SELECT * FROM 'https://evil.example/x.csv'",  # network replacement scan
+    ],
+)
+def test_rejects_string_literal_in_table_position(sql):
+    with pytest.raises(SqlNotAllowed) as excinfo:
+        guard_sql(sql)
+    assert "table position" in str(excinfo.value)
+
+
+def test_rejects_glob_directory_listing():
+    with pytest.raises(SqlNotAllowed) as excinfo:
+        guard_sql("SELECT * FROM glob('/tmp/*')")
+    assert "GLOB()" in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        # FROM inside a function argument list is standard SQL, not a table reference.
+        "SELECT EXTRACT(YEAR FROM '2024-01-01') AS y",
+        "SELECT extract(epoch from '2024-01-01') FROM t",
+        "SELECT EXTRACT(MONTH FROM '2024-01-01'), EXTRACT(DAY FROM '2024-01-01') FROM t",
+        "SELECT SUBSTRING(x FROM 'a.*z') FROM t",  # Postgres regex substring
+        "SELECT substring(name from '[0-9]+') AS digits FROM t",
+        "SELECT TRIM(BOTH FROM '  padded  ') AS trimmed",
+        "SELECT * FROM t WHERE EXTRACT(YEAR FROM '2024-06-01') = 2024",
+        # Literals elsewhere in the query are untouched.
+        "SELECT * FROM t WHERE note = 'from ''here'''",
+        "SELECT * FROM t WHERE label IN ('a', 'b', 'c')",
+        "SELECT * FROM t -- SELECT * FROM '/tmp/secret.csv'",
+        "SELECT /* SELECT * FROM '/tmp/x' */ * FROM t",
+        "SELECT * FROM t GROUP BY a HAVING max(b) > 'x'",
+        "SELECT * FROM t ORDER BY a, 'x'",
+        "SELECT * FROM t JOIN u ON u.code = 'ok'",
+        "SELECT * FROM t, u WHERE t.code = 'ok'",
+        # SQLite's GLOB *operator* is not a call and must stay legal.
+        "SELECT * FROM t WHERE name GLOB 'a*'",
+        "SELECT * FROM t WHERE name NOT GLOB '*.tmp'",
+    ],
+)
+def test_allows_from_in_function_arguments_and_ordinary_literals(sql):
+    assert guard_sql(sql)
+
+
+# --- quoted identifiers that merely CONTAIN a denied name (SEC-3 regression) ---
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        'SELECT "URL (raw)" FROM pages',
+        'SELECT "File (path)" FROM t',
+        "SELECT [Cluster (k)] FROM t",
+        "SELECT `remote (flag)` FROM t",
+        'SELECT * FROM t WHERE "s3 (bucket)" IS NOT NULL',
+        'SELECT "url (id)", "file (name)" FROM t',
+        'SELECT sum("s3 (gb)") AS total FROM usage',
+        # CTE / table-alias column lists: unquoted name immediately followed by "(".
+        "WITH url (id, addr) AS (SELECT 1, 2) SELECT * FROM url",
+        "WITH a AS (SELECT 1), url (id) AS (SELECT 2) SELECT * FROM url",
+        "WITH RECURSIVE file (n) AS (SELECT 1) SELECT * FROM file",
+        "SELECT * FROM (SELECT 1) AS file (a)",
+        "SELECT * FROM (SELECT 1, 2) AS remote (a, b)",
+        "SELECT * FROM orders o JOIN (SELECT 1) AS s3 (x) ON 1 = 1",
+    ],
+)
+def test_allows_quoted_and_alias_names_that_look_like_functions(sql):
+    assert guard_sql(sql)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        # The bare-word rule must not weaken denial of genuinely hidden calls.
+        "SELECT \"pg_read_file\"('/etc/passwd')",
+        "SELECT `load_file`('/etc/passwd')",
+        "SELECT [readfile]('/etc/passwd')",
+        # An alias-shaped name whose arguments are NOT a plain column list is a call.
+        "SELECT * FROM t AS x, url('http://evil.example/x.csv')",
+        "WITH x AS (SELECT 1) SELECT * FROM file('/etc/passwd', 'LineAsString')",
+    ],
+)
+def test_alias_exemption_does_not_weaken_real_calls(sql):
+    with pytest.raises(SqlNotAllowed):
+        guard_sql(sql)
+
+
 def test_function_denial_message_names_the_function():
     with pytest.raises(SqlNotAllowed) as excinfo:
         guard_sql("SELECT read_text('/etc/hostname')")

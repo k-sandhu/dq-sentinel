@@ -268,6 +268,7 @@ Push coherent checkpoints to `main` frequently (CI gates them) rather than batch
 | Symptom | Likely cause / fix |
 |---|---|
 | `database is locked` (app DB) | OneDrive/WAL contention — retry; keep worker count at 1 for SQLite |
+| `PermissionError: [WinError 5] ... Temp\pytest-of-<user>` at test setup | Windows only: a stale pytest temp root with broken ACLs (concurrent pytest runs can leave one behind). Tests using `tmp_path` error in *setup*, so it looks like 8+ failures with no assertion. Re-run with `pytest --basetemp=<a writable dir>`; delete the stale root when a reboot releases it. Not a code fault — CI (Linux) is unaffected |
 | `regex check unsupported` on SQLite | expected: regex checks run via the Python fallback path (chunked fetch) |
 | LLM endpoints return 503 | no LLM key resolved (`ANTHROPIC_API_KEY`, or `DQ_LLM_API_KEY` + `DQ_LLM_MODEL`) — heuristic generation still works; `/health` reports `llm_enabled` |
 | `npm run dev` proxy errors | backend not running on :8000, or `VITE_API_PROXY` overridden |

@@ -20,16 +20,22 @@ from app.core.contracts import (
     to_odcs_yaml,
 )
 from app.db import get_db
-from app.security import get_current_user, require_role
+from app.security import (
+    assert_connection_role,
+    assert_dataset_visible,
+    get_current_user,
+    require_role,
+)
 
 router = APIRouter(prefix="/datasets/{dataset_id}", tags=["contracts"])
 
 
-def _get_dataset(db: Session, dataset_id: int) -> models.Dataset:
-    ds = db.get(models.Dataset, dataset_id)
-    if ds is None:
-        raise HTTPException(404, "Dataset not found")
-    return ds
+def _get_dataset(db: Session, dataset_id: int, user: models.User) -> models.Dataset:
+    """Visible-or-404: every contract endpoint reaches the dataset's SOURCE — reads
+    introspect its schema and activation materializes checks the scheduler then runs
+    against that connection — so the global role is not enough (#72/#159). Missing
+    and invisible return the SAME 404 body so ids can't be probed."""
+    return assert_dataset_visible(db, user, dataset_id)
 
 
 def _get_contract(db: Session, dataset_id: int, contract_id: int) -> models.DataContract:
@@ -72,9 +78,9 @@ def _out(db: Session, contract: models.DataContract) -> dict:
 def list_contracts(
     dataset_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
-    _get_dataset(db, dataset_id)
+    _get_dataset(db, dataset_id, user)
     contracts = (
         db.query(models.DataContract)
         .filter(models.DataContract.dataset_id == dataset_id)
@@ -88,9 +94,9 @@ def list_contracts(
 def get_latest_contract(
     dataset_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
-    _get_dataset(db, dataset_id)
+    _get_dataset(db, dataset_id, user)
     return _out(db, _latest_contract(db, dataset_id))
 
 
@@ -98,9 +104,9 @@ def get_latest_contract(
 def latest_contract_conformance(
     dataset_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
-    _get_dataset(db, dataset_id)
+    _get_dataset(db, dataset_id, user)
     return conformance(db, _latest_contract(db, dataset_id))
 
 
@@ -109,9 +115,9 @@ def export_latest_contract(
     dataset_id: int,
     format: str = "odcs",
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
-    _get_dataset(db, dataset_id)
+    _get_dataset(db, dataset_id, user)
     if format != "odcs":
         raise HTTPException(422, "Only format=odcs is supported")
     return {"format": "odcs", "yaml": to_odcs_yaml(_latest_contract(db, dataset_id))}
@@ -122,9 +128,9 @@ def get_contract(
     dataset_id: int,
     contract_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
-    _get_dataset(db, dataset_id)
+    _get_dataset(db, dataset_id, user)
     return _out(db, _get_contract(db, dataset_id, contract_id))
 
 
@@ -135,7 +141,8 @@ def create_contract(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role("editor")),
 ):
-    ds = _get_dataset(db, dataset_id)
+    ds = _get_dataset(db, dataset_id, user)
+    assert_connection_role(db, user, ds.connection_id, "editor")  # editor on this connection (#159)
     if body.spec is not None:
         spec = normalize_spec(body.spec)
     else:
@@ -175,7 +182,8 @@ def update_contract(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role("editor")),
 ):
-    _get_dataset(db, dataset_id)
+    ds = _get_dataset(db, dataset_id, user)
+    assert_connection_role(db, user, ds.connection_id, "editor")  # editor on this connection (#159)
     contract = _get_contract(db, dataset_id, contract_id)
     data = body.model_dump(exclude_unset=True)
     changed = False
@@ -213,7 +221,8 @@ def delete_contract(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role("editor")),
 ):
-    _get_dataset(db, dataset_id)
+    ds = _get_dataset(db, dataset_id, user)
+    assert_connection_role(db, user, ds.connection_id, "editor")  # editor on this connection (#159)
     contract = _get_contract(db, dataset_id, contract_id)
     archived = archive_contract_checks(db, contract)
     audit(
@@ -236,7 +245,8 @@ def activate_contract(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role("editor")),
 ):
-    ds = _get_dataset(db, dataset_id)
+    ds = _get_dataset(db, dataset_id, user)
+    assert_connection_role(db, user, ds.connection_id, "editor")  # editor on this connection (#159)
     contract = _get_contract(db, dataset_id, contract_id)
     try:
         created, updated, schema_pinned = apply_contract(db, contract, user)
@@ -267,9 +277,9 @@ def contract_conformance(
     dataset_id: int,
     contract_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
-    _get_dataset(db, dataset_id)
+    _get_dataset(db, dataset_id, user)
     return conformance(db, _get_contract(db, dataset_id, contract_id))
 
 
@@ -278,9 +288,9 @@ def contract_versions(
     dataset_id: int,
     contract_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
-    _get_dataset(db, dataset_id)
+    _get_dataset(db, dataset_id, user)
     _get_contract(db, dataset_id, contract_id)
     return (
         db.query(models.DataContractVersion)
@@ -297,9 +307,9 @@ def contract_version_diff(
     from_version_id: int,
     to_version_id: int,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
-    _get_dataset(db, dataset_id)
+    _get_dataset(db, dataset_id, user)
     _get_contract(db, dataset_id, contract_id)
     before = db.get(models.DataContractVersion, from_version_id)
     after = db.get(models.DataContractVersion, to_version_id)
@@ -321,7 +331,8 @@ def import_contract(
     db: Session = Depends(get_db),
     user: models.User = Depends(require_role("editor")),
 ):
-    ds = _get_dataset(db, dataset_id)
+    ds = _get_dataset(db, dataset_id, user)
+    assert_connection_role(db, user, ds.connection_id, "editor")  # editor on this connection (#159)
     try:
         name, version, spec = from_odcs_yaml(body.yaml)
     except Exception as exc:  # noqa: BLE001 - return a clean parser error
@@ -354,9 +365,9 @@ def export_contract(
     contract_id: int,
     format: str = "odcs",
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_current_user),
 ):
-    _get_dataset(db, dataset_id)
+    _get_dataset(db, dataset_id, user)
     if format != "odcs":
         raise HTTPException(422, "Only format=odcs is supported")
     return {"format": "odcs", "yaml": to_odcs_yaml(_get_contract(db, dataset_id, contract_id))}

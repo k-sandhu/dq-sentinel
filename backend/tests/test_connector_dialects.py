@@ -105,7 +105,12 @@ def _opts(kind: str, dsn: str) -> dict:
 
 def test_engine_options_sqlite_duckdb():
     assert _opts("sqlite", "sqlite:///x.db") == {"connect_args": {"check_same_thread": False}}
-    assert _opts("duckdb", "duckdb:///x.duckdb") == {"connect_args": {"read_only": True}}
+    # read_only alone stops writes but NOT DuckDB's replacement scan / glob() host-file
+    # reads (#267); enable_external_access=false is the engine-level kill switch.
+    assert _opts("duckdb", "duckdb:///x.duckdb") == {
+        "connect_args": {"read_only": True, "config": {"enable_external_access": "false"}}
+    }
+    assert "enable_external_access" in REGISTRY["duckdb"].notes
 
 
 def test_engine_options_postgresql():
@@ -203,6 +208,81 @@ def test_bare_mysql_scheme_defaults_to_pymysql():
     with pytest.raises(DriverNotInstalled) as ei:
         Connector("mysql://u:p@h/db")
     assert 'dqsentinel[mysql]' in str(ei.value)
+
+
+# ---- DuckDB host-file access is off at the ENGINE level (#267/#281) ----
+# These bypass guard_sql on purpose: the point is that the connection itself refuses,
+# so a gap in the regex guard is not a host-file read. duckdb is a core dependency.
+
+
+@pytest.fixture
+def duckdb_connector(tmp_path):
+    """A read-only Connector over a real .duckdb file, plus a secret file beside it."""
+    import duckdb
+
+    secret = tmp_path / "secret.csv"
+    secret.write_text("col_a,col_b\nSUPER,SECRET\n", encoding="utf-8")
+    db = tmp_path / "analytics.duckdb"
+    con = duckdb.connect(str(db))  # writer fully closed before the connector opens it
+    try:
+        con.execute("CREATE TABLE orders (id INTEGER, amount DOUBLE)")
+        con.execute("INSERT INTO orders VALUES (1, 10.5), (2, 20.0)")
+        con.execute("CREATE VIEW orders_v AS SELECT * FROM orders")
+    finally:
+        con.close()
+    return Connector(f"duckdb:///{db.as_posix()}"), secret.as_posix(), tmp_path.as_posix()
+
+
+def test_duckdb_still_reads_the_database_file(duckdb_connector):
+    """Disabling external access must NOT break opening/reading the .duckdb file:
+    the curated catalog seeds one, and data/download_public_data.py builds one."""
+    connector, _secret, _dir = duckdb_connector
+    assert connector.run_select("SELECT * FROM orders").rows == [[1, 10.5], [2, 20.0]]
+    assert connector.run_select("SELECT * FROM orders_v").rows == [[1, 10.5], [2, 20.0]]
+    assert connector.row_count("orders") == 2
+    assert [t["table_name"] for t in connector.list_tables()] == ["orders", "orders_v"]
+    assert [c["name"] for c in connector.get_columns("orders")] == ["id", "amount"]
+    # duckdb_views()/duckdb_tables() catalog reads still resolve real DDL
+    assert connector.get_ddl("orders_v")[1] == "database"
+    assert connector.get_ddl("orders")[1] == "database"
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "SELECT * FROM '{secret}'",  # replacement scan
+        "WITH x AS (SELECT * FROM '{secret}') SELECT * FROM x",
+        "SELECT * FROM orders o, '{secret}' s",
+        "SELECT * FROM read_csv('{secret}')",
+        "SELECT * FROM read_text('{secret}')",
+    ],
+)
+def test_duckdb_engine_refuses_host_file_reads(duckdb_connector, template):
+    from sqlalchemy import text
+
+    connector, secret, _dir = duckdb_connector
+    with connector.engine.connect() as conn:  # deliberately NOT via guard_sql
+        with pytest.raises(Exception) as ei:  # noqa: PT011 - driver-specific type
+            conn.execute(text(template.format(secret=secret))).fetchall()
+    assert "Permission Error" in str(ei.value)
+
+
+def test_duckdb_engine_refuses_directory_listing(duckdb_connector):
+    from sqlalchemy import text
+
+    connector, _secret, directory = duckdb_connector
+    with connector.engine.connect() as conn:  # deliberately NOT via guard_sql
+        with pytest.raises(Exception) as ei:  # noqa: PT011 - driver-specific type
+            conn.execute(text(f"SELECT * FROM glob('{directory}/*')")).fetchall()
+    assert "Permission Error" in str(ei.value)
+
+
+def test_duckdb_external_access_setting_is_off(duckdb_connector):
+    from sqlalchemy import text
+
+    connector, _secret, _dir = duckdb_connector
+    with connector.engine.connect() as conn:
+        assert conn.execute(text("SELECT current_setting('enable_external_access')")).scalar() is False
 
 
 # ---- API surface ----

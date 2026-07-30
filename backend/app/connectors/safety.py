@@ -2,9 +2,12 @@
 by code, a user, or an LLM agent — must pass through guard_sql().
 
 Defense layers:
-1. connectors open sources read-only where the driver supports it;
+1. connectors open sources read-only where the driver supports it, and switch off
+   engine-level host access where the engine has such a switch (DuckDB:
+   enable_external_access=false — see connectors/dialects.py);
 2. guard_sql() allows a single SELECT/WITH statement, denylists side-effect keywords,
-   and denylists read-side functions that reach the filesystem/network/OS (#281);
+   denylists read-side functions that reach the filesystem/network/OS (#281), and
+   rejects a bare string literal in table position (DuckDB replacement scan, #267);
 3. callers wrap with enforce_limit() to bound result size.
 """
 
@@ -58,6 +61,9 @@ _DENY_FUNCTIONS: frozenset[str] = frozenset(
         "iceberg_snapshots",
         "st_read",
         "st_readosm",
+        # `glob('/tmp/*')` lists host paths. SQLite's `x GLOB 'pat'` *operator* is not
+        # a call, so pattern matching stays legal; only `glob(...)` is denied.
+        "glob",
         # DuckDB: federation into other engines.
         "postgres_scan",
         "postgres_scan_pushdown",
@@ -160,6 +166,36 @@ _DENY_FUNCTION_CALL = re.compile(
 _STARTS_OK = re.compile(r"^(select|with)\b", re.IGNORECASE)
 _DOLLAR_QUOTE_START = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$")
 
+# A bare string literal in table position — `SELECT * FROM '/etc/passwd'` — is a
+# DuckDB *replacement scan*: it reads the host filesystem with no function call at
+# all, so _DENY_FUNCTION_CALL can never see it (#267). Masking literals to a space
+# destroys the evidence too, so the check runs on a third mask variant in which each
+# literal collapses to this sentinel instead. NUL does not occur in legitimate SQL, and
+# smuggling one in can only cause an extra *rejection* here, never a bypass.
+_LITERAL_MARK = "\x00"
+
+# FROM/JOIN followed by a literal, optionally after a few comma-separated plain table
+# items (`FROM orders o, '/etc/passwd'` is the same replacement scan). Each repetition
+# must consume a comma, so the bounded quantifier cannot blow up.
+_LITERAL_IN_TABLE_POSITION = re.compile(
+    r"(?i)\b(from|join)\s*"
+    r"(?:[\w.$]+(?:\s+(?:as\s+)?[\w$]+)?\s*,\s*){0,32}" + re.escape(_LITERAL_MARK)
+)
+
+# The SQL-standard constructs that legitimately put FROM inside a function's argument
+# list: EXTRACT(YEAR FROM '2024-01-01'), SUBSTRING(x FROM 'regex'),
+# TRIM(BOTH FROM '  x  '), OVERLAY(a PLACING b FROM 2). A table reference never sits
+# directly inside a function call, so these are the only exemptions needed.
+_FROM_ARGUMENT_FUNCTIONS: frozenset[str] = frozenset({"extract", "substring", "trim", "overlay"})
+
+# `name (a, b)` is a CTE / table-alias *column list*, not a call: `WITH url (id, addr)
+# AS (...)`, `SELECT * FROM (SELECT 1) AS file (a)`. Legal analyst SQL even when the
+# name collides with a denied function.
+_COLUMN_LIST = re.compile(r"\s*[A-Za-z_][A-Za-z0-9_$]*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_$]*)*\s*")
+_AS_SUBQUERY = re.compile(r"\s*as\s*\(", re.IGNORECASE)
+_DEFINITION_KEYWORDS = frozenset({"with", "recursive", "as"})
+_BARE_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
+
 
 class SqlNotAllowed(ValueError):
     """Raised for non-SELECT / multi-statement / denylisted SQL. Subclasses
@@ -201,14 +237,22 @@ def _consume_dollar_quoted_string(sql: str, start: int) -> int | None:
     return end + len(delimiter)
 
 
-def _strip_comments_literals_and_identifiers(sql: str, *, keep_identifier_text: bool = False) -> str:
+def _strip_comments_literals_and_identifiers(
+    sql: str, *, keep_identifier_text: bool = False, literal_mark: str = " "
+) -> str:
     """Mask regions where semicolons and keywords are inert SQL text.
 
     With ``keep_identifier_text`` the *contents* of quoted identifiers survive (still
-    without their quotes). That variant is only fed to the function denylist, so a
-    quoted call like ``SELECT "pg_read_file"('/etc/passwd')`` cannot hide behind the
-    mask — the keyword denylist keeps using the fully masked variant, where
+    without their quotes) — but only when the quoted name is a single bare word. That
+    variant is only fed to the function denylist, so a quoted call like
+    ``SELECT "pg_read_file"('/etc/passwd')`` cannot hide behind the mask, while a
+    perfectly ordinary column named ``"URL (raw)"`` does not become a fake ``URL(``
+    call. The keyword denylist keeps using the fully masked variant, where
     ``SELECT "delete" FROM t`` stays legal.
+
+    ``literal_mark`` replaces each string / dollar-quoted literal. The default space
+    erases it entirely; the table-position check passes a sentinel so it can still see
+    *that* a literal was there without seeing its (attacker-controlled) contents.
     """
     pieces: list[str] = []
     i = 0
@@ -233,26 +277,88 @@ def _strip_comments_literals_and_identifiers(sql: str, *, keep_identifier_text: 
         ch = sql[i]
         if ch == "'":
             i = _consume_delimited(sql, i, "'", "''")
-            pieces.append(" ")
+            pieces.append(literal_mark)
             continue
         if ch in ('"', "`", "["):
             if ch == "[":
                 end = _consume_bracket_identifier(sql, i)
             else:
                 end = _consume_delimited(sql, i, ch, ch * 2)
-            pieces.append(sql[i + 1 : end - 1] if keep_identifier_text else " ")
+            inner = sql[i + 1 : end - 1]
+            # Only a single bare word can be a hidden function name; anything else
+            # (`"URL (raw)"`, `[Cluster (k)]`) is just a column and must stay masked.
+            keep = keep_identifier_text and _BARE_IDENTIFIER.fullmatch(inner) is not None
+            pieces.append(inner if keep else " ")
             i = end
             continue
         if ch == "$":
             dollar_end = _consume_dollar_quoted_string(sql, i)
             if dollar_end is not None:
                 i = dollar_end
-                pieces.append(" ")
+                pieces.append(literal_mark)
                 continue
 
         pieces.append(ch)
         i += 1
     return "".join(pieces)
+
+
+def _word_ending_at(masked: str, end: int) -> str | None:
+    """Lower-cased bare word that ends (ignoring trailing whitespace) at ``end``."""
+    i = end
+    while i > 0 and masked[i - 1].isspace():
+        i -= 1
+    stop = i
+    while i > 0 and (masked[i - 1].isalnum() or masked[i - 1] in "_$"):
+        i -= 1
+    word = masked[i:stop]
+    return word.lower() if word and not word[0].isdigit() else None
+
+
+def _matching_paren(masked: str, open_index: int) -> int | None:
+    depth = 0
+    for i in range(open_index, len(masked)):
+        if masked[i] == "(":
+            depth += 1
+        elif masked[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+    return None
+
+
+def _enclosing_call_name(masked: str, index: int) -> str | None:
+    """Name of the function whose argument list encloses ``index``.
+
+    ``None`` at statement level or inside a grouping / subquery paren — ``(SELECT
+    ...)``, ``AS (...)``, ``IN (...)`` — because those are not function calls. Literals
+    and comments are already masked, so no paren counted here is inert text.
+    """
+    stack: list[str | None] = []
+    for i, ch in enumerate(masked[:index]):
+        if ch == "(":
+            stack.append(_word_ending_at(masked, i))
+        elif ch == ")" and stack:
+            stack.pop()
+    return stack[-1] if stack else None
+
+
+def _is_definition_column_list(masked: str, match: re.Match[str]) -> bool:
+    """True when a ``name (...)`` match is a CTE / table-alias column list.
+
+    ``WITH url (id, addr) AS (...)`` and ``... AS file (a)`` are legal even though the
+    name collides with a denied function. The parenthesised part must be a plain list
+    of bare identifiers (a real call's arguments are masked literals or expressions),
+    *and* the construct must sit in a definition position.
+    """
+    open_index = match.end() - 1  # the regex ends on the "("
+    close = _matching_paren(masked, open_index)
+    if close is None or _COLUMN_LIST.fullmatch(masked, open_index + 1, close) is None:
+        return False
+    if _word_ending_at(masked, match.start()) in _DEFINITION_KEYWORDS:
+        return True
+    # Later CTEs in a list are preceded by a comma: `WITH a AS (...), url (id) AS (...)`.
+    return _AS_SUBQUERY.match(masked, close + 1) is not None
 
 
 def guard_sql(sql: str) -> str:
@@ -274,11 +380,23 @@ def guard_sql(sql: str) -> str:
     # mentioned inside a literal or a comment is not a match.
     unquoted = _strip_comments_literals_and_identifiers(cleaned, keep_identifier_text=True)
     for candidate in (stripped, unquoted):
-        call = _DENY_FUNCTION_CALL.search(candidate)
-        if call:
+        for call in _DENY_FUNCTION_CALL.finditer(candidate):
+            if _is_definition_column_list(candidate, call):
+                continue
             raise SqlNotAllowed(
                 f"Function not allowed in read-only queries: {call.group(1).upper()}()"
             )
+    # Engine-agnostic backstop for replacement scans (DuckDB reads a quoted path in
+    # table position as a file). The engine-level switch in dialects.py is the primary
+    # defense; this keeps the guard honest for any engine that grows the same feature.
+    marked = _strip_comments_literals_and_identifiers(cleaned, literal_mark=_LITERAL_MARK)
+    for scan in _LITERAL_IN_TABLE_POSITION.finditer(marked):
+        if _enclosing_call_name(marked, scan.start()) in _FROM_ARGUMENT_FUNCTIONS:
+            continue  # EXTRACT(... FROM 'x') / SUBSTRING(x FROM 'y') / TRIM(... FROM 'z')
+        raise SqlNotAllowed(
+            f"String literal not allowed in table position after {scan.group(1).upper()}: "
+            "some engines read it as a path to a file on the database host"
+        )
     return cleaned
 
 

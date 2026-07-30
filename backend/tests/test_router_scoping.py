@@ -1,10 +1,10 @@
 """Router-level object authorization + LIKE-wildcard escaping (#72, #282/#273).
 
-Four routers used to reach a source by `connection_id` / `dataset_id` with only a
+Five routers used to reach a source by `connection_id` / `dataset_id` with only a
 GLOBAL role check: saved-query run, ad-hoc dashboards, custom-dashboard SQL
-widgets, and lineage/DDL introspection. They now go through the same helpers as
-`POST /query/run` (`app/security.py`), so this module asserts the three-way
-contract those helpers define:
+widgets, lineage/DDL introspection, and data contracts. They now go through the
+same helpers as `POST /query/run` (`app/security.py`), so this module asserts the
+three-way contract those helpers define:
 
   * **404** for missing OR invisible — with an IDENTICAL body, so ids can't be
     probed;
@@ -382,6 +382,140 @@ def test_lineage_and_ddl_scoped_to_grants(client, admin_headers, source_db):
         assert client.delete(f"{QH}/connections/{cid}", headers=h).status_code == 204
 
 
+# --------------------------------------------------------- contracts (#72) ----
+CONTRACT_SPEC = {
+    "schema": {
+        "columns": [{"name": "id", "dtype": "INTEGER", "required": True}],
+        "allow_extra_columns": True,
+    }
+}
+
+
+def _contract(client, headers, dataset_id, name, spec=CONTRACT_SPEC, version="1.0.0"):
+    r = client.post(
+        f"{QH}/datasets/{dataset_id}/contract",
+        json={"name": name, "version": version, "spec": spec},
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def test_contract_reads_scoped_to_grants(client, admin_headers, source_db):
+    """A contract read describes the SOURCE schema (`default_contract_spec` and
+    `conformance` introspect the live table), so every read is grant-gated: 404
+    for an ungranted dataset, identical to a missing id."""
+    h = admin_headers
+    sfx = uuid4().hex[:8]
+    a = _conn(client, h, f"rs-ct-A-{sfx}", source_db)
+    b = _conn(client, h, f"rs-ct-B-{sfx}", source_db)
+    ds_b = _register_people(client, h, b["id"])
+    contract = _contract(client, h, ds_b["id"], f"rs-ct-{sfx}")
+
+    alice = _mk_user(client, h, f"rs-ct-alice-{sfx}@x.com")  # granted A only
+    _grant(client, h, alice["id"], a["id"], "editor")
+    ah = _login(client, f"rs-ct-alice-{sfx}@x.com")
+    _mk_user(client, h, f"rs-ct-nory-{sfx}@x.com")  # zero grants -> legacy full access
+    nh = _login(client, f"rs-ct-nory-{sfx}@x.com")
+
+    # Templates (not str.replace) so a low dataset id can't rewrite "/api/v1/".
+    for template in (
+        QH + "/datasets/{}/contracts",
+        QH + "/datasets/{}/contract",
+        QH + "/datasets/{}/contract/conformance",
+        QH + "/datasets/{}/contract/export",
+        QH + "/datasets/{}/contract/" + str(contract["id"]),
+        QH + "/datasets/{}/contract/" + str(contract["id"]) + "/conformance",
+        QH + "/datasets/{}/contract/" + str(contract["id"]) + "/versions",
+        QH + "/datasets/{}/contract/" + str(contract["id"]) + "/export",
+    ):
+        path = template.format(ds_b["id"])
+        invisible = client.get(path, headers=ah)
+        assert invisible.status_code == 404, path
+        missing = client.get(template.format(999999999), headers=ah)
+        assert missing.status_code == 404, path
+        assert missing.json()["detail"] == invisible.json()["detail"], path
+        assert client.get(path, headers=h).status_code == 200, path
+        assert client.get(path, headers=nh).status_code == 200, path  # zero-grant legacy
+
+    for cid in (a["id"], b["id"]):
+        assert client.delete(f"{QH}/connections/{cid}", headers=h).status_code == 204
+
+
+def test_contract_writes_scoped_to_grants(client, admin_headers, source_db):
+    """Contract writes are the sharp end: creating with no spec introspects the
+    live source, and activating MATERIALIZES checks the scheduler then executes
+    against that connection. Both need editor ON the dataset's connection —
+    404 when it is invisible, 403 when it is visible but viewer-granted."""
+    h = admin_headers
+    sfx = uuid4().hex[:8]
+    a = _conn(client, h, f"rs-ctw-A-{sfx}", source_db)
+    b = _conn(client, h, f"rs-ctw-B-{sfx}", source_db)
+    ds_b = _register_people(client, h, b["id"])
+    contract = _contract(client, h, ds_b["id"], f"rs-ctw-{sfx}")
+
+    alice = _mk_user(client, h, f"rs-ctw-alice-{sfx}@x.com")  # global editor, granted A only
+    _grant(client, h, alice["id"], a["id"], "editor")
+    ah = _login(client, f"rs-ctw-alice-{sfx}@x.com")
+
+    # No "spec" on purpose: default_contract_spec would reach B's live source and
+    # hand back its column list (dtypes + nullability) if this weren't gated.
+    create = client.post(f"{QH}/datasets/{ds_b['id']}/contract", json={"name": "x"}, headers=ah)
+    missing = client.post(f"{QH}/datasets/999999999/contract", json={"name": "x"}, headers=ah)
+    assert create.status_code == missing.status_code == 404, create.text
+    assert create.json()["detail"] == missing.json()["detail"]
+
+    cpath = f"{QH}/datasets/{ds_b['id']}/contract/{contract['id']}"
+    for resp in (
+        client.post(f"{cpath}/activate", headers=ah),
+        client.patch(cpath, json={"name": "hijacked"}, headers=ah),
+        client.delete(cpath, headers=ah),
+        client.post(
+            f"{QH}/datasets/{ds_b['id']}/contract/import",
+            json={"yaml": "kind: DataContract\nname: x\nversion: 1.0.0\n"},
+            headers=ah,
+        ),
+    ):
+        assert resp.status_code == 404, resp.text
+        assert resp.json()["detail"] == missing.json()["detail"]
+
+    # Nothing was materialized on B, and the contract is untouched.
+    assert client.get(f"{QH}/checks", params={"dataset_id": ds_b["id"]}, headers=h).json() == []
+    still = client.get(cpath, headers=h).json()
+    assert still["name"] == f"rs-ctw-{sfx}" and still["status"] == "draft"
+    assert len(client.get(f"{QH}/datasets/{ds_b['id']}/contracts", headers=h).json()) == 1
+
+    # Visible but viewer-granted -> 403 (not 404): existence is already known.
+    carol = _mk_user(client, h, f"rs-ctw-carol-{sfx}@x.com")  # global editor, VIEWER grant on B
+    _grant(client, h, carol["id"], b["id"], "viewer")
+    ch = _login(client, f"rs-ctw-carol-{sfx}@x.com")
+    assert client.get(cpath, headers=ch).status_code == 200  # reading is fine
+    assert client.post(f"{cpath}/activate", headers=ch).status_code == 403
+    assert client.post(
+        f"{QH}/datasets/{ds_b['id']}/contract", json={"name": "x"}, headers=ch
+    ).status_code == 403
+    assert client.patch(cpath, json={"name": "hijacked"}, headers=ch).status_code == 403
+    assert client.delete(cpath, headers=ch).status_code == 403
+
+    # Zero-grant editor keeps full legacy access (most deployments have no grants).
+    _mk_user(client, h, f"rs-ctw-nory-{sfx}@x.com")
+    nh = _login(client, f"rs-ctw-nory-{sfx}@x.com")
+    legacy = _contract(client, h, ds_b["id"], f"rs-ctw-legacy-{sfx}", version="2.0.0")
+    assert client.patch(
+        f"{QH}/datasets/{ds_b['id']}/contract/{legacy['id']}",
+        json={"name": f"rs-ctw-legacy-renamed-{sfx}"},
+        headers=nh,
+    ).status_code == 200
+    activated = client.post(
+        f"{QH}/datasets/{ds_b['id']}/contract/{legacy['id']}/activate", headers=nh
+    )
+    assert activated.status_code == 200, activated.text
+    assert activated.json()["created_checks"]
+
+    for cid in (a["id"], b["id"]):
+        assert client.delete(f"{QH}/connections/{cid}", headers=h).status_code == 204
+
+
 # ------------------------------------------- LIKE wildcard escaping (#282) ----
 def test_q_filter_escapes_like_wildcards_saved_queries(client, admin_headers, source_db):
     """`?q=%` must search for a literal percent sign, not match every row."""
@@ -489,3 +623,40 @@ def test_q_filter_escapes_like_wildcards_search_and_datasets(client, admin_heade
 
     for cid in (c["id"], plain["id"]):
         assert client.delete(f"{QH}/connections/{cid}", headers=h).status_code == 204
+
+
+def test_q_filter_escapes_like_wildcards_audit(client, admin_headers):
+    """The audit viewer's `?q=` is a documented action PREFIX match. Escaping has
+    to make a typed `_` literal WITHOUT widening the prefix into a substring
+    search — an admin filtering the compliance trail must get exactly the actions
+    they asked for."""
+    from app.db import session_factory
+    from app.models import AuditEntry
+
+    sfx = uuid4().hex[:8]
+    literal = f"rs_esc.{sfx}"  # a real underscore in the action name
+    decoy = f"rsxesc.{sfx}"  # only matches "rs_esc." if "_" is still a wildcard
+    factory = session_factory()
+    with factory() as db:
+        rows = [AuditEntry(action=literal, entity_type="test"), AuditEntry(action=decoy, entity_type="test")]
+        db.add_all(rows)
+        db.commit()
+        made = {r.id for r in rows}
+
+    def actions(q):
+        body = client.get(
+            f"{QH}/audit", params={"q": q, "limit": 200}, headers=admin_headers
+        ).json()
+        return {r["action"] for r in body["items"]}
+
+    hits = actions(f"rs_esc.{sfx}")
+    assert literal in hits
+    assert decoy not in hits  # "_" matched literally, not "any character"
+    assert decoy in actions(f"rsxesc.{sfx}")  # a plain needle still works
+    # Prefix semantics preserved: the needle is NOT wrapped in a leading "%".
+    assert actions(f"esc.{sfx}") == set()
+
+    with factory() as db:
+        for row in db.query(AuditEntry).filter(AuditEntry.id.in_(made)).all():
+            db.delete(row)
+        db.commit()

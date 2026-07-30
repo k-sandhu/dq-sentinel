@@ -39,7 +39,15 @@ def _sqlite_options(url: URL) -> dict[str, Any]:
 
 
 def _duckdb_options(url: URL) -> dict[str, Any]:
-    return {"connect_args": {"read_only": True}}
+    # read_only=True stops writes. It does NOT stop *reads* of the host filesystem:
+    # DuckDB's replacement scan turns a bare string literal in table position into a
+    # file read (`SELECT * FROM '/etc/passwd'`), with no function call for guard_sql's
+    # denylist to match (#267/#281). enable_external_access is DuckDB's own kill
+    # switch — it disables every file/network access originating from SQL
+    # (replacement scans, glob(), read_csv/read_parquet, httpfs, ATTACH) regardless
+    # of any gap in the regex guard. Opening the .duckdb database file named by the
+    # DSN is unaffected: that file is the database, not an "external" resource.
+    return {"connect_args": {"read_only": True, "config": {"enable_external_access": "false"}}}
 
 
 def _postgresql_options(url: URL) -> dict[str, Any]:
@@ -178,7 +186,10 @@ REGISTRY: dict[str, DialectSpec] = {
             driver_import=None,
             install_extra=None,
             dsn_example="duckdb:///C:/data/analytics.duckdb",
-            notes="Opened with read_only=True, so DuckDB rejects writes at the driver level.",
+            notes=(
+                "Opened with read_only=True and enable_external_access=false, so DuckDB "
+                "rejects writes and any file/network read from SQL at the driver level."
+            ),
             engine_options=_duckdb_options,
         ),
         DialectSpec(

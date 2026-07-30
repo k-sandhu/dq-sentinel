@@ -100,15 +100,20 @@ function mean(values: number[]): number | null {
 }
 
 /**
- * Headline MTTD/MTTR for the status tile, aggregated from `GET /sla/reliability`.
+ * Headline MTTR for the status tile, aggregated from `GET /sla/reliability`.
  *
- * The API reports these per-SLA on the latest evaluation, and both stay `null`
- * until an incident has actually been detected and resolved inside that SLA's
- * window — so "no number" is the normal state on a young deployment. The tile used
+ * MTTR only, deliberately. `SLAEvaluation` also carries an `mttd_seconds` column,
+ * but nothing computes it — `core/sla.py: evaluate_sla()` fills `mttr_seconds`
+ * alone — so it is `null` on every row ever written. This tile used to be labelled
+ * "MTTD / MTTR", promising a detection metric with no producer; /reliability shows
+ * MTTR per SLA, and the tile now aggregates that same field so the two agree.
+ *
+ * `mttr_seconds` stays `null` until an exception inside that SLA's window has been
+ * resolved — so "no number" is the normal state on a young deployment. The tile used
  * to hardcode a bare "—", which reads as "your MTTR is unknown/broken"; say which
  * of the three real reasons applies instead (#294).
  */
-function mttHeadline(
+function mttrHeadline(
   rel: Reliability | undefined,
   isLoading: boolean,
   error: unknown,
@@ -117,19 +122,18 @@ function mttHeadline(
   if (isLoading || !rel) return { value: "…", foot: "loading…" };
   if (rel.total === 0) return { value: "—", foot: "no SLAs defined yet — define one" };
 
-  const latest = rel.slas.map((s) => s.latest).filter((l) => l != null);
-  const mttd = mean(latest.map((l) => l.mttd_seconds).filter((v): v is number => v != null));
-  const mttr = mean(latest.map((l) => l.mttr_seconds).filter((v): v is number => v != null));
-  const scored = latest.filter((l) => l.mttd_seconds != null || l.mttr_seconds != null).length;
-  if (scored === 0) {
+  const scored = rel.slas
+    .map((s) => s.latest?.mttr_seconds)
+    .filter((v): v is number => v != null);
+  if (scored.length === 0) {
     return {
       value: "—",
       foot: `needs resolved incidents — none yet across ${fmtNum(rel.total)} SLA${rel.total === 1 ? "" : "s"}`,
     };
   }
   return {
-    value: `${fmtDuration(mttd)} / ${fmtDuration(mttr)}`,
-    foot: `mean across ${fmtNum(scored)} of ${fmtNum(rel.total)} SLAs`,
+    value: fmtDuration(mean(scored)),
+    foot: `mean across ${fmtNum(scored.length)} of ${fmtNum(rel.total)} SLAs`,
   };
 }
 
@@ -148,7 +152,7 @@ function StatusTier({
   reliabilityLoading: boolean;
   reliabilityError: unknown;
 }) {
-  const mtt = mttHeadline(reliability, reliabilityLoading, reliabilityError);
+  const mttr = mttrHeadline(reliability, reliabilityLoading, reliabilityError);
   const passingPct =
     summary && summary.active_checks > 0
       ? (summary.passing_checks / summary.active_checks) * 100
@@ -189,7 +193,7 @@ function StatusTier({
         tone={openExc ? "danger" : "ok"}
         to="/exceptions"
       />
-      <Kpi label="MTTD / MTTR" value={mtt.value} foot={mtt.foot} to="/reliability" />
+      <Kpi label="MTTR" value={mttr.value} foot={mttr.foot} to="/reliability" />
       <Kpi
         label="Coverage"
         value={coverage == null ? "—" : fmtPct(coverage / 100)}

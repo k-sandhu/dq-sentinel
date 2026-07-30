@@ -9,6 +9,7 @@ import { useConfirm } from "../components/confirm";
 import { Breadcrumbs, ErrorBox, Icon, NotFoundState, Spinner, StatusPill } from "../components/ui";
 import { fmtNum, timeAgo } from "../lib/format";
 import { isFavorite, pushRecent, subscribePrefs, toggleFavorite } from "../lib/prefs";
+import { useUnsavedGuard } from "../lib/useUnsavedGuard";
 import ChecksTab from "./dataset/ChecksTab";
 import ContractTab from "./dataset/ContractTab";
 import CodeTab from "./dataset/CodeTab";
@@ -40,6 +41,12 @@ export default function DatasetDetailPage() {
   // shared dialog that now also covers sidebar links and global search (#284).
   // This page no longer needs its own dirty bookkeeping or a native confirm().
   const goTab = (t: Tab) => navigate(`/datasets/${datasetId}/${t}`);
+
+  // This page holds no typing of its own (never blocks), but it needs the guard's
+  // bypass handle: those tab-level guards patch the shared router navigator, so
+  // *any* navigate() from here is intercepted while a tab is dirty — including the
+  // redirect after the dataset is deleted (see `unregister` below).
+  const guard = useUnsavedGuard(false);
 
   // A mistyped link ("/datasets/not-a-number") must land on the designed
   // not-found, not a 422 error box — and must not fire /datasets/NaN requests.
@@ -77,7 +84,11 @@ export default function DatasetDetailPage() {
       // can't refetch a row that no longer exists (a 404 flash on the way out).
       qc.removeQueries({ queryKey: qk.datasets.detail(datasetId) });
       qc.removeQueries({ queryKey: qk.profile.detail(datasetId) });
-      navigate("/datasets", { replace: true });
+      // The dataset is gone: a dirty Contract/Knowledge tab must not get to ask
+      // "keep editing?" here — "Keep editing" would strand the analyst on the
+      // not-found state of a dataset that no longer exists (same reasoning as
+      // CustomDashboardPage's post-delete redirect).
+      guard.bypass(() => navigate("/datasets", { replace: true }));
       // Rollups that counted this dataset must recompute immediately.
       qc.invalidateQueries({ queryKey: qk.datasets.all });
       qc.invalidateQueries({ queryKey: qk.dashboard.all });

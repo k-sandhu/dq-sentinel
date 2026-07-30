@@ -33,6 +33,14 @@ export default function AssistantPage() {
   const [busy, setBusy] = useState(false);
   const [wsError, setWsError] = useState<string | null>(null);
   const [input, setInput] = useState("");
+  // Hydration gate for the thread's live region. The socket replays the whole
+  // transcript in its `session` frame, so a page load or a session switch would
+  // otherwise announce every past turn to a screen-reader user. "pending" until
+  // that frame lands, then one "settling" render that paints the history while the
+  // wrapper is still inert, and only then "done" (see the effect below) — so the
+  // region goes live with the history already in place and announces new turns only.
+  const [hydration, setHydration] = useState<"pending" | "settling" | "done">("pending");
+  const hydrated = hydration === "done";
   const pendingRef = useRef<string | null>(null);
   const sendMessageRef = useRef<(text: string) => void>(() => {});
   const threadEndRef = useRef<HTMLDivElement | null>(null);
@@ -52,6 +60,7 @@ export default function AssistantPage() {
         setLiveSteps([]);
         setBusy(false);
         setStatus(null);
+        setHydration("settling"); // history painted this render; live region arms next
         if (pendingRef.current) {
           const text = pendingRef.current;
           pendingRef.current = null;
@@ -96,7 +105,14 @@ export default function AssistantPage() {
     setBusy(false);
     setStatus(null);
     setWsError(null);
+    setHydration("pending");
   }, [sessionId]);
+
+  // Arm the live region one render AFTER the replayed history has been committed,
+  // so the announced diff starts empty instead of containing the whole transcript.
+  useEffect(() => {
+    if (hydration === "settling") setHydration("done");
+  }, [hydration]);
 
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -215,12 +231,16 @@ export default function AssistantPage() {
                     inside the log, its insertion is announced by the log and its
                     later text changes ("Thinking…" → "Running run sql…") by its own
                     polite region, so no separate always-mounted region is needed.
+                  - While `hydration` is not "done" the wrapper is not a live region
+                    at all (no `role="log"`, `aria-live="off"`): the socket replays
+                    the stored transcript on every connect, and announcing a whole
+                    rehydrated conversation on load is worse than announcing nothing.
                   The empty state sits outside the log so its suggestion chips are
                   not announced as conversation. */}
               <div
                 className="chat-log"
-                role="log"
-                aria-live="polite"
+                role={hydrated ? "log" : undefined}
+                aria-live={hydrated ? "polite" : "off"}
                 aria-relevant="additions"
                 aria-label="Conversation"
               >

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { type HTMLAttributes, useState } from "react";
 import { api } from "../../api/client";
 import { qk } from "../../api/queryKeys";
 import type { AdhocDashboard, AdhocDashboardMeta, Health, Panel } from "../../api/types";
@@ -45,6 +45,10 @@ function PanelCard({ panel }: { panel: Panel }) {
 
 export default function DashboardsTab({ datasetId, hasProfile }: { datasetId: number; hasProfile: boolean }) {
   const { user } = useAuth();
+  // Opening a board RE-RUNS its saved SQL against the source, so the backend gates
+  // GET /adhoc-dashboards/{id} on editor (same gate as POST /query/run). Rows must
+  // not look activatable to someone who would only ever get a 403 back.
+  const canOpen = canEdit(user);
   const qc = useQueryClient();
   const confirm = useConfirm();
   const [focus, setFocus] = useState("");
@@ -84,7 +88,7 @@ export default function DashboardsTab({ datasetId, hasProfile }: { datasetId: nu
 
   return (
     <div>
-      {canEdit(user) && (
+      {canOpen && (
         <div className="card card-pad" style={{ marginBottom: 16 }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <input
@@ -111,38 +115,56 @@ export default function DashboardsTab({ datasetId, hasProfile }: { datasetId: nu
       <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", gap: 16, alignItems: "start" }}>
         <div className="card card-pad">
           <h3>Dashboards</h3>
+          {!canOpen && (
+            <div className="muted" style={{ fontSize: 11.5, marginBottom: 8 }}>
+              Opening a dashboard re-runs its saved SQL against the source, which needs editor access
+              on this connection.
+            </div>
+          )}
           <ErrorBox error={metas.error} />
           {metas.isLoading ? (
             <Spinner />
           ) : !metas.data?.length ? (
-            <div className="empty" style={{ padding: 14 }}>None yet — generate one.</div>
+            <div className="empty" style={{ padding: 14 }}>
+              {canOpen ? "None yet — generate one." : "None yet."}
+            </div>
           ) : (
-            metas.data.map((m) => (
-              <div
-                key={m.id}
-                className="clickable"
-                role="button"
-                tabIndex={0}
-                aria-pressed={openId === m.id}
-                onClick={() => setOpenId(m.id)}
-                onKeyDown={activateOnKey(() => setOpenId(m.id))}
-                style={{
-                  padding: "8px 10px",
-                  borderRadius: 6,
-                  cursor: "pointer",
-                  background: openId === m.id ? "var(--brand-light)" : undefined,
-                  marginBottom: 4,
-                }}
-              >
-                <div style={{ fontWeight: 700, fontSize: 12.5, color: "var(--text-dark)" }}>{m.title}</div>
-                <div style={{ fontSize: 11, color: "var(--text-light)" }}>
-                  <span className={`badge ${m.origin === "llm" ? "ai" : ""}`} style={{ fontSize: 9.5 }}>
-                    {m.origin === "llm" ? "AI" : "auto"}
-                  </span>{" "}
-                  {m.panel_count} panels · {fmtDateTime(m.created_at)}
+            metas.data.map((m) => {
+              // Only an editor gets an activatable row: no role/tabIndex/handlers for a
+              // viewer, so the list reads as reference rather than a wall of 403s.
+              const open = () => setOpenId(m.id);
+              const interactive: HTMLAttributes<HTMLDivElement> = canOpen
+                ? {
+                    role: "button",
+                    tabIndex: 0,
+                    "aria-pressed": openId === m.id,
+                    onClick: open,
+                    onKeyDown: activateOnKey(open),
+                  }
+                : {};
+              return (
+                <div
+                  key={m.id}
+                  className={canOpen ? "clickable" : undefined}
+                  {...interactive}
+                  style={{
+                    padding: "8px 10px",
+                    borderRadius: 6,
+                    cursor: canOpen ? "pointer" : "default",
+                    background: openId === m.id ? "var(--brand-light)" : undefined,
+                    marginBottom: 4,
+                  }}
+                >
+                  <div style={{ fontWeight: 700, fontSize: 12.5, color: "var(--text-dark)" }}>{m.title}</div>
+                  <div style={{ fontSize: 11, color: "var(--text-light)" }}>
+                    <span className={`badge ${m.origin === "llm" ? "ai" : ""}`} style={{ fontSize: 9.5 }}>
+                      {m.origin === "llm" ? "AI" : "auto"}
+                    </span>{" "}
+                    {m.panel_count} panels · {fmtDateTime(m.created_at)}
+                  </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
 
@@ -150,8 +172,12 @@ export default function DashboardsTab({ datasetId, hasProfile }: { datasetId: nu
           {!openId ? (
             <div className="card">
               <EmptyState
-                title="Pick or generate a dashboard"
-                hint="Panels are saved SQL + a chart hint; they re-run against the live source every time you open them."
+                title={canOpen ? "Pick or generate a dashboard" : "Dashboards are listed, not runnable here"}
+                hint={
+                  canOpen
+                    ? "Panels are saved SQL + a chart hint; they re-run against the live source every time you open them."
+                    : "Panels are saved SQL + a chart hint, and they re-run against the live source on open — so viewing one needs editor access on this dataset's connection."
+                }
               />
             </div>
           ) : dashboard.isLoading ? (

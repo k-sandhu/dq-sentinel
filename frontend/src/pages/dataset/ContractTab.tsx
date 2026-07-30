@@ -357,8 +357,10 @@ export default function ContractTab({ dataset }: { dataset: Dataset }) {
           </p>
           <p>
             The checks this contract materialized{materialized ? ` (${materialized} in the current spec)` : ""} are{" "}
-            <strong>archived, not deleted</strong>: they stop running immediately, but their runs and exceptions
-            are kept and they can be restored from the Checks tab.
+            <strong>archived, not deleted</strong>: they stop running immediately and disappear from the Checks
+            tab. Their past runs and exceptions are kept in the database, but an archived check{" "}
+            <strong>cannot be restored from the UI</strong> — you would have to recreate it on the Checks tab, or
+            activate a new contract, which materializes fresh checks.
           </p>
           <p style={{ marginBottom: 0 }}>
             The dataset, its profile, and any checks created outside this contract are untouched.
@@ -389,8 +391,10 @@ export default function ContractTab({ dataset }: { dataset: Dataset }) {
           <h3>No data contract yet</h3>
           {deletedId !== null && (
             <div className="info-box">
-              Contract deleted. Any checks it materialized were archived, not deleted — restore them from the
-              Checks tab if you still need them.
+              Contract deleted. Any checks it materialized were archived, not deleted: they stopped running and
+              are no longer listed on the Checks tab. Their past runs and exceptions are kept, but archived
+              checks cannot be restored from the UI — recreate them on the Checks tab, or activate a new
+              contract to materialize fresh ones.
             </div>
           )}
           <p className="muted">

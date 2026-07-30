@@ -10,7 +10,7 @@
 // post-triage selection pruning (#286) and the CSV-export failure path (#294).
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -242,6 +242,14 @@ describe("keyboard selection", () => {
 // the guards — the shortcuts must not fire when the analyst meant something else
 // ---------------------------------------------------------------------------
 
+// Every `expect(mocks.post).not.toHaveBeenCalled()` below is preceded by
+// `await act(async () => {})`. That is load-bearing, not ceremony: TanStack
+// Query's Mutation.execute() awaits onMutate before the retryer ever calls
+// mutationFn, so api.post is reached a microtask AFTER mutate() returns.
+// Asserting synchronously after the keypress passes even when the guard is
+// gone — verified by deleting all three guards from ExceptionsWorkspace and
+// watching these four tests stay green. Draining the microtask queue first is
+// what makes the assertion mean something. Do not remove these.
 describe("keyboard shortcut guards", () => {
   it("does not triage while the analyst is typing a bulk note", async () => {
     await renderWorkspace();
@@ -253,6 +261,7 @@ describe("keyboard shortcut guards", () => {
     for (const key of ["r", "e", "s", "o", "l", "v", "e"]) press(key);
     fireEvent.change(note, { target: { value: "resolve" } });
 
+    await act(async () => {});
     expect(mocks.post).not.toHaveBeenCalled();
     expect(note).toHaveValue("resolve");
     expect(screen.getByText("1 selected")).toBeInTheDocument(); // "x" didn't toggle either
@@ -263,6 +272,7 @@ describe("keyboard shortcut guards", () => {
     const search = screen.getByPlaceholderText(/search/i);
     (search as HTMLInputElement).focus();
     press("m");
+    await act(async () => {});
     expect(mocks.post).not.toHaveBeenCalled();
   });
 
@@ -271,6 +281,7 @@ describe("keyboard shortcut guards", () => {
     press("r", { ctrlKey: true });
     press("r", { metaKey: true });
     press("a", { altKey: true });
+    await act(async () => {});
     expect(mocks.post).not.toHaveBeenCalled();
   });
 
@@ -282,6 +293,7 @@ describe("keyboard shortcut guards", () => {
     press("x");
     press("r");
     press("A", { shiftKey: true });
+    await act(async () => {});
     expect(mocks.post).not.toHaveBeenCalled();
     expect(screen.queryByText(/\d+ selected/)).not.toBeInTheDocument();
   });

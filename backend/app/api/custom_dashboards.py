@@ -214,10 +214,24 @@ def _refresh_sql_widget(
     about *which* connections this user may reach.
 
     Returns ``None`` when the refresher may not run SQL on this widget's connection
-    (missing, invisible and under-roled are deliberately indistinguishable, so a
-    snapshot can't become an oracle for connection ids). The caller then leaves the
-    stored snapshot alone. Everything else is captured in ``snapshot.error`` — a
-    per-widget failure NEVER fails the enclosing request."""
+    (invisible and under-roled are deliberately indistinguishable, so a snapshot
+    can't become an oracle for which connections a *live* id belongs to). The caller
+    then leaves the stored snapshot alone.
+
+    A connection that was **deleted** is answered plainly instead ("no longer
+    exists"), because it is a broken-widget fact, not an authorization one: routing
+    it through the authorization path would either silently leave stale rows on
+    screen or blame the analyst's permissions for an admin's deletion. It leaks
+    nothing either — the id is already in the layout every viewer of this board can
+    read, and a deleted connection has no grants and no data left to protect.
+
+    Everything else is captured in ``snapshot.error`` — a per-widget failure NEVER
+    fails the enclosing request."""
+    conn = db.get(models.Connection, cfg.connection_id)
+    if conn is None:
+        return schemas.WidgetSnapshot(
+            refreshed_at=utcnow(), error=f"Connection {cfg.connection_id} no longer exists"
+        )
     try:
         assert_connection_role(db, user, cfg.connection_id, "editor")
     except HTTPException:
@@ -227,7 +241,6 @@ def _refresh_sql_widget(
     rows: list[list] = []
     error: str | None = None
     try:
-        conn = db.get(models.Connection, cfg.connection_id)  # exists: the gate 404s otherwise
         connector = connector_for(conn)
         res = connector.run_select(cfg.sql, limit=SNAPSHOT_ROW_CAP)
         columns = res.columns

@@ -6,11 +6,18 @@ on:
   pull_request:
     branches: [main]
 
-# One in-flight run per ref: a follow-up push supersedes the previous run instead
-# of queueing behind it. These jobs build images and boot a stack — not cheap.
+# One in-flight run per ref. On a PR a follow-up push supersedes the previous
+# run instead of queueing behind it — these jobs build images and boot a stack,
+# and only the tip commit's result gates the merge.
+#
+# NOT on main: main is the branch CI exists to gate, so every commit on it must
+# get a complete verdict. Cancelling there leaves a merged commit whose only run
+# says "cancelled" — indistinguishable from a run that would have failed, and
+# the release/rollback question ("was this commit ever green?") becomes
+# unanswerable. Consecutive pushes to main queue and each gets a full run.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

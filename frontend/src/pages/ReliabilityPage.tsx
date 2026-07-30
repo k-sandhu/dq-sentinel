@@ -273,10 +273,13 @@ function SlaCard({ sla }: { sla: Sla }) {
         <div className="right">
           {canEdit(user) && (
             <>
+              {/* Open-only, not a disclosure toggle: closing the editor must go through
+                  the form's own Cancel, which asks before discarding typed edits. A
+                  toggle here unmounted EditSlaForm — and its local state — silently. */}
               <button
                 className="btn small ghost"
-                onClick={() => setEditing((v) => !v)}
-                aria-expanded={editing}
+                onClick={() => setEditing(true)}
+                disabled={editing}
                 title="Edit this SLA's objective, target, window or name"
               >
                 <Icon name="settings" size={12} /> Edit
