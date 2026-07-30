@@ -78,6 +78,11 @@ jobs:
       # inline bootstrap script by sha256 hash (#292). Edit that script and the
       # hash goes stale — the browser then silently blocks the pre-paint theme
       # bootstrap. Recompute from the BUILT index.html and fail loudly instead.
+      #
+      # "the hash appears SOMEWHERE in nginx.conf" was not enough (#309): the CSP
+      # was repeated verbatim in three blocks, so updating one copy and leaving
+      # `location /` stale broke the app at runtime with CI green. The conf now
+      # keeps a single server-level copy; both invariants below keep it that way.
       - name: Verify CSP script hash matches built index.html
         working-directory: frontend
         run: |
@@ -95,13 +100,44 @@ jobs:
               "sha256-" + base64.b64encode(hashlib.sha256(b.encode()).digest()).decode()
               for b in inline
           ]
-          missing = [h for h in hashes if h not in conf]
-          if missing:
-              sys.exit(
-                  "CSP drift: frontend/index.html's inline script(s) are not allowed by "
-                  "frontend/nginx.conf. Add to script-src: " + " ".join(f"'{h}'" for h in missing)
+
+          # Walk the conf tracking brace depth, comments stripped. `server {` is
+          # depth 1; a location body is deeper.
+          csp_headers, nested = [], []
+          depth = 0
+          for lineno, raw in enumerate(conf.splitlines(), 1):
+              line = raw.split("#", 1)[0]
+              if "add_header" in line:
+                  if depth > 1:
+                      nested.append(f"  nginx.conf:{lineno}: {line.strip()}")
+                  if "Content-Security-Policy" in line:
+                      csp_headers.append((lineno, line))
+              depth += line.count("{") - line.count("}")
+
+          problems = []
+          if nested:
+              problems.append(
+                  "add_header inside a location block. nginx drops EVERY inherited "
+                  "add_header in a context that declares one of its own, so this "
+                  "silently strips the security headers from those responses. Vary "
+                  "the value with a map instead (see $dq_cache_control):\n" + "\n".join(nested)
               )
-          print(f"CSP ok: {len(inline)} inline script(s) allowed by hash")
+          if not csp_headers:
+              problems.append("no `add_header Content-Security-Policy` found in frontend/nginx.conf")
+          for h in hashes:
+              stale = [f"  nginx.conf:{n}" for n, line in csp_headers if h not in line]
+              if stale:
+                  problems.append(
+                      f"CSP drift: index.html's inline script hashes to '{h}', which is "
+                      f"missing from {len(stale)} of {len(csp_headers)} Content-Security-Policy "
+                      f"header(s). Add it to script-src on:\n" + "\n".join(stale)
+                  )
+          if problems:
+              sys.exit("\n\n".join(problems))
+          print(
+              f"CSP ok: {len(inline)} inline script(s) allowed by hash in "
+              f"{len(csp_headers)} CSP header(s); all add_header directives at server level"
+          )
           PY
 
   # Migrations only ever ran against SQLite (with render_as_batch, so the DDL is
@@ -180,33 +216,55 @@ jobs:
       - name: Show service state
         run: docker compose ps
       - name: Frontend serves the app with its security headers
-        run: |
-          set -e
-          curl -sS -D headers.txt -o body.html http://127.0.0.1:3000/
-          grep -q '<div id="root">' body.html
-          grep -iq '^content-security-policy:' headers.txt
-          grep -iq '^x-content-type-options: nosniff' headers.txt
-          grep -iq '^cache-control: no-cache' headers.txt   # index.html must revalidate (#280)
-          cat headers.txt
-      - name: Point the smoke test at the seeded admin
-        # scripts/e2e_smoke.py logs in as admin@example.com/admin123, but the
-        # bootstrap password above is (correctly) not that. Rotate the seeded
-        # admin's password through the API, as an admin would, so the smoke test
-        # can authenticate. FOLLOW-UP: teach e2e_smoke.py a --password flag and
-        # delete this step.
+        # The CSP and its siblings are ONE server-level add_header (#309), and
+        # nginx drops every inherited add_header in a location that declares its
+        # own — so assert the real runtime header on all three shapes of response:
+        # the index, a hashed asset (location /assets/) and a deep link (the SPA
+        # fallback). Grepping the static `<div id="root">` renders either way and
+        # proves nothing about the headers.
         run: |
           set -euo pipefail
-          api=http://127.0.0.1:8000/api/v1
-          token=$(curl -sS -X POST "$api/auth/login" -H 'Content-Type: application/json' \
-            --data "$(python3 -c 'import json,os; print(json.dumps({"email":"admin@example.com","password":os.environ["DQ_BOOTSTRAP_ADMIN_PASSWORD"]}))')" \
-            | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
-          uid=$(curl -sS "$api/auth/me" -H "Authorization: Bearer $token" \
-            | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
-          code=$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$api/auth/users/$uid" \
-            -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
-            --data '{"password":"admin123"}')
-          test "$code" = "200"
+          curl -sS -D headers.txt -o body.html http://127.0.0.1:3000/
+          grep -q '<div id="root">' body.html
+          grep -iq '^cache-control: no-cache' headers.txt   # index.html must revalidate (#280)
+          assets=$(grep -o '/assets/[A-Za-z0-9._-]*\.js' body.html)
+          asset=${assets%%$'\n'*}   # first match, without a `| head` SIGPIPE under pipefail
+          test -n "$asset"
+          for path in / /datasets/1/checks "$asset"; do
+            curl -sS -D h.txt -o /dev/null "http://127.0.0.1:3000$path"
+            for header in 'content-security-policy:.*sha256-' 'x-content-type-options: nosniff' \
+                          'x-frame-options: DENY' 'referrer-policy: no-referrer'; do
+              grep -iq "^$header" h.txt || {
+                echo "::error::missing '$header' on $path"; cat h.txt; exit 1; }
+            done
+            echo "security headers ok on $path"
+          done
+          # ...and the per-response bits still differ, which is what the map does.
+          curl -sS -D h.txt -o /dev/null "http://127.0.0.1:3000$asset"
+          grep -iq '^cache-control: public, max-age=31536000, immutable' h.txt
+          cat headers.txt
+      - name: Frontend proxies /api to the api container
+        # proxy_pass now goes through a resolver + a variable so a recreated api
+        # container does not strand nginx on a dead IP (#309). A variable upstream
+        # stops nginx deriving the proxied URI from the location, so prove the path
+        # and query string still arrive intact: the same request must get the same
+        # status through the UI as it does straight at the API.
+        run: |
+          set -euo pipefail
+          curl -sS http://127.0.0.1:3000/api/v1/health -o via-ui.json
+          python3 -c 'import json;d=json.load(open("via-ui.json"));assert d["status"]=="ok",d'
+          q='/api/v1/datasets?connection_id=1'
+          direct=$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:8000$q")
+          viaui=$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:3000$q")
+          test "$direct" = "$viaui"
+          echo "proxied $q -> $viaui (direct: $direct)"
       - name: End-to-end smoke test against the stack
+        # The smoke test authenticates as the bootstrapped admin, reading
+        # DQ_BOOTSTRAP_ADMIN_PASSWORD (exported above — the value the stack booted
+        # with) so the generated secret never lands in a command line, a process
+        # listing or this log. It used to hardcode admin@example.com/admin123,
+        # which forced this job to first PATCH the seeded admin's password back to
+        # the insecure dev default just to log in (#309).
         run: |
           python scripts/e2e_smoke.py --base http://127.0.0.1:8000 \
             --dsn sqlite:////data/samples/shopdb.sqlite

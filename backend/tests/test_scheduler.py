@@ -158,3 +158,133 @@ def test_run_forever_drains_and_exits_on_stop(monkeypatch):
         scheduler.request_stop()  # ensure the thread can't outlive the test
         t.join(timeout=5)
         scheduler._STOP.clear()
+
+
+# --- worker readiness (#311) --------------------------------------------------
+# The container healthcheck must answer "can this worker claim a check?", not
+# "did a socket bind?". `app.worker` binds the metrics port BEFORE init_db() on
+# purpose (a worker wedged in a migration must stay scrapeable), so readiness is
+# carried by the dq_worker_up gauge, which app.core.scheduler sets only once
+# init_db() has returned and run_forever() has been entered.
+
+
+def test_worker_binds_metrics_before_migrating_but_is_not_ready_until_the_loop(monkeypatch):
+    """A worker still inside init_db() must not report healthy, even though its
+    metrics endpoint is already answering."""
+    from prometheus_client import generate_latest
+
+    import app.db
+    import app.observability
+    from app import worker
+    from app.config import get_settings
+    from app.core import scheduler
+    from app.observability import WORKER_UP
+
+    WORKER_UP.set(0)
+    events: list[str] = []
+    ready_mid_migration: list[bool] = []
+
+    monkeypatch.setattr(worker, "start_http_server", lambda port: events.append(f"metrics:{port}"))
+    monkeypatch.setattr(app.observability, "configure_logging", lambda *a, **k: None)
+
+    def fake_init_db() -> None:
+        # We are inside the migration, with the metrics endpoint already serving.
+        events.append("init_db")
+        ready_mid_migration.append(worker._readiness_ok(generate_latest().decode()))
+
+    monkeypatch.setattr(app.db, "init_db", fake_init_db)
+    monkeypatch.setattr(scheduler, "run_forever", lambda: events.append("run_forever"))
+
+    assert worker.main([]) == 0
+    port = get_settings().worker_metrics_port
+    # Metrics first (diagnosability), then migrate, then the loop.
+    assert events == [f"metrics:{port}", "init_db", "run_forever"]
+    assert ready_mid_migration == [False]
+
+
+def test_worker_healthcheck_flag_reflects_the_readiness_gauge(monkeypatch):
+    """End-to-end probe against a real metrics endpoint: an open port with no
+    scheduler behind it exits non-zero (the old probe passed here)."""
+    from prometheus_client import start_http_server
+
+    from app import worker
+    from app.config import get_settings
+    from app.observability import WORKER_UP
+
+    WORKER_UP.set(0)
+    httpd, _thread = start_http_server(0, addr="127.0.0.1")  # ephemeral loopback port
+    try:
+        settings = get_settings().model_copy(update={"worker_metrics_port": httpd.server_port})
+        monkeypatch.setattr(worker, "get_settings", lambda: settings)
+        assert worker.main(["--healthcheck"]) == 1  # serving, but not scheduling
+        WORKER_UP.set(1)
+        assert worker.main(["--healthcheck"]) == 0
+    finally:
+        WORKER_UP.set(0)
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_worker_rejects_an_unrecognized_flag_instead_of_starting_a_scheduler():
+    """A typo'd probe flag must not fall through and boot a second scheduler
+    (which would migrate, bind the metrics port and claim checks) inside what the
+    operator believed was a healthcheck."""
+    from app import worker
+
+    assert worker.main(["--healthchek"]) == 2
+
+
+def test_run_forever_satisfies_the_worker_readiness_probe(monkeypatch):
+    """Close the loop: the predicate the healthcheck uses is actually satisfied by
+    the real scheduler loop, and only while it is running."""
+    import threading
+    import time
+
+    from prometheus_client import generate_latest
+
+    from app import worker
+    from app.core import scheduler
+    from app.observability import WORKER_UP
+
+    WORKER_UP.set(0)
+    scheduler._STOP.clear()
+    assert not worker._readiness_ok(generate_latest().decode())  # before the loop
+
+    ready_in_loop: list[bool] = []
+    monkeypatch.setattr(
+        scheduler,
+        "poll_once",
+        lambda _ex: (ready_in_loop.append(worker._readiness_ok(generate_latest().decode())), 0)[1],
+    )
+
+    t = threading.Thread(target=scheduler.run_forever, daemon=True)
+    t.start()
+    try:
+        for _ in range(100):  # wait up to ~2s for the first poll
+            if ready_in_loop:
+                break
+            time.sleep(0.02)
+        scheduler.request_stop()
+        t.join(timeout=5)
+    finally:
+        scheduler.request_stop()
+        t.join(timeout=5)
+        scheduler._STOP.clear()
+
+    assert ready_in_loop and all(ready_in_loop), "worker did not report ready inside the loop"
+    assert not worker._readiness_ok(generate_latest().decode())  # 0 again after the drain
+
+
+def test_compose_worker_healthcheck_probes_readiness_not_just_the_port():
+    """The shipped healthcheck must assert readiness. Probing :9100 for a 200
+    flips the container healthy before migrations have run, so
+    `docker compose up --wait` returned before the worker could claim anything."""
+    import yaml
+
+    from app.config import REPO_DIR
+
+    compose = yaml.safe_load((REPO_DIR / "docker-compose.yml").read_text(encoding="utf-8"))
+    worker_svc = compose["services"]["worker"]
+    assert worker_svc["healthcheck"]["test"] == [
+        "CMD", "python", "-m", "app.worker", "--healthcheck",
+    ]

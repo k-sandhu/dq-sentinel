@@ -1,7 +1,30 @@
-__pycache__/
-*.pyc
-.pytest_cache/
-.ruff_cache/
+# Build-context exclusions.
+#
+# READ THIS BEFORE ADDING A PATTERN (#310): .dockerignore is NOT .gitignore.
+# Docker matches each pattern against the whole relative path with Go's
+# filepath.Match semantics, so a pattern with no leading `**/` is anchored at the
+# CONTEXT ROOT. Plain `__pycache__/` therefore only ever matched
+# backend/__pycache__, and every nested bytecode dir (app/**, migrations/**)
+# shipped in the image as stale host bytecode. Anything that can appear at any
+# depth needs the `**/` prefix; `**/x` matches `x` at the root too.
+
+# Host bytecode + tool caches (host tags never match the image interpreter).
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.pytest_cache
+**/.ruff_cache
+
+# Local databases — the dev app DB and any sample source DB. Never bake one in.
+**/*.db
+**/*.sqlite
+**/*.duckdb
+
+# Secrets are kept out of the CONTEXT, not merely out of a COPY: the whole
+# context is uploaded to the daemon (possibly remote) before any COPY runs.
+**/.env
+
+# Root-anchored ON PURPOSE: this is backend/tests, the only test tree in this
+# context. `**/tests` would also swallow a tests/ dir inside anything vendored
+# under backend/ later.
 tests/
-*.db
-*.sqlite

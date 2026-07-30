@@ -4,7 +4,7 @@ import logging
 from collections.abc import Callable, Generator
 
 from sqlalchemy import create_engine, event, inspect, text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import BACKEND_DIR, Settings, get_settings
@@ -91,26 +91,60 @@ def get_db() -> Generator[Session, None, None]:
 _MIGRATION_LOCK_KEY = 0x6451_5343  # "dQSC"
 
 
+def _release_pg_migration_lock(conn: Connection) -> None:
+    """Best-effort release of the migration advisory lock (#311).
+
+    Called from a ``finally``, so it may run with ``run()``'s exception in flight
+    — and a cleanup failure must never replace it. Two things matter:
+
+    * **Roll back first.** If anything aborted the transaction on this connection,
+      every further statement fails with "current transaction is aborted, commands
+      ignored until end of transaction block", and *that* would surface instead of
+      the real migration error on the startup path.
+    * **Swallow whatever is left.** The lock is *session*-scoped, so it is released
+      when this connection closes moments later regardless; losing the real failure
+      message costs an operator far more than an unlock we did not get to run.
+    """
+    try:
+        conn.rollback()  # no-op when no transaction is open; clears an aborted one
+        with conn.begin():
+            conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _MIGRATION_LOCK_KEY})
+    except Exception:  # noqa: BLE001 - cleanup must never mask the caller's exception
+        log.warning(
+            "Could not release the migration advisory lock; it is released when the "
+            "connection closes",
+            exc_info=True,
+        )
+
+
 def _with_pg_migration_lock(engine: Engine, run: Callable[[], None]) -> None:
     """Run ``run()`` while holding the Postgres migration advisory lock (#158).
 
     ``pg_advisory_lock`` is a *blocking* wait and runs on the application engine —
     whose connections carry the #158 ``statement_timeout`` and
     ``idle_in_transaction_session_timeout``. A sibling booting concurrently can
-    hold the lock (or the DDL can run) longer than those timeouts, which would
-    cancel the waiter / terminate the lock holder and crash startup. Disable both
-    timeouts on this connection for the lock transaction (``SET LOCAL`` auto-resets
-    at transaction end) so migration startup is never bounded by request-path
-    timeouts. The lock is always released, even if ``run()`` raises.
+    hold the lock longer than those timeouts, which would cancel the waiter and
+    crash startup. Disable both on this connection for the lock transaction
+    (``SET LOCAL`` auto-resets at transaction end) so waiting for the lock is
+    never bounded by request-path timeouts.
+
+    The lock is acquired in its own transaction, which is then **committed**:
+    ``pg_advisory_lock`` is session-scoped, so the lock survives the commit while
+    ``run()`` (which migrates on Alembic's own connection) executes. That also
+    means this connection sits idle *outside* a transaction for the duration
+    instead of idle-in-transaction, and that nothing can leave it in an aborted
+    state that would poison the unlock (#311). The lock is always released, even
+    if ``run()`` raises — and never at the cost of ``run()``'s exception.
     """
-    with engine.connect() as conn, conn.begin():
-        conn.execute(text("SET LOCAL statement_timeout = 0"))
-        conn.execute(text("SET LOCAL idle_in_transaction_session_timeout = 0"))
-        conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": _MIGRATION_LOCK_KEY})
+    with engine.connect() as conn:
+        with conn.begin():
+            conn.execute(text("SET LOCAL statement_timeout = 0"))
+            conn.execute(text("SET LOCAL idle_in_transaction_session_timeout = 0"))
+            conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": _MIGRATION_LOCK_KEY})
         try:
             run()
         finally:
-            conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _MIGRATION_LOCK_KEY})
+            _release_pg_migration_lock(conn)
 
 
 def _run_migrations(engine: Engine) -> None:

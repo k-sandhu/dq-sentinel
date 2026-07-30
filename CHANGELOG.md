@@ -14,8 +14,23 @@ older #72, #261 and #273). The audit remediation then went through two
 adversarial review rounds; where a round found that a fix did not hold, the
 entry below describes what actually shipped, not what was first attempted.
 
+That PR's pre-merge gate then filed its own follow-ups (#306–#314), which are
+landing individually; those entries carry their own issue numbers.
+
 ### Added
 
+- **`compose.dev.yml` — a one-command local demo**, without weakening the
+  production guard:
+  `docker compose -f docker-compose.yml -f compose.dev.yml up --build`. The base
+  stack defaults to `DQ_ENV=prod`, which refuses to boot on a missing or
+  known-default `DQ_SECRET_KEY`/`DQ_BOOTSTRAP_ADMIN_PASSWORD` — correct, but it
+  meant a fresh clone failed twice in a row, because copying `.env.example` hands
+  the guard *precisely* the two values it denylists. The overlay sets `DQ_ENV=dev`
+  and supplies those throwaway credentials explicitly; because they are the
+  denylisted ones, the overlay cannot be repurposed into a prod-posture deploy.
+  README's Docker quickstart now documents both routes (throwaway overlay, or a
+  generated secret in `.env`), and `.env.example` says up front that its
+  placeholders are rejected under `DQ_ENV=prod` and what to do instead. (#314)
 - **Bulk proposal triage.** A page leading with 100+ fully expanded proposals now
   collapses them (when real checks share the page) and offers *Activate all* /
   *Dismiss all* behind count-stating confirm dialogs, backed by a new
@@ -59,6 +74,17 @@ entry below describes what actually shipped, not what was first attempted.
 
 ### Changed
 
+- **`GET /adhoc-dashboards/{id}` now requires `editor` on the dataset's
+  connection**; it previously accepted any authenticated user. Opening a board
+  re-executes its stored panel SQL against the source, so despite being a GET it
+  is an execution path and takes the same gate as `POST /query/run`. **Upgrade
+  impact:** in a zero-grant install — where every user's global role still
+  applies to every connection — a `viewer` who could previously open an ad-hoc
+  dashboard now gets `403 Requires editor on this connection`. Listing is
+  unchanged (still any authenticated user, scoped to visible connections), and
+  the dataset's *Dashboards* tab renders those rows as non-activatable reference
+  with an explanation rather than links that 403. Generating and deleting already
+  required editor. (#72, #296, noted late in #314)
 - **List endpoints no longer issue N+1 queries.** `/runs` and `/datasets` fold
   their per-row counts into one `GROUP BY` plus eager loads, and exception
   serialization prefetches the checks/datasets/users it resolves; query budgets
@@ -78,6 +104,16 @@ entry below describes what actually shipped, not what was first attempted.
 - Built-in catalog datasets are generated into a shared named volume
   (`DQ_CATALOG_DATA_DIR`), so the api and worker containers see the same files
   instead of each writing its own copy. (#261)
+- Migration `0007_incidents` now refuses to downgrade a database holding a
+  `notification_rules.channel` value wider than the `VARCHAR(10)` that downgrade
+  restores, naming the offending rows, instead of failing mid-migration with a
+  driver error on PostgreSQL (or, on SQLite — which ignores VARCHAR widths —
+  silently leaving data the declared type cannot hold). No current channel name
+  is affected: `servicenow`, at exactly 10 characters, is the longest
+  `schemas.NotifyChannel` allows, so this only bites a rollback from some future
+  release that adds a longer one. Neither the upgrade path nor the revision chain
+  changed; downgrade remains a development path, not a supported production one.
+  (#314)
 - README / AGENTS.md / this changelog re-verified against the code: the check
   registry is 14 types, the dataset page has 12 tabs, the LLM layer is
   provider-agnostic, the smoke test makes 38 assertions, and the audit log and

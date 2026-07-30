@@ -10,6 +10,7 @@ from app.connectors.dialects import REGISTRY, DriverNotInstalled, driver_install
 from app.connectors.sa import Connector, SqlNotAllowed, connector_for, dispose_connection, kind_from_dsn
 from app.core.audit import audit
 from app.core.deletion import cleanup_dataset_dependents
+from app.core.errors import redact_probe_message, redact_source_error
 from app.db import get_db
 from app.security import (
     assert_connection_visible,
@@ -19,6 +20,21 @@ from app.security import (
 )
 
 router = APIRouter(prefix="/connections", tags=["connections"])
+
+
+def _probing(conn: models.Connection) -> str:
+    """Log-side description of a probe — ids and names, never DSN internals."""
+    return f"reach source connection {conn.id} ({conn.kind})"
+
+
+def _unreachable(reason: str) -> str:
+    """The one sentence a failed source probe renders, everywhere it happens.
+
+    Actionable without being an infrastructure disclosure: the analyst learns
+    *why* ("authentication with the source failed"), the host/port/account stay
+    in the server log (#307).
+    """
+    return f"Could not connect to this source: {reason}"
 
 
 @router.get("/health", response_model=list[schemas.ConnectionHealth])
@@ -34,8 +50,13 @@ def fleet_health(db: Session = Depends(get_db), user: models.User = Depends(get_
         start = time.perf_counter()
         try:
             ok, message, _count = connector_for(conn).test()
+            if not ok:
+                # Connector.test() catches the driver error and renders it, so
+                # there is no exception here — redact the rendered text (#307).
+                message = _unreachable(redact_probe_message(message, action=_probing(conn)))
         except Exception as exc:  # noqa: BLE001
-            ok, message = False, f"{type(exc).__name__}: {exc}"
+            ok = False
+            message = _unreachable(redact_source_error(exc, action=_probing(conn)))
         return schemas.ConnectionHealth(
             id=conn.id,
             name=conn.name,
@@ -129,7 +150,15 @@ def test_connection(
     try:
         ok, message, table_count = connector_for(conn).test()
     except DriverNotInstalled as exc:
-        return schemas.ConnectionTestOut(ok=False, message=str(exc))  # verbatim, incl. pip hint
+        # Verbatim, incl. the pip hint: it is our own text about this server's
+        # packages and names nothing about the source.
+        return schemas.ConnectionTestOut(ok=False, message=str(exc))
+    if not ok:
+        # A SAVED connection: the caller may hold only a viewer grant and have
+        # never seen the DSN, so the driver's host/port/user must not come back
+        # in the message (#307). POST /connections/test is deliberately NOT
+        # redacted — there the admin supplied the DSN in the same request.
+        message = _unreachable(redact_probe_message(message, action=_probing(conn)))
     return schemas.ConnectionTestOut(ok=ok, message=message, table_count=table_count)
 
 
@@ -142,8 +171,11 @@ def list_tables(
     conn = assert_connection_visible(db, user, connection_id)  # 404 if not granted (#159)
     try:
         tables = connector_for(conn).list_tables()
-    except Exception as exc:  # noqa: BLE001 - surface driver errors
-        raise HTTPException(502, f"Could not introspect source: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001 - surface WHY, not the driver's internals
+        # The raw driver message carries the introspection SQL and the source's
+        # host/port/user; the redactor keeps the reason and logs the rest (#307).
+        reason = redact_source_error(exc, action=f"list tables on connection {conn.id}")
+        raise HTTPException(502, f"Could not introspect the source: {reason}") from exc
 
     registered = {
         (d.schema_name, d.table_name): d.id

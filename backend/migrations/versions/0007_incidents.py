@@ -1,9 +1,26 @@
 """incident lifecycle and notification channels
 
-Revision ID: 0005_incidents
-Revises: 0004_dataset_monitor_packs
+Revision ID: 0007_incidents
+Revises: 0006_dataset_monitor_packs
 Create Date: 2026-06-16 00:00:00.000000
 
+Downgrade is lossy-by-shape, not just by dropped columns (#314). Alongside
+dropping the three escalation columns, ``downgrade()`` narrows
+``notification_rules.channel`` from ``VARCHAR(20)`` back to ``VARCHAR(10)``.
+
+Every channel name this release can write fits: the longest of
+``slack | email | webhook | teams | pagerduty | jira | servicenow``
+(``schemas.NotifyChannel``) is ``servicenow`` at exactly 10 characters. Nothing
+at the database level enforces that, though — the column carries no CHECK
+constraint — so a row written by a *later* release that adds a longer channel
+name, or edited by hand, makes the narrowing ALTER fail. On PostgreSQL that is
+``value too long for type character varying(10)``, mid-migration, after the
+column drops have already been applied; SQLite (which ignores VARCHAR lengths)
+would instead silently keep the oversized value. ``downgrade()`` therefore
+pre-flights the data and refuses with a message naming the offending rows,
+rather than truncating a routing target behind the operator's back.
+
+Downgrade remains a development/rollback path, not a supported production one.
 """
 from __future__ import annotations
 
@@ -17,6 +34,10 @@ revision: str = "0007_incidents"
 down_revision: str | None = "0006_dataset_monitor_packs"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
+
+# Width `notification_rules.channel` had before this revision widened it, and the
+# width downgrade() puts back.
+CHANNEL_LEN_BEFORE_UPGRADE = 10
 
 
 def upgrade() -> None:
@@ -96,7 +117,45 @@ def upgrade() -> None:
         )
 
 
+def _assert_channels_fit_narrowed_column() -> None:
+    """Refuse the downgrade if any stored channel name is wider than VARCHAR(10).
+
+    Checked BEFORE anything is altered, so a refusal leaves the schema exactly as
+    it was rather than half-downgraded. Skipped in offline (``--sql``) mode, where
+    there is no live connection to read data from — an offline downgrade emits the
+    narrowing DDL and the target database enforces it.
+    """
+    if op.get_context().as_sql:
+        return
+    rules = sa.table(
+        "notification_rules",
+        sa.column("id", sa.Integer),
+        sa.column("channel", sa.String),
+    )
+    oversized = (
+        op.get_bind()
+        .execute(
+            sa.select(rules.c.id, rules.c.channel)
+            .where(sa.func.length(rules.c.channel) > CHANNEL_LEN_BEFORE_UPGRADE)
+            .order_by(rules.c.id)
+        )
+        .fetchall()
+    )
+    if not oversized:
+        return
+    shown = ", ".join(f"id={row.id} channel={row.channel!r}" for row in oversized[:10])
+    more = f" (+{len(oversized) - 10} more)" if len(oversized) > 10 else ""
+    raise RuntimeError(
+        f"Cannot downgrade {revision}: notification_rules.channel narrows to "
+        f"VARCHAR({CHANNEL_LEN_BEFORE_UPGRADE}) and {len(oversized)} row(s) hold a longer "
+        f"value — {shown}{more}. Re-point or delete those notification rules first; "
+        "this migration will not truncate a routing target for you."
+    )
+
+
 def downgrade() -> None:
+    _assert_channels_fit_narrowed_column()
+
     with op.batch_alter_table("notification_rules", schema=None) as batch_op:
         batch_op.drop_column("max_escalation_level")
         batch_op.drop_column("escalation_delay_minutes")

@@ -1,0 +1,50 @@
+# Throwaway LOCAL overlay for docker-compose.yml (#314).
+#
+#   docker compose -f docker-compose.yml -f compose.dev.yml up --build
+#       ->  UI on http://localhost:3000, sign in admin@example.com / admin123
+#
+# Why this file exists
+# --------------------
+# The base stack defaults to `DQ_ENV=prod` (#155), which refuses to boot on a
+# missing/known-default `DQ_SECRET_KEY` or `DQ_BOOTSTRAP_ADMIN_PASSWORD`. That is
+# the right default for anything anyone might deploy — but it means a first
+# `docker compose up` with no `.env` fails, and copying `.env.example` fails too,
+# because its placeholders are exactly the values the guard denylists. This
+# overlay is the supported one-command way to get a demo stack up WITHOUT
+# weakening that guard: it switches the posture to `dev` and supplies the
+# throwaway credentials explicitly.
+#
+# What you are trading away
+# -------------------------
+# `DQ_ENV=dev` turns OFF the fail-fast configuration validation in
+# `backend/app/config.py`. JWTs are then signed with a secret published in this
+# repository, and the seeded admin password is the documented default — anyone
+# who can reach the API can mint an admin token. Localhost demos only.
+#
+# The two values below are deliberately the ones `INSECURE_SECRET_KEYS` /
+# `INSECURE_ADMIN_PASSWORDS` reject, so this overlay can never be repurposed into
+# a prod-posture deploy: add `DQ_ENV=prod` on top and the API refuses to start.
+#
+# For a real deployment use the base file alone and supply your own values:
+#   DQ_SECRET_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(48))")
+#
+# Note: these are literal values, not `${VAR:-default}` substitutions, so they
+# override anything in your `.env` for as long as the overlay is on the command
+# line. That is intentional — an overlay named `dev` should not silently inherit
+# a production secret.
+
+services:
+  api:
+    environment:
+      DQ_ENV: dev
+      DQ_SECRET_KEY: dev-only-secret-change-me
+      DQ_BOOTSTRAP_ADMIN_PASSWORD: admin123
+
+  worker:
+    # The worker imports the same Settings object, so it needs the same posture;
+    # docker-compose.yml shares one `&backend_env` anchor between the two
+    # services, but a compose overlay merges per service, not per anchor.
+    environment:
+      DQ_ENV: dev
+      DQ_SECRET_KEY: dev-only-secret-change-me
+      DQ_BOOTSTRAP_ADMIN_PASSWORD: admin123
