@@ -310,14 +310,19 @@ function IncidentHeatmap({
 }
 
 
+/** Mixed queue of things to act on. A check whose last run ERRORED produced no
+ *  exceptions, so routing it to the dataset's Exceptions tab landed the analyst
+ *  on an empty page (#262): those rows say "did not run" and route to the check,
+ *  which is where the repair happens. */
 function NeedsAttention({ console: c, summary }: { console: DashboardConsole | undefined; summary: ScorecardSummary | undefined }) {
   const items: { key: string; title: string; meta: string; to: string }[] = [];
   for (const chk of (c?.failing_now ?? []).slice(0, 4)) {
+    const broken = chk.last_status === "error";
     items.push({
       key: `chk-${chk.id}`,
       title: chk.name,
-      meta: `failing · ${chk.severity}`,
-      to: `/datasets/${chk.dataset_id}/exceptions`,
+      meta: broken ? "did not run · needs repair" : `failing · ${chk.severity}`,
+      to: broken ? `/checks/${chk.id}` : `/datasets/${chk.dataset_id}/exceptions`,
     });
   }
   for (const ds of (summary?.top_failing_datasets ?? []).slice(0, 3)) {
@@ -413,6 +418,11 @@ function DatasetsByRisk({
         score: d.score,
         status: d.slo_status,
         exceptions: d.open_exceptions,
+        // Checks that ERRORED depress the score without producing anything to
+        // triage — flag them as repair work rather than letting the row read as a
+        // pure data-quality problem (#262).
+        errored: d.error_checks,
+        errorRunId: null as number | null,
         // Kept as separate fields (not a pre-joined string) so domain/team can each
         // link into their own Datasets drill-in.
         domain: d.domain || null,
@@ -426,6 +436,8 @@ function DatasetsByRisk({
         score: null as number | null,
         status: null as ScorecardSloStatus | null,
         exceptions: d.open_exceptions,
+        errored: d.errored_checks,
+        errorRunId: d.last_error_run_id,
         domain: d.domain,
         team: d.team,
         owner: d.owner,
@@ -482,6 +494,18 @@ function DatasetsByRisk({
                 <tr key={r.id}>
                   <td>
                     <Link to={`/datasets/${r.id}`} className="row-title-link">{r.name}</Link>
+                    {r.errored > 0 && (
+                      <>
+                        {" "}
+                        <Link
+                          to={r.errorRunId ? `/runs/${r.errorRunId}` : `/datasets/${r.id}/runs`}
+                          className="pill tone-warn"
+                          title={`${r.errored} check${r.errored === 1 ? "" : "s"} could not run — this dataset needs repair, not triage`}
+                        >
+                          {fmtNum(r.errored)} not running
+                        </Link>
+                      </>
+                    )}
                   </td>
                   <td>{fmtScore(r.score)}</td>
                   <td>{r.status ? <span className={`pill tone-${sloTone(r.status)}`}>{sloLabel(r.status)}</span> : "—"}</td>

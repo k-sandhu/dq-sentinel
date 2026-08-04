@@ -164,6 +164,47 @@ _DENY_FUNCTION_CALL = re.compile(
     re.IGNORECASE,
 )
 
+# Metadata table-functions that disclose the SERVER's filesystem layout. These are
+# referenced WITHOUT parentheses (`FROM pragma_database_list`), so _DENY_FUNCTION_CALL
+# — which requires a trailing `(` — can never match them, and `PRAGMA x` as a
+# statement is already refused by _STARTS_OK. Verified leak before this rule:
+# `SELECT * FROM pragma_database_list` returned the absolute path of the SQLite file
+# backing the connection, end-to-end through run_select.
+#
+# Deliberately NARROW. `duckdb_tables()` / `duckdb_views()` are NOT listed: get_ddl()
+# reads them via scalar(), which routes through guard_sql, so denying them would break
+# DDL introspection on every DuckDB source. Only the entries that expose file paths or
+# attached databases are denied.
+# Curated, NOT a `pragma_*` prefix match: a prefix rule rejects an ordinary column
+# named `pragma_col`, and refusing legitimate analyst SQL is its own defect (the same
+# trap as an earlier `from_date` false positive). These are SQLite's actual pragma
+# table-functions plus the DuckDB metadata views that expose paths/extensions.
+_DENY_METADATA_NAMES = (
+    "pragma_database_list",
+    "pragma_table_list",
+    "pragma_table_info",
+    "pragma_table_xinfo",
+    "pragma_index_list",
+    "pragma_index_info",
+    "pragma_index_xinfo",
+    "pragma_foreign_key_list",
+    "pragma_function_list",
+    "pragma_module_list",
+    "pragma_collation_list",
+    "pragma_compile_options",
+    "pragma_pragma_list",
+    "pragma_temp_store_directory",
+    "pragma_journal_mode",
+    "pragma_writable_schema",
+    "duckdb_databases",
+    "duckdb_extensions",
+    "duckdb_settings",
+)
+_DENY_METADATA_REF = re.compile(
+    r"\b(" + "|".join(_DENY_METADATA_NAMES) + r")\b",
+    re.IGNORECASE,
+)
+
 _STARTS_OK = re.compile(r"^(select|with)\b", re.IGNORECASE)
 _DOLLAR_QUOTE_START = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$")
 
@@ -478,6 +519,11 @@ def guard_sql(sql: str) -> str:
                 continue
             raise SqlNotAllowed(
                 f"Function not allowed in read-only queries: {call.group(1).upper()}()"
+            )
+        ref = _DENY_METADATA_REF.search(candidate)
+        if ref:
+            raise SqlNotAllowed(
+                f"Metadata table-function not allowed in read-only queries: {ref.group(1).lower()}"
             )
     # Engine-agnostic backstop for replacement scans (DuckDB reads a quoted path in
     # table position as a file). The engine-level switch in dialects.py is the primary

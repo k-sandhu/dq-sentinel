@@ -78,6 +78,15 @@ export interface ColumnInfo {
   nullable: boolean;
 }
 
+/**
+ * Is the monitoring itself working? (#262) Orthogonal to `health`: a check that
+ * ERRORED never evaluated the data, so it writes no exceptions — an all-errored
+ * dataset used to read "fail · 0 open exceptions" with nothing to triage.
+ * `broken`/`degraded` mean REPAIR (an engineer fixes the check or the source),
+ * not TRIAGE.
+ */
+export type DatasetMonitoring = "ok" | "degraded" | "broken" | "unknown";
+
 export interface Dataset {
   id: number;
   connection_id: number;
@@ -90,7 +99,14 @@ export interface Dataset {
   created_at: string;
   active_checks: number;
   open_exceptions: number;
+  /** Data-quality verdict. `error` folds into `fail` here — see `monitoring`. */
   health: "pass" | "warn" | "fail" | "unknown" | null;
+  monitoring: DatasetMonitoring;
+  failing_checks: number;
+  errored_checks: number;
+  /** Redacted reason for the newest errored run; full text on that run's page. */
+  last_error: string | null;
+  last_error_run_id: number | null;
   importance: string | null;
   owner: string | null;
   domain: string | null;

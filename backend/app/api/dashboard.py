@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from app.api.serialize import check_out, dataset_out, run_out
 from app.config import get_settings
+from app.core import scorecards
 from app.db import get_db
 from app.models import utcnow
 from app.security import get_current_user, visible_connection_ids, visible_dataset_ids
@@ -122,7 +123,9 @@ def summary(db: Session = Depends(get_db), user: models.User = Depends(get_curre
         pass_rate_7d=pass_rate,
         trend=trend,
         recent_runs=[run_out(db, r) for r in recent],
-        worst_datasets=[dataset_out(db, d) for d in worst],
+        worst_datasets=scorecards.annotate_monitoring(
+            db, [dataset_out(db, d) for d in worst], worst
+        ),
     )
 
 

@@ -156,7 +156,21 @@ class DatasetOut(ORMModel):
     created_at: datetime
     active_checks: int = 0
     open_exceptions: int = 0
+    # The data-quality verdict. Unchanged on purpose: `error` still folds into
+    # `fail` here, because these four values are keyed off by the datasets health
+    # filter, the lineage overlay and StatusPage's tone map. The operational half
+    # lives in `monitoring` below (#262).
     health: str | None = None  # pass | warn | fail | unknown
+    # Is the monitoring itself working? ok | degraded | broken | unknown. A check
+    # that ERRORED never evaluated the data and writes zero exceptions, so an
+    # all-errored dataset used to read "fail - 0 open exceptions" with nothing to
+    # triage. These say whether a red dataset needs TRIAGE or REPAIR, and point at
+    # the errored run (which carries the full error + remedy link).
+    monitoring: str = "unknown"
+    failing_checks: int = 0
+    errored_checks: int = 0
+    last_error: str | None = None  # redacted (core/errors.py) — raw text on the run
+    last_error_run_id: int | None = None
     importance: str | None = None  # from table knowledge
     owner: str | None = None
     domain: str | None = None

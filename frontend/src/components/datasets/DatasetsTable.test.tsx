@@ -19,6 +19,11 @@ const makeDataset = (o: Partial<Dataset>): Dataset =>
     active_checks: 0,
     open_exceptions: 0,
     health: "fail",
+    monitoring: "ok",
+    failing_checks: 0,
+    errored_checks: 0,
+    last_error: null,
+    last_error_run_id: null,
     importance: null,
     owner: null,
     domain: null,
@@ -75,5 +80,68 @@ describe("DatasetsTable", () => {
     const { onNavigate } = renderTable();
     fireEvent.click(screen.getByRole("link", { name: /orders/i }));
     expect(onNavigate).not.toHaveBeenCalled();
+  });
+
+  // #262: an errored check never evaluated the data, so it captures nothing to
+  // triage. A dataset in that state must read as broken monitoring (REPAIR), not
+  // as a red data-quality verdict (TRIAGE).
+  it("reads a wholly-errored dataset as broken monitoring, linking to the errored run", () => {
+    renderTable({
+      data: [
+        makeDataset({
+          id: 7,
+          health: "fail",
+          active_checks: 16,
+          errored_checks: 16,
+          failing_checks: 0,
+          open_exceptions: 0,
+          monitoring: "broken",
+          last_error: "authentication with the source failed",
+          last_error_run_id: 42,
+        }),
+      ],
+    });
+    const pill = screen.getByRole("link", { name: "checks broken" });
+    expect(pill).toHaveAttribute("href", "/runs/42");
+    expect(pill).toHaveAccessibleDescription(/16 of 16 active checks could not run/);
+    expect(screen.queryByText("fail")).not.toBeInTheDocument();
+  });
+
+  it("keeps the data-quality verdict and adds a repair chip when both are true", () => {
+    renderTable({
+      data: [
+        makeDataset({
+          id: 7,
+          health: "fail",
+          active_checks: 5,
+          failing_checks: 2,
+          errored_checks: 3,
+          monitoring: "degraded",
+          last_error_run_id: null,
+        }),
+      ],
+    });
+    expect(screen.getByText("fail")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "3 not running" })).toHaveAttribute(
+      "href",
+      "/datasets/7/runs",
+    );
+  });
+
+  it("never swallows a non-fail verdict — only a fail owed entirely to errors", () => {
+    renderTable({
+      data: [
+        makeDataset({
+          id: 7,
+          health: "warn",
+          active_checks: 4,
+          failing_checks: 0,
+          errored_checks: 1,
+          monitoring: "degraded",
+        }),
+      ],
+    });
+    expect(screen.getByText("warn")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "1 not running" })).toBeInTheDocument();
   });
 });
