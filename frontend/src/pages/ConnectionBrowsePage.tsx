@@ -35,6 +35,9 @@ export default function ConnectionBrowsePage() {
   });
 
   const key = (t: TableInfo) => `${t.schema_name ?? ""}.${t.table_name}`;
+  // What a human (or a screen reader) calls the row. `key` is selection
+  // identity and keeps its leading dot for schemaless sources; this is display.
+  const label = (t: TableInfo) => (t.schema_name ? `${t.schema_name}.${t.table_name}` : t.table_name);
   const toggle = (t: TableInfo) => {
     const k = key(t);
     const next = new Set(selected);
@@ -109,8 +112,17 @@ export default function ConnectionBrowsePage() {
                     onClick={() => !registered && toggle(t)}
                   >
                     <td>
+                      {/* The table name lives in a sibling cell, so nothing tied
+                          it to this control: every row reached assistive tech as
+                          an unnamed "checkbox", and a disabled one gave no clue
+                          why it could not be ticked (#260). */}
                       <input
                         type="checkbox"
+                        aria-label={
+                          registered
+                            ? `${label(t)} is already registered`
+                            : `Select ${label(t)}`
+                        }
                         disabled={registered}
                         checked={selected.has(key(t))}
                         onChange={() => toggle(t)}

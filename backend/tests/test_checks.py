@@ -1,15 +1,18 @@
 import sqlite3
 import tempfile
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from app.connectors.dialects import nan_predicate_builder
-from app.connectors.sa import Connector
+from app.connectors.sa import Connector, Sample
 from app.core.check_types import (
+    CHECK_TYPES,
     CheckContext,
     _categorical_drift,
     _nan_violation_predicate,
@@ -1146,7 +1149,7 @@ def test_drift_numeric_new_values_below_the_baseline_minimum_are_caught(app_db, 
 def test_drift_ks_first_run_captures_then_shift_fails(app_db, drift_tmp):
     base = list(np.random.default_rng(1).normal(0, 1, 3000))
     base_dsn = _make_source(drift_tmp, "ks_base", {"v": base})
-    ctx = _drift_ctx(app_db, base_dsn, "v", {"method": "ks", "threshold": 0.05})
+    ctx = _drift_ctx(app_db, base_dsn, "v", {"method": "ks", "ks_alpha": 0.05})
 
     # First run: no prior sample -> baseline captured, passes.
     r1 = run_check_type(ctx, "distribution_drift")
@@ -1170,7 +1173,7 @@ def test_drift_ks_first_run_captures_then_shift_fails(app_db, drift_tmp):
     )
     ctx2 = CheckContext(
         connector=Connector(shifted_dsn), table="t", schema=None, column="v",
-        params={"method": "ks", "threshold": 0.05}, db=app_db, check_id=ctx.check_id,
+        params={"method": "ks", "ks_alpha": 0.05}, db=app_db, check_id=ctx.check_id,
     )
     r2 = run_check_type(ctx2, "distribution_drift")
     assert r2.metrics["prior_n"] >= 2
@@ -1270,7 +1273,7 @@ def test_drift_ks_keeps_a_reproducible_window(app_db, ordered_source):
     so the KS window must be one that repeats."""
     dsn, _shifted = ordered_source
     ctx = _drift_ctx(
-        app_db, dsn, "v", {"method": "ks", "threshold": 0.05, "max_rows": DRIFT_WINDOW}
+        app_db, dsn, "v", {"method": "ks", "ks_alpha": 0.05, "max_rows": DRIFT_WINDOW}
     )
     r1 = run_check_type(ctx, "distribution_drift")
     dataset_id = app_db.get(Check, ctx.check_id).dataset_id
@@ -1395,3 +1398,293 @@ def test_schema_change_exceptions_are_not_auto_resolved(source_db, drift_tmp):
         assert run3.status == "pass"
         recs = db.query(ExceptionRecord).filter(ExceptionRecord.check_id == check_id).all()
         assert [r.status for r in recs] == ["open"]  # NOT auto-resolved
+
+
+# ---------------------------------------- #269 upgrade path: baselines that PREDATE it
+# #269 made the profiler draw a representative sample and made the drift window draw
+# itself the same way, so the two NEW paths agree. But nothing re-profiles on a
+# schedule, so on the day this ships every baseline in a customer database was still
+# written by the OLD head-reading profiler, and a representative window scored against
+# one of those measures the difference between the two READS. Measured on a 1M-row
+# DuckDB table written in time order, byte-identical data: old baseline vs new window
+# -> PSI 7.07 and a fire; old vs old -> 0.0; new vs new -> 0.0.
+#
+# What is in the field is a profile with NO `sampling` key at all, so that — not merely
+# a different method string — is what these build.
+
+
+@contextmanager
+def _pre_269_profiler():
+    """`profile_dataset` as it behaved before #269: a bare LIMIT, i.e. the head."""
+
+    def head_sample(self, select, ref, limit, *, row_count=None, seed=0, reproducible_only=False):
+        return Sample(
+            df=self.fetch_df(f"SELECT {select} FROM {ref}", limit),
+            method="head", representative=False, reproducible=True,
+            truncated=(row_count or 0) > limit, seed=None, row_count=row_count,
+        )
+
+    with patch.object(Connector, "sample_df", head_sample):
+        yield
+
+
+def _baseline_profile_of(db, check_id: int) -> Profile:
+    ds_id = db.get(Check, check_id).dataset_id
+    return (
+        db.query(Profile).filter(Profile.dataset_id == ds_id).order_by(Profile.id.desc()).first()
+    )
+
+
+def _legacy_drift_ctx(db, dsn, column, params, baseline_dsn=None, baseline_sample_rows=10_000):
+    """A drift check whose baseline is shaped exactly like a pre-#269 one: head-drawn
+    stats AND no `table_facts['sampling']` key."""
+    with _pre_269_profiler():
+        ctx = _drift_ctx(db, dsn, column, params, baseline_dsn, baseline_sample_rows)
+    prof = _baseline_profile_of(db, ctx.check_id)
+    facts = dict(prof.table_facts or {})
+    facts.pop("sampling", None)
+    prof.table_facts = facts
+    db.commit()
+    assert "sampling" not in (_baseline_profile_of(db, ctx.check_id).table_facts or {})
+    return ctx
+
+
+def test_drift_legacy_baseline_is_scored_against_a_matching_window(app_db, ordered_source):
+    """A baseline written by the OLD profiler must not be scored against a NEW window.
+
+    Without this the #269 sampling fix turns every existing system-generated drift
+    monitor on a physically clustered numeric column into a false fire the first time
+    the new code runs — the exact #265/#270 noise the work exists to remove,
+    reintroduced for every install that already has profiles.
+    """
+    dsn, _shifted = ordered_source
+    ctx = _legacy_drift_ctx(
+        app_db, dsn, "v", {"method": "psi", "max_rows": DRIFT_WINDOW},
+        baseline_sample_rows=DRIFT_WINDOW,
+    )
+    r = run_check_type(ctx, "distribution_drift")
+    # Both sides read the head, so they are biased identically and PSI is 0.
+    assert r.metrics["score"] == 0.0, r.metrics
+    assert r.violation_count == 0, r.metrics
+    assert r.metrics["current_sampling"]["method"] == "head", r.metrics
+    assert r.metrics["baseline_sampling"] == {
+        "method": "head", "representative": False, "recorded": False
+    }
+
+
+def test_drift_legacy_baseline_still_detects_a_real_shift(app_db, ordered_source):
+    """The compatibility shim must stay a drift check, not become a no-op: reading the
+    head of BOTH sides is what the check did before #269, and it still caught a shift."""
+    dsn, shifted = ordered_source
+    ctx = _legacy_drift_ctx(
+        app_db, shifted, "v", {"method": "psi", "max_rows": DRIFT_WINDOW},
+        baseline_dsn=dsn, baseline_sample_rows=DRIFT_WINDOW,
+    )
+    r = run_check_type(ctx, "distribution_drift")
+    assert r.metrics["score"] >= 0.2, r.metrics
+    assert r.violation_count == 1, r.metrics
+
+
+def test_drift_reprofiling_moves_the_dataset_onto_the_representative_window(
+    app_db, ordered_source
+):
+    """The shim is chosen per BASELINE, not per install, so it must not pin anything:
+    re-profile the dataset and the very next run uses the representative path."""
+    dsn, _shifted = ordered_source
+    ctx = _legacy_drift_ctx(
+        app_db, dsn, "v", {"method": "psi", "max_rows": DRIFT_WINDOW},
+        baseline_sample_rows=DRIFT_WINDOW,
+    )
+    assert run_check_type(ctx, "distribution_drift").metrics["current_sampling"]["method"] == "head"
+
+    fresh = profile_dataset(Connector(dsn), "t", None, sample_rows=DRIFT_WINDOW)
+    app_db.add(
+        Profile(
+            dataset_id=app_db.get(Check, ctx.check_id).dataset_id,
+            row_count=fresh["row_count"], sampled_rows=fresh["sampled_rows"],
+            columns=fresh["columns"], table_facts=fresh["table_facts"],
+        )
+    )
+    app_db.commit()
+
+    r = run_check_type(ctx, "distribution_drift")
+    assert r.metrics["baseline_sampling"] == {
+        "method": "reservoir", "representative": True, "recorded": True
+    }
+    assert r.metrics["current_sampling"]["method"] == "reservoir", r.metrics
+    assert r.metrics["score"] == 0.0, r.metrics
+    assert r.violation_count == 0, r.metrics
+
+
+def test_drift_refuses_to_score_a_representative_baseline_against_a_head_window(
+    app_db, ordered_source
+):
+    """The mirror image: baseline drawn representatively, current window can only be read
+    positionally — the source's sampler failed, or the table grew past the ORDER BY
+    RANDOM() ceiling on an engine with no native sampler. The asymmetry is the same and
+    so is the false fire, but here there is no coherent pair left to score, so the run
+    passes and says what would fix it."""
+    dsn, _shifted = ordered_source
+    ctx = _drift_ctx(
+        app_db, dsn, "v", {"method": "psi", "max_rows": DRIFT_WINDOW},
+        baseline_sample_rows=DRIFT_WINDOW,
+    )
+    with _pre_269_profiler():  # patches sample_df for the RUN, not the profile
+        r = run_check_type(ctx, "distribution_drift")
+    assert r.violation_count == 0, r.metrics
+    assert r.metrics["score"] is None, r.metrics
+    assert r.metrics["note"] == "incoherent sampling vs baseline"
+    assert "re-profile" in r.detail
+
+
+def test_drift_value_mix_still_scores_when_the_window_cannot_be_representative(
+    app_db, drift_tmp
+):
+    """The bail-out must not swallow the value-mix path. That path compares the
+    baseline's exact full-table top-value counts against exact counts re-counted in SQL,
+    so neither side comes from a sample and how the window was drawn is irrelevant."""
+    import duckdb
+
+    path = drift_tmp / "coded_ordered.duckdb"
+    con = duckdb.connect(str(path))
+    try:  # 10 codes laid out in blocks, so the head is NOT the population
+        con.execute(
+            f"CREATE TABLE t AS SELECT CAST(i // {DRIFT_ORDERED_ROWS // 10} AS INTEGER) AS v "
+            f"FROM range({DRIFT_ORDERED_ROWS}) x(i)"
+        )
+        con.execute("CHECKPOINT")
+    finally:
+        con.close()
+    dsn = f"duckdb:///{path.as_posix()}"
+
+    ctx = _drift_ctx(
+        app_db, dsn, "v", {"method": "psi", "max_rows": DRIFT_WINDOW},
+        baseline_sample_rows=DRIFT_WINDOW,
+    )
+    with _pre_269_profiler():
+        r = run_check_type(ctx, "distribution_drift")
+    assert r.metrics["binning"] == "value", r.metrics
+    assert r.metrics.get("note") is None, r.metrics
+    assert r.metrics["score"] == 0.0, r.metrics
+    assert r.violation_count == 0, r.metrics
+
+
+def test_drift_ks_recaptures_instead_of_scoring_a_pre_269_stored_sample(app_db, drift_tmp):
+    """The KS half of the same upgrade path. KS's baseline is the PREVIOUS RUN's stored
+    sample, and in an existing install that sample was drawn by the old positional read
+    while this run draws representatively. Scoring the pair would fire on every ks check
+    the first time the new code runs, so a run whose draw does not match the stored one
+    re-captures — one quiet pass, then business as usual."""
+    values = [float(i) for i in range(DRIFT_ORDERED_ROWS)]
+    dsn = _make_source(drift_tmp, "ks_upgrade", {"v": values})
+    ctx = _drift_ctx(app_db, dsn, "v", {"method": "ks", "max_rows": DRIFT_WINDOW})
+    dataset_id = app_db.get(Check, ctx.check_id).dataset_id
+
+    # A run stored by the PRE-#269 code: a head-drawn sample and no record of the draw.
+    app_db.add(
+        CheckRun(
+            check_id=ctx.check_id, dataset_id=dataset_id, status="pass", violation_count=0,
+            metrics={"method": "ks", "drift_sample": values[:DRIFT_WINDOW][:2000]},
+        )
+    )
+    app_db.commit()
+
+    r1 = run_check_type(ctx, "distribution_drift")
+    assert r1.violation_count == 0, r1.metrics
+    assert r1.metrics["note"] == "baseline recaptured", r1.metrics
+    assert r1.metrics["score"] is None
+
+    # Store that run the way the runner would; the next one has a matching draw and scores.
+    app_db.add(
+        CheckRun(check_id=ctx.check_id, dataset_id=dataset_id, status="pass",
+                 violation_count=0, metrics=dict(r1.metrics))
+    )
+    app_db.commit()
+    r2 = run_check_type(ctx, "distribution_drift")
+    assert r2.metrics.get("note") is None, r2.metrics
+    assert r2.metrics["score"] == 1.0, r2.metrics
+    assert r2.violation_count == 0, r2.metrics
+
+
+# ------------------------------- #269 follow-on: KS needs a significance level, not 0.2
+# `reproducible_only` pins the KS window only while the table is byte-identical; append
+# one row and the reservoir redraws. Measured on a 1M-row DuckDB table with 60
+# consecutive 10k-row appends drawn from its OWN distribution (so every fire is false):
+# 7/60 fires at the shipped 0.2, 2/60 at 0.05, 0/60 at 0.01 and at 0.001. A p-value
+# threshold is not PSI's effect size — on a table that grows, alpha IS the per-run
+# false-alarm rate, so the shipped default has to be a defensible significance level.
+
+_KS_PAIR_DELTA = 0.05  # two 2000-point grids offset by this give D=0.0505, p=0.0122
+
+
+def _ks_pair_ctx(app_db, drift_tmp, name: str, params: dict):
+    """A ks check whose current window vs stored prior sample scores p=0.0122 — inside
+    the shipped 0.2 threshold, outside any defensible alpha."""
+    prior = [i / 2000 for i in range(2000)]
+    dsn = _make_source(drift_tmp, name, {"v": [p + _KS_PAIR_DELTA for p in prior]})
+    ctx = _drift_ctx(app_db, dsn, "v", params)
+    app_db.add(
+        CheckRun(
+            check_id=ctx.check_id, dataset_id=app_db.get(Check, ctx.check_id).dataset_id,
+            status="pass", violation_count=0,
+            metrics={"method": "ks", "drift_sample": prior,
+                     "current_sampling": {"method": "full"}},
+        )
+    )
+    app_db.commit()
+    return ctx
+
+
+def test_drift_ks_default_alpha_is_a_significance_level_not_the_psi_threshold(
+    app_db, drift_tmp
+):
+    """p=0.0122 is a 1-in-82 coincidence: routine for a check that runs every schedule
+    tick, and it must not be an alert. The shipped `threshold` default of 0.2 made it
+    one, and a `threshold` typed for PSI has no meaning as a p-value, so KS ignores it."""
+    ctx = _ks_pair_ctx(app_db, drift_tmp, "ks_alpha_default", {"method": "ks", "threshold": 0.2})
+    r = run_check_type(ctx, "distribution_drift")
+    assert r.metrics["score"] == pytest.approx(0.0122, abs=0.001), r.metrics
+    assert r.metrics["threshold"] == 0.001, r.metrics  # ks_alpha, not the PSI threshold
+    assert r.violation_count == 0, r.metrics
+
+
+def test_drift_ks_alpha_is_the_knob_and_it_still_fires(app_db, drift_tmp):
+    """Lower sensitivity is a default, not a ceiling: an analyst who wants the old
+    behaviour sets `ks_alpha` and gets it."""
+    ctx = _ks_pair_ctx(app_db, drift_tmp, "ks_alpha_raised", {"method": "ks", "ks_alpha": 0.05})
+    r = run_check_type(ctx, "distribution_drift")
+    assert r.metrics["threshold"] == 0.05
+    assert r.violation_count == 1, r.metrics
+
+
+def test_drift_ks_default_alpha_keeps_its_power_on_a_real_shift(app_db, drift_tmp):
+    """0.001 costs almost nothing in sensitivity — a KS distance of 0.08 between
+    2000-point samples still fails at the new default."""
+    prior = [i / 2000 for i in range(2000)]
+    dsn = _make_source(drift_tmp, "ks_alpha_power", {"v": [p + 0.08 for p in prior]})
+    ctx = _drift_ctx(app_db, dsn, "v", {"method": "ks"})
+    app_db.add(
+        CheckRun(
+            check_id=ctx.check_id, dataset_id=app_db.get(Check, ctx.check_id).dataset_id,
+            status="pass", violation_count=0,
+            metrics={"method": "ks", "drift_sample": prior,
+                     "current_sampling": {"method": "full"}},
+        )
+    )
+    app_db.commit()
+    r = run_check_type(ctx, "distribution_drift")
+    assert r.metrics["score"] <= 0.001, r.metrics
+    assert r.violation_count == 1, r.metrics
+
+
+def test_validate_drift_ks_alpha():
+    assert validate_check("distribution_drift", "x", {"method": "ks"}).get("ks_alpha") is None
+    assert validate_check("distribution_drift", "x", {"ks_alpha": "0.01"})["ks_alpha"] == 0.01
+    for bad in (0, 1, 1.5, -0.1, "abc"):
+        with pytest.raises(ValueError, match="ks_alpha"):
+            validate_check("distribution_drift", "x", {"method": "ks", "ks_alpha": bad})
+    # The registry has to advertise the default, since that is what the UI shows.
+    spec = {p["name"]: p for p in CHECK_TYPES["distribution_drift"].params}
+    assert spec["ks_alpha"]["default"] == 0.001
+    assert "significance level" in spec["ks_alpha"]["description"]
+    assert "method=psi only" in spec["threshold"]["description"]

@@ -9,11 +9,13 @@
 //
 // The CheckParamsForm side of #258 is covered in CheckParamsForm.test.tsx.
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter, Route, Routes } from "react-router";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.mock("../api/client", () => ({
   api: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), del: vi.fn() },
@@ -24,22 +26,26 @@ vi.mock("../auth", () => ({
 }));
 
 import { api } from "../api/client";
-import type { Check, CheckTypeInfo, Knowledge, Reliability, Sla } from "../api/types";
+import type { Check, CheckTypeInfo, Knowledge, Reliability, Sla, TableInfo } from "../api/types";
 import ChecksTable from "./ChecksTable";
 import { ConfirmProvider } from "./confirm";
 import WidgetConfigModal, { defaultWidget } from "./dashboards/WidgetConfigModal";
+import ConnectionBrowsePage from "../pages/ConnectionBrowsePage";
+import ChecksTab from "../pages/dataset/ChecksTab";
 import KnowledgeTab from "../pages/dataset/KnowledgeTab";
 import ReliabilityPage from "../pages/ReliabilityPage";
 
 afterEach(() => vi.clearAllMocks());
 
 /** Every component here is a TanStack-Query consumer inside the router. */
-function mount(ui: React.ReactNode) {
+function mount(ui: React.ReactNode, route?: { path: string; at: string }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={route ? [route.at] : undefined}>
       <QueryClientProvider client={qc}>
-        <ConfirmProvider>{ui}</ConfirmProvider>
+        <ConfirmProvider>
+          {route ? <Routes><Route path={route.path} element={ui} /></Routes> : ui}
+        </ConfirmProvider>
       </QueryClientProvider>
     </MemoryRouter>,
   );
@@ -120,6 +126,103 @@ describe("Edit check — schedule", () => {
     expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("fare_amount in range");
     expect(screen.getByRole("combobox", { name: "Severity" })).toHaveValue("warn");
     expect(screen.getByRole("group", { name: "Check parameters" })).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Browse tables — the bulk-registration checkbox column
+// ---------------------------------------------------------------------------
+
+const TABLES: TableInfo[] = [
+  { schema_name: "public", table_name: "orders", kind: "table", registered_dataset_id: null },
+  { schema_name: "public", table_name: "customers", kind: "table", registered_dataset_id: 12 },
+  { schema_name: null, table_name: "events", kind: "view", registered_dataset_id: null },
+];
+
+// #260's first named example. The checkbox is the only control in its row and
+// the table name sits in a *sibling* cell, so nothing associated the two: every
+// row reached a screen reader as an unnamed "checkbox", and a disabled one gave
+// no clue why it could not be ticked.
+describe("Browse tables — row selection", () => {
+  function mountBrowse() {
+    mockGet({ "/connections/10/tables": TABLES });
+    return mount(<ConnectionBrowsePage />, { path: "/connections/:id/browse", at: "/connections/10/browse" });
+  }
+
+  it("names each row checkbox after its schema-qualified table", async () => {
+    mountBrowse();
+
+    expect(await screen.findByRole("checkbox", { name: "Select public.orders" })).not.toBeChecked();
+    // No schema (SQLite and friends) — the bare table name, not a stray dot.
+    expect(screen.getByRole("checkbox", { name: "Select events" })).toBeInTheDocument();
+  });
+
+  it("gives the already-registered row a distinct name, not the same one disabled", async () => {
+    mountBrowse();
+
+    const done = await screen.findByRole("checkbox", { name: "public.customers is already registered" });
+    expect(done).toBeDisabled();
+    expect(screen.queryByRole("checkbox", { name: "Select public.customers" })).toBeNull();
+  });
+
+  it("still toggles selection when the checkbox is picked by name", async () => {
+    const user = userEvent.setup();
+    mountBrowse();
+
+    await user.click(await screen.findByRole("checkbox", { name: "Select public.orders" }));
+    expect(screen.getByRole("checkbox", { name: "Select public.orders" })).toBeChecked();
+    expect(screen.getByRole("button", { name: /Register 1 dataset$/ })).toBeEnabled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// New check modal — the type picker
+// ---------------------------------------------------------------------------
+
+const NOT_NULL_TYPE: CheckTypeInfo = {
+  key: "not_null",
+  label: "Not null",
+  description: "Column must never be null",
+  needs_column: true,
+  params: [],
+};
+
+// The hint div lives inside the <label>, so the implicit association folded the
+// selected type's description into the *name*: "Check type Column must never be
+// null" one moment, "Check type Values within bounds" the next. A control's name
+// must not change when its value does.
+describe("New check — type picker", () => {
+  async function openNewCheck() {
+    const user = userEvent.setup();
+    mockGet({ "/checks/types": [NOT_NULL_TYPE, RANGE_TYPE], "/datasets/28/columns": [] });
+    mount(<ChecksTab datasetId={28} hasProfile />);
+    await user.click(screen.getByRole("button", { name: /new check/i }));
+    return user;
+  }
+
+  it("names the select from its caption and exposes the description separately", async () => {
+    await openNewCheck();
+
+    const select = await screen.findByRole("combobox", { name: "Check type" });
+    expect(select).toHaveValue("not_null");
+    expect(select).toHaveAccessibleDescription("Column must never be null");
+  });
+
+  it("keeps the name stable when the selected type changes", async () => {
+    const user = await openNewCheck();
+    const select = await screen.findByRole("combobox", { name: "Check type" });
+
+    await user.selectOptions(select, "range");
+
+    expect(screen.getByRole("combobox", { name: "Check type" })).toHaveValue("range");
+    expect(select).toHaveAccessibleDescription("Values within bounds");
+  });
+
+  it("still names the column and severity pickers", async () => {
+    await openNewCheck();
+
+    expect(await screen.findByRole("combobox", { name: "Column" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Severity" })).toHaveValue("error");
   });
 });
 
@@ -292,5 +395,49 @@ describe("SLA inline editor", () => {
       "aria-required",
       "true",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `.field-set` — the grouping wrapper's own styling
+// ---------------------------------------------------------------------------
+
+// `.field-set` exists only because a <label> can name one control, so it is the
+// a11y fix's own container and its typography has to be identical to the
+// `label.field` it stands in for — otherwise the same form reads as two designs.
+// The typography belongs on the *container*, not on the caption, because that is
+// what `label.field` does and what the controls inside inherit (`select`/`input`
+// are `font: inherit`). jsdom resolves declared rules but not inheritance, so
+// this reads the two containers' own computed values and compares them.
+describe(".field-set matches label.field", () => {
+  let sheet: HTMLStyleElement;
+
+  beforeAll(() => {
+    sheet = document.createElement("style");
+    sheet.textContent = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
+    document.head.appendChild(sheet);
+  });
+  afterAll(() => sheet.remove());
+
+  it("carries the caption typography its children inherit", () => {
+    render(
+      <>
+        <label className="field" data-testid="label-field">
+          Schedule
+        </label>
+        <div className="field-set" data-testid="field-set">
+          <span className="field-caption">Schedule</span>
+        </div>
+      </>,
+    );
+
+    const reference = getComputedStyle(screen.getByTestId("label-field"));
+    const set = getComputedStyle(screen.getByTestId("field-set"));
+
+    expect(reference.fontSize).toBe("12.5px"); // guards the reference itself
+    expect(set.fontSize).toBe(reference.fontSize);
+    expect(set.fontWeight).toBe(reference.fontWeight);
+    expect(set.color).toBe(reference.color);
+    expect(set.marginBottom).toBe(reference.marginBottom);
   });
 });

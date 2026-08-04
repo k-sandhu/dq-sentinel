@@ -126,6 +126,18 @@ def test_manual_run_is_not_duplicated_by_the_scheduler(
     assert resp.status_code == 201, resp.text
     check_id = resp.json()["id"]
 
+    # Make this the OLDEST due slot before the first poll, for the same reason the
+    # second poll below backdates: the claim query is `ORDER BY next_run_at LIMIT 20`
+    # over a session-shared app DB, and a check created just now holds the NEWEST due
+    # slot. Measured in the full suite, it ranked 73rd of 74 due checks — so the
+    # scheduler never even considered it, and the "was it duplicated?" assertion below
+    # was inert (it passed no matter what the production code did). The slot is still
+    # already-due, so claim_due_slot's semantics and everything asserted are unchanged.
+    factory = session_factory()
+    with factory() as db:
+        db.get(Check, check_id).next_run_at = utcnow() - timedelta(days=365)
+        db.commit()
+
     run = client.post(f"/api/v1/checks/{check_id}/run", headers=h)
     assert run.status_code == 200, run.text
     assert run.json()["status"] == "fail"
@@ -133,7 +145,6 @@ def test_manual_run_is_not_duplicated_by_the_scheduler(
     with ThreadPoolExecutor(max_workers=1) as executor:
         poll_once(executor)
 
-    factory = session_factory()
     with factory() as db:
         triggers = [
             r.triggered_by
