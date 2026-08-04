@@ -738,6 +738,14 @@ def _ml_feature_columns(profile: Any, available: set[str]) -> tuple[list[str], l
     ``kind`` separates temporal/string columns, ``pk_candidates`` names the surrogate
     keys, ``distinct_pct`` catches unnamed ones, and the column name catches codes.
 
+    Both cardinality-based rules require an *integral* dtype, and that is load-bearing:
+    ``pk_candidates`` means only "no nulls and distinct == row_count", which a continuous
+    float measurement — a sensor reading, a price, a latency — satisfies routinely.
+    Excluding those left fewer than two features and made the check pass with a note,
+    i.e. ml_outlier silently stopped working on exactly the columns it exists for.
+    ``pk_candidates`` is kept alongside ``distinct_pct`` rather than folded into it
+    because it is the one signal that survives a profile row missing ``distinct_pct``.
+
     Bounds of the heuristic: a measurement named like a code (``error_code_seconds``) is
     dropped, a code with a plain name and low cardinality (``priority``) is kept, and a
     column added since the last profile is not a feature until the dataset is
@@ -757,7 +765,7 @@ def _ml_feature_columns(profile: Any, available: set[str]) -> tuple[list[str], l
         distinct_pct = _finite_float(col.get("distinct_pct")) or 0.0
         if kind != "numeric":
             reason = f"not a numeric column (kind={kind})"
-        elif str(name).lower() in pk_candidates:
+        elif str(name).lower() in pk_candidates and "int" in dtype:
             reason = "primary-key candidate"
         elif ml.looks_like_identifier_name(str(name)):
             reason = "identifier/code-like name"
@@ -837,18 +845,21 @@ def _run_ml_outlier(ctx: CheckContext) -> CheckResult:
 _PSI_EPS = 1e-4  # epsilon-clamp for empty bins so ln(a/e) stays finite
 _DRIFT_SAMPLE_CAP = 2000  # reservoir sample size persisted for the KS path
 # A numeric column is compared value-by-value instead of by quantile bins when the
-# profile's exact top-value counts already describe most of it (#265/#270): quantile
-# bins cannot resolve point masses, and a coded / flag / zone / surcharge column *is*
-# its value mix. Coverage, not cardinality, is the test — a 250-distinct zone column
-# whose top 10 zones carry half the rows is a value mix; a 250-distinct amount column
-# whose top 10 values carry 3% of the rows is a continuous distribution. The distinct
-# ceiling bounds the other end: past it the tail carries structure that 10 stored
-# values cannot represent, so the quantile path (which resolves the tail) wins.
-# The trade-off is deliberate and one-directional: on the value path a shift confined
-# to values outside the stored top 10 only moves the __other__ bucket, so it is seen
-# but not localised. That is the right side to err on — a missed subtle shift costs
-# one late alert, a false fire on unchanged data costs the analyst's trust in all of them.
-_VALUE_MIX_MIN_COVERAGE = 0.5
+# profile's exact top-value counts already describe essentially ALL of it (#265/#270):
+# quantile bins cannot resolve point masses, and a coded / flag / zone / surcharge
+# column *is* its value mix. Coverage, not cardinality, is the test — a 250-distinct
+# zone column whose top 10 zones carry 99% of the rows is a value mix; a 250-distinct
+# amount column whose top 10 values carry 3% of the rows is a continuous distribution.
+# The distinct ceiling bounds the other end: past it the tail carries structure that 10
+# stored values cannot represent, so the quantile path (which resolves the tail) wins.
+#
+# The coverage bar has to be near-total because the value path's weakness is a hard
+# blind spot, not a soft one: everything outside the stored top 10 collapses into a
+# single __other__ bucket, so a shift whose source AND destination both sit in that tail
+# leaves all 11 bins bit-identical and scores PSI exactly 0.0 at any magnitude. Such a
+# shift is not "seen but not localised" — it is not seen at all. At 0.5 that made half a
+# column undetectable; at 0.95 the tail a shift can hide in is at most 5% of the rows.
+_VALUE_MIX_MIN_COVERAGE = 0.95
 _VALUE_MIX_MAX_DISTINCT = 1000
 # Cap on the distinct values we are willing to re-count in SQL (_observed_value_counts).
 _EXACT_COUNT_MAX_DISTINCT = 5000
@@ -1053,8 +1064,10 @@ def _mix_key(value: Any, numeric: bool) -> Any | None:
 def _prefers_value_mix(bcol: dict[str, Any], nonnull_total: int) -> bool:
     """Should a numeric column be compared value-by-value instead of by quantile bins?
 
-    Yes when the profile's 10 stored top values cover at least half the column and the
-    column has few enough distinct values that the rest is a tail rather than structure.
+    Yes when the profile's 10 stored top values cover all but a sliver of the column and
+    the column has few enough distinct values that the rest is a tail rather than
+    structure. Anything they do not cover is invisible on this path (see
+    ``_VALUE_MIX_MIN_COVERAGE``), so "most of it" is not good enough.
     Quantile bins are blind to point masses — a 0/1 flag or a 4-value payment code has
     no meaningful decile, and comparing it by bins scored PSI > 1 against its own
     baseline (#265). ``top_values`` are exact counts, so the value mix reproduces the

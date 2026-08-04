@@ -6,7 +6,8 @@ import { qk } from "../api/queryKeys";
 import type { Dataset, Profile } from "../api/types";
 import { canEdit, isAdmin, useAuth } from "../auth";
 import { useConfirm } from "../components/confirm";
-import { Breadcrumbs, ErrorBox, Icon, NotFoundState, Spinner, StatusPill } from "../components/ui";
+import { DatasetHealth } from "../components/datasets/DatasetsTable";
+import { Breadcrumbs, ErrorBox, Icon, NotFoundState, Spinner } from "../components/ui";
 import { fmtNum, timeAgo } from "../lib/format";
 import { isFavorite, pushRecent, subscribePrefs, toggleFavorite } from "../lib/prefs";
 import { useUnsavedGuard } from "../lib/useUnsavedGuard";
@@ -123,9 +124,13 @@ export default function DatasetDetailPage() {
       <Breadcrumbs items={[{ label: "Datasets", to: "/datasets" }, { label: datasetLabel }]} />
       <div className="page-header">
         <div>
+          {/* Same component as the datasets list row (#262): a dataset whose checks
+              error reads as REPAIR with a link to the errored run, not as a bare red
+              verdict over an empty Exceptions tab. Sharing it is what stops the header
+              contradicting the row the analyst just clicked. */}
           <h1>
             {dataset.schema_name ? `${dataset.schema_name}.` : ""}
-            {dataset.table_name} <StatusPill value={dataset.health} />
+            {dataset.table_name} <DatasetHealth d={dataset} />
           </h1>
           <div className="sub">
             {dataset.connection_name} · {fmtNum(dataset.row_count)} rows · profiled {timeAgo(dataset.last_profiled_at)} ·{" "}

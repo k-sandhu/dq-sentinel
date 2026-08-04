@@ -6,27 +6,45 @@ import { fmtNum, timeAgo } from "../../lib/format";
 import { Icon, StatusPill } from "../ui";
 
 /**
- * Health cell — says whether a red row needs TRIAGE or REPAIR (#262).
+ * Dataset health — says whether a red dataset needs TRIAGE or REPAIR (#262).
  *
  * A check that ERRORED never evaluated the data: it writes no exceptions, so a
  * dataset whose checks all error rendered a red "fail" over an empty Exceptions
- * tab with no reason given. The red verdict is suppressed only when it is
- * *entirely* attributable to errored checks (`health === "fail"` with nothing
- * actually failing) — a real fail or warn keeps its pill and gains a repair chip
- * beside it. Both chips link to the errored run, which already carries the driver
- * error and the "test the source connection" remedy (PR #278).
+ * tab with no reason given.
+ *
+ * Two independent decisions, deliberately kept apart:
+ *  - *Pill suppression* asks whether the verdict is owed to errors alone
+ *    (`health === "fail"` with nothing actually failing). That is a statement
+ *    about `health`, so it reads `failing_checks`.
+ *  - *Wording* asks how much of the monitoring is down, which is exactly what the
+ *    server's `monitoring` field says (`broken` = every active check errors,
+ *    `degraded` = some still run). Deriving it from the suppression flag instead
+ *    calls a degraded dataset "checks broken" — overstating the outage in the
+ *    same dishonest direction #262 exists to remove.
+ *
+ * The chip links to the errored run, which carries the driver error and the
+ * "test the source connection" remedy (PR #278). Shared with the dataset detail
+ * header so the two surfaces cannot disagree one click apart.
  */
-function HealthCell({ d }: { d: Dataset }) {
+export function DatasetHealth({ d }: { d: Dataset }) {
   if (d.errored_checks <= 0) return <StatusPill value={d.health} />;
   const verdictIsOnlyErrors = d.health === "fail" && d.failing_checks <= 0;
+  // Errored checks capture nothing new, but exceptions captured before the source
+  // broke are still open and still triageable — don't tell the analyst otherwise
+  // while the same row shows a non-zero open count.
+  const triageClause =
+    d.open_exceptions > 0
+      ? `${fmtNum(d.open_exceptions)} open exception${d.open_exceptions === 1 ? "" : "s"} already captured still need triage`
+      : "nothing to triage until that is fixed";
   const repairTitle = [
-    `${d.errored_checks} of ${d.active_checks} active check${d.active_checks === 1 ? "" : "s"} could not run — nothing to triage until that is fixed`,
+    `${fmtNum(d.errored_checks)} of ${fmtNum(d.active_checks)} active check${d.active_checks === 1 ? "" : "s"} could not run — ${triageClause}`,
     d.last_error,
   ]
     .filter(Boolean)
     .join(": ");
+  // inline-flex, not flex: this also renders inside the detail page's <h1>.
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
       {!verdictIsOnlyErrors && <StatusPill value={d.health} />}
       <Link
         to={d.last_error_run_id ? `/runs/${d.last_error_run_id}` : `/datasets/${d.id}/runs`}
@@ -34,9 +52,9 @@ function HealthCell({ d }: { d: Dataset }) {
         title={repairTitle}
         onClick={(e) => e.stopPropagation()}
       >
-        {verdictIsOnlyErrors ? "checks broken" : `${fmtNum(d.errored_checks)} not running`}
+        {d.monitoring === "broken" ? "checks broken" : `${fmtNum(d.errored_checks)} not running`}
       </Link>
-    </div>
+    </span>
   );
 }
 
@@ -91,7 +109,7 @@ export function DatasetsTable({
                 </button>
               </td>
               <td>
-                <HealthCell d={d} />
+                <DatasetHealth d={d} />
               </td>
               <td style={{ fontWeight: 700 }}>
                 <Link

@@ -21,6 +21,8 @@ import math
 import re
 from typing import Any
 
+from app.core import ml
+
 ID_HINTS = ("id", "key", "code", "sku", "uuid")
 
 # Name tokens that make a numeric column a *non-negative measure*: a value below 0
@@ -53,6 +55,10 @@ QUANTILE_KEYS = ("0.01", "0.05", "0.25", "0.5", "0.75", "0.95", "0.99")
 # order-of-magnitude outliers this exists to catch.
 TAIL_HEADROOM = 5.0
 IQR_HEADROOM = 3.0
+
+# Mirrors check_types._ML_ID_DISTINCT_PCT: distinct share above which an integer
+# column is a surrogate key rather than a measurement, and so not an ML feature.
+ML_ID_DISTINCT_PCT = 0.98
 
 SEVERITY_RANK = {"info": 0, "warn": 1, "error": 2}
 
@@ -147,15 +153,23 @@ def _fences(col: dict[str, Any]) -> tuple[float | None, float | None]:
     A side is None when the profile gives nothing to derive it from (no quantiles,
     or a degenerate constant column) — the caller then falls back to padding the
     observed range and says so.
+
+    Every input is a quantile, deliberately. Backfilling the scale with stddev when
+    the IQR is 0 looks like a harmless fallback and is not: on a zero-inflated column
+    (a fee charged on 0.5% of rows) *every* stored quantile is 0, so the fence became
+    ``0 + 3σ`` of the zero-dominated mixture — an upper bound sitting below the whole
+    legitimate non-zero population, proposed at error severity with a rationale
+    calling that ordinary data "a defect to catch". A point mass is exactly the
+    degenerate case this returns None for; the padded observed range is the honest
+    answer there. A flat bulk with a real tail (p95 10, p99 40) still gets a fence —
+    that comes from the tail term, which needs no scale fallback.
     """
     q = _quantiles(col)
     if not all(k in q for k in ("0.01", "0.05", "0.25", "0.75", "0.95", "0.99")):
         return None, None
-    iqr = q["0.75"] - q["0.25"]
-    stddev = abs(_num(col.get("stddev")) or 0.0)
-    scale = iqr if iqr > 0 else stddev  # stddev only as a fallback: outliers inflate it
-    hi_head = max(TAIL_HEADROOM * max(q["0.99"] - q["0.95"], 0.0), IQR_HEADROOM * scale)
-    lo_head = max(TAIL_HEADROOM * max(q["0.05"] - q["0.01"], 0.0), IQR_HEADROOM * scale)
+    iqr = max(q["0.75"] - q["0.25"], 0.0)
+    hi_head = max(TAIL_HEADROOM * max(q["0.99"] - q["0.95"], 0.0), IQR_HEADROOM * iqr)
+    lo_head = max(TAIL_HEADROOM * max(q["0.05"] - q["0.01"], 0.0), IQR_HEADROOM * iqr)
     return (
         q["0.01"] - lo_head if lo_head > 0 else None,
         q["0.99"] + hi_head if hi_head > 0 else None,
@@ -334,6 +348,42 @@ def _dedupe_most_useful(proposals: list[dict[str, Any]]) -> list[dict[str, Any]]
     return out
 
 
+def _ml_feature_candidates(profile: dict[str, Any], facts: dict[str, Any]) -> list[str]:
+    """The numeric columns an ``ml_outlier`` check would actually use as features.
+
+    This mirrors ``check_types._ml_feature_columns``, deliberately: that is the
+    predicate the runtime applies, and it refuses to run below two surviving
+    features (#263). Gating the proposal on the *unfiltered* numeric count therefore
+    proposed checks that could only ever no-op, and listed the dropped id columns in
+    the rationale as though they were the basis.
+
+    Both cardinality rules are conditioned on an integral declared type: a surrogate
+    key is an integer, while a float measurement that happens to be all-distinct on
+    the sample (a price, a sensor reading) is a genuine feature and must survive
+    being named a pk candidate. That integrality test is spelled the same way as the
+    runtime's (``"int" in dtype``) rather than via ``_INT_DTYPE``, because agreeing
+    with ``check_types`` matters more here than the regex being tidier: the proposal
+    pins ``columns``, and an explicit list is taken verbatim, so wherever the two
+    disagree it is this answer that silently wins.
+    """
+    pk_candidates = {str(c).lower() for c in facts.get("pk_candidates") or []}
+    keep: list[str] = []
+    for col in profile.get("columns", []):
+        if col["kind"] != "numeric":
+            continue
+        name = str(col["name"])
+        dtype = str(col.get("dtype") or "").lower()
+        integral = "int" in dtype
+        if name.lower() in pk_candidates and integral:
+            continue
+        if ml.looks_like_identifier_name(name):
+            continue
+        if (_num(col.get("distinct_pct")) or 0.0) >= ML_ID_DISTINCT_PCT and integral:
+            continue  # near-unique integer with an ordinary name: an unnamed surrogate key
+        keep.append(name)
+    return keep
+
+
 def _profile_contract_columns(profile: dict[str, Any]) -> list[dict[str, Any]]:
     columns: list[dict[str, Any]] = []
     for col in profile.get("columns", []):
@@ -471,14 +521,15 @@ def heuristic_proposals(
             )
         )
 
-    numeric_cols = [c["name"] for c in profile.get("columns", []) if c["kind"] == "numeric"]
-    if rows >= 500 and len(numeric_cols) >= 2:
+    ml_cols = _ml_feature_candidates(profile, facts)
+    if rows >= 500 and len(ml_cols) >= 2:
+        shown = ", ".join(ml_cols[:6]) + ("…" if len(ml_cols) > 6 else "")
         out.append(
             _proposal(
-                "ml_outlier", None, {"contamination": 0.005}, "info",
-                f"IsolationForest across numeric columns ({', '.join(numeric_cols[:6])}…)"
-                if len(numeric_cols) > 6
-                else f"IsolationForest across numeric columns ({', '.join(numeric_cols)})",
+                "ml_outlier", None, {"contamination": 0.005, "columns": ml_cols}, "info",
+                f"IsolationForest across {len(ml_cols)} numeric measure column"
+                f"{'s' if len(ml_cols) != 1 else ''} ({shown}). Key and identifier-like "
+                "columns are excluded: a rare id is not a data-quality defect.",
             )
         )
 

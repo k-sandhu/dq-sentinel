@@ -99,17 +99,20 @@ def test_distribution_drift_proposals():
 
 # --- #256 / #264: range bounds must not be derived from the anomalies themselves ---
 
-def _numeric_col(name, *, lo, hi, quantiles, stddev, distinct=5000):
+def _numeric_col(name, *, lo, hi, quantiles, stddev, distinct=5000, dtype="REAL"):
     return {
-        "name": name, "dtype": "REAL", "kind": "numeric",
+        "name": name, "dtype": dtype, "kind": "numeric",
         "null_count": 0, "null_pct": 0.0, "distinct_count": distinct, "distinct_pct": 0.05,
         "min": lo, "max": hi, "mean": quantiles["0.5"], "stddev": stddev,
         "quantiles": quantiles, "patterns": {}, "top_values": [],
     }
 
 
-def _profile(*columns, rows=100_000):
-    return {"row_count": rows, "sampled_rows": 50_000, "table_facts": {}, "columns": list(columns)}
+def _profile(*columns, rows=100_000, facts=None):
+    return {
+        "row_count": rows, "sampled_rows": 50_000,
+        "table_facts": facts or {}, "columns": list(columns),
+    }
 
 
 # Shapes taken from the NYC-taxi profile in #256: a small negative tail (refund/void
@@ -178,6 +181,123 @@ def test_no_zero_floor_when_negatives_are_normal_for_the_column():
     assert "negative" in ranges["refund_amount"]["rationale"].lower()
     assert ranges["net_amount"]["params"]["min"] != 0
     assert ranges["net_amount"]["severity"] == "warn"
+
+
+def test_point_mass_column_is_not_given_a_max_below_its_own_clean_data():
+    """The robust fence must never propose a bound the *clean* data violates.
+
+    A zero-inflated column — a fee charged on 0.5% of rows — has every stored
+    quantile at 0, so the quantile-derived headroom is 0. Backfilling the scale with
+    stddev then produced `max = 3σ` of the zero-dominated mixture (~8), below the
+    entire legitimate 10–60 population: an error-severity check failing on hundreds
+    of clean rows, with a rationale calling ordinary data "a defect to catch". A
+    point mass is the degenerate case `_fences` is supposed to decline.
+    """
+    flat = dict.fromkeys(("0.01", "0.05", "0.25", "0.5", "0.75", "0.95", "0.99"), 0.0)
+    profile = _profile(
+        _numeric_col("late_fee", lo=0.0, hi=59.95, quantiles=flat, stddev=2.72, distinct=520)
+    )
+    fee = _ranges(profile)["late_fee"]
+    assert fee["params"]["max"] >= 59.95, "every legitimate non-zero row would violate this"
+    # ...and the rationale must not describe that clean data as an excluded anomaly
+    assert "defect to catch" not in fee["rationale"]
+    assert "observed max" in fee["rationale"]
+    # the name-derived zero floor is still correct and still worth error severity
+    assert fee["params"]["min"] == 0
+    assert fee["severity"] == "error"
+
+
+def test_flat_bulk_with_a_real_tail_still_gets_the_quantile_fence():
+    """The point-mass fix must not disarm the fence wherever quantiles do show a
+    tail: a 0 IQR with p95 10 / p99 40 is still enough to derive an upper bound."""
+    tail = {"0.01": 0.0, "0.05": 0.0, "0.25": 0.0, "0.5": 0.0, "0.75": 0.0,
+            "0.95": 10.0, "0.99": 40.0}
+    profile = _profile(_numeric_col("late_fee", lo=0.0, hi=9000.0, quantiles=tail, stddev=95.0))
+    fee = _ranges(profile)["late_fee"]
+    assert 40.0 < fee["params"]["max"] < 9000.0, "the 9000 outlier must still violate"
+    assert "p99" in fee["rationale"]
+
+
+# --- #263: ml_outlier must be proposed on the features the runtime will really use ---
+
+def _ml_profile(*columns, rows=5000, facts=None):
+    return [p for p in heuristic_proposals(_profile(*columns, rows=rows, facts=facts))
+            if p["check_type"] == "ml_outlier"]
+
+
+_ML_Q = {"0.01": 1.0, "0.05": 2.0, "0.25": 4.0, "0.5": 8.0, "0.75": 16.0,
+         "0.95": 32.0, "0.99": 48.0}
+
+
+def test_ml_outlier_proposal_is_built_from_the_runtime_feature_set():
+    """`_ml_feature_columns` drops keys and identifier-like names before scoring, so
+    a proposal gated on the raw numeric count names columns that are never features.
+    """
+    profile_cols = (
+        # integral primary key -> dropped by the runtime
+        _numeric_col("order_id", lo=1, hi=5000, quantiles=_ML_Q, stddev=1443.0, dtype="INTEGER"),
+        # numeric code: 'type' is an identifier token -> dropped by the runtime
+        _numeric_col("payment_type", lo=1, hi=4, quantiles=_ML_Q, stddev=1.1, dtype="INTEGER"),
+        # a float measurement that happens to be all-distinct is NOT a surrogate key
+        _numeric_col("sensor_reading", lo=0.5, hi=99.5, quantiles=_ML_Q, stddev=12.0),
+        _numeric_col("amount", lo=1.0, hi=500.0, quantiles=_ML_Q, stddev=40.0),
+    )
+    facts = {"pk_candidates": ["order_id", "sensor_reading"]}
+    proposals = _ml_profile(*profile_cols, facts=facts)
+    assert len(proposals) == 1
+    p = proposals[0]
+    assert p["params"]["columns"] == ["sensor_reading", "amount"], (
+        "the proposal must pin the features the runtime would keep"
+    )
+    assert "order_id" not in p["rationale"] and "payment_type" not in p["rationale"]
+    assert "sensor_reading" in p["rationale"] and "amount" in p["rationale"]
+
+
+def test_ml_outlier_proposal_matches_the_runtime_feature_selection_exactly():
+    """Pin the two predicates together.
+
+    The proposal pins `columns`, and `_run_ml_outlier` takes an explicit list
+    verbatim — so if the generator's filter ever drifts from the runtime's, the
+    generator's answer wins silently and nothing fails. Assert equality instead.
+    """
+    from types import SimpleNamespace
+
+    from app.core.check_types import _ml_feature_columns
+
+    columns = [
+        _numeric_col("order_id", lo=1, hi=5000, quantiles=_ML_Q, stddev=1443.0, dtype="INTEGER"),
+        _numeric_col("payment_type", lo=1, hi=4, quantiles=_ML_Q, stddev=1.1, dtype="INTEGER"),
+        # near-unique INTEGER with an ordinary name: an unnamed surrogate key
+        {**_numeric_col("seq_number", lo=1, hi=5000, quantiles=_ML_Q, stddev=1443.0,
+                        dtype="BIGINT"), "distinct_pct": 1.0},
+        # all-distinct float measurement: a real feature despite being a pk candidate
+        {**_numeric_col("sensor_reading", lo=0.5, hi=99.5, quantiles=_ML_Q, stddev=12.0),
+         "distinct_pct": 1.0},
+        _numeric_col("amount", lo=1.0, hi=500.0, quantiles=_ML_Q, stddev=40.0),
+        {"name": "city", "dtype": "TEXT", "kind": "string", "null_count": 0, "null_pct": 0.0,
+         "distinct_count": 12, "distinct_pct": 0.002, "quantiles": {}, "patterns": {},
+         "top_values": []},
+    ]
+    facts = {"pk_candidates": ["order_id", "sensor_reading"]}
+
+    proposed = _ml_profile(*columns, facts=facts)[0]["params"]["columns"]
+    runtime, _excluded = _ml_feature_columns(
+        SimpleNamespace(table_facts=facts, columns=columns),
+        {c["name"] for c in columns},
+    )
+    assert proposed == runtime == ["sensor_reading", "amount"]
+
+
+def test_ml_outlier_not_proposed_when_the_runtime_would_have_too_few_features():
+    """Below two usable features the check refuses to run, so proposing it only
+    spends analyst attention on a guaranteed no-op."""
+    proposals = _ml_profile(
+        _numeric_col("order_id", lo=1, hi=5000, quantiles=_ML_Q, stddev=1443.0, dtype="INTEGER"),
+        _numeric_col("payment_type", lo=1, hi=4, quantiles=_ML_Q, stddev=1.1, dtype="INTEGER"),
+        _numeric_col("amount", lo=1.0, hi=500.0, quantiles=_ML_Q, stddev=40.0),
+        facts={"pk_candidates": ["order_id"]},
+    )
+    assert proposals == []
 
 
 def test_one_range_proposal_per_column_carries_the_tighter_bound():

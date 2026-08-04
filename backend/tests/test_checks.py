@@ -293,6 +293,12 @@ def test_prefers_value_mix_separates_codes_from_amounts():
     lumpy_tail = {"distinct_count": 40_000,
                   "top_values": [{"value": 0, "count": 8000}]}
     assert _prefers_value_mix(lumpy_tail, 10_000) is False
+    # mid coverage: the 10 stored values are only half the column, and everything else
+    # folds into ONE __other__ bucket where a shift is invisible (PSI exactly 0.0). Half
+    # a column is far too much to make blind, so this stays on the quantile path.
+    half_covered = {"distinct_count": 300,
+                    "top_values": [{"value": float(i), "count": 520} for i in range(10)]}
+    assert _prefers_value_mix(half_covered, 9840) is False
     # no cardinality recorded (older profile) -> stay on the quantile path
     assert _prefers_value_mix({"top_values": [{"value": 1, "count": 900}]}, 1000) is False
 
@@ -876,6 +882,35 @@ def test_ml_outlier_skips_when_too_few_real_features_remain(app_db, drift_tmp):
     assert "columns" in r.detail
 
 
+def test_ml_outlier_keeps_all_distinct_float_measurements(app_db, drift_tmp):
+    # `pk_candidates` only means "no nulls and distinct == row_count" — which a
+    # continuous measurement (a sensor reading, a price, a latency) satisfies routinely.
+    # Excluding every pk_candidate with no integrality test dropped those measurements as
+    # "primary-key candidate", left fewer than 2 features, and made ml_outlier pass with a
+    # note — i.e. silently stop working on exactly the columns it exists for. Only an
+    # INTEGER near-unique column may be dropped as a surrogate key.
+    rng = np.random.default_rng(17)
+    n = 300
+    temperature = [float(x) for x in rng.normal(20.0, 1.5, n)]
+    pressure = [float(x) for x in rng.normal(1000.0, 12.0, n)]
+    planted = [40, 150, 260]
+    for k, i in enumerate(planted):  # distinct values, so the columns stay all-distinct
+        temperature[i], pressure[i] = 95.0 + k, 300.0 + k
+    dsn = _make_source(
+        drift_tmp, "ml_measurements",
+        # `serial` is an integer surrogate key with a name no token rule catches, so the
+        # only thing that can drop it is the cardinality/dtype rule under test.
+        {"serial": list(range(1, n + 1)), "temperature": temperature, "pressure": pressure},
+    )
+    ctx = _profiled_ctx(app_db, dsn, "ml_outlier", None, {"contamination": 0.01})
+    r = run_check_type(ctx, "ml_outlier")
+
+    assert set(r.metrics["features"]) == {"temperature", "pressure"}, r.metrics
+    assert {e["column"] for e in r.metrics["excluded_features"]} == {"serial"}
+    assert "note" not in r.metrics  # the check actually ran
+    assert {i + 1 for i in planted} <= {row["serial"] for row in r.sample_rows}
+
+
 # ------------------------------------------------- #265 / #270: PSI on unchanged data
 # Both issues are the same failure seen through different column shapes: a
 # distribution_drift check firing on its OWN baseline. These are auto-active
@@ -975,6 +1010,46 @@ def test_drift_value_mix_recounts_in_sql_when_the_sampled_read_is_truncated(
     assert r.violation_count == 0
     assert r.metrics["binning"] == "value"
     assert r.rows_evaluated == 3000  # whole table, not the 1000-row sample
+
+
+def _mid_coverage_column(tail_start: int) -> list[float]:
+    """10 head values carrying ~53% of the rows, plus a 290-value tail carrying the rest.
+
+    The tail starts at ``tail_start`` so two of these frames can share a head and have
+    disjoint tails — a shift that lives entirely outside the profile's stored top 10.
+    """
+    head = [float(v) for v in range(10) for _ in range(520)]  # 5200 rows
+    tail = [float(tail_start + v) for v in range(290) for _ in range(16)]  # 4640 rows
+    return head + tail
+
+
+def test_drift_tail_confined_shift_on_a_mid_coverage_column_is_still_detected(
+    app_db, drift_tmp
+):
+    # The value path keeps the baseline's 10 top values and folds EVERYTHING else into a
+    # single __other__ bucket. A shift whose source AND destination both live in that
+    # tail therefore leaves all 11 bins bit-identical and scores PSI exactly 0.0 at any
+    # magnitude — it is not seen at all. A column whose top 10 cover only ~half the rows
+    # must not be routed there: here the entire 47% tail is replaced by never-seen
+    # values, which the quantile path (which resolves the tail) catches.
+    base = _mid_coverage_column(1000)
+    shifted = _mid_coverage_column(50_000)
+    base_dsn = _make_source(drift_tmp, "tail_shift_base", {"v": base})
+    cur_dsn = _make_source(drift_tmp, "tail_shift_cur", {"v": shifted})
+
+    ctx = _drift_ctx(app_db, cur_dsn, "v", {"method": "psi"}, baseline_dsn=base_dsn)
+    r = run_check_type(ctx, "distribution_drift")
+    assert r.metrics["binning"] == "quantile", r.metrics  # not the __other__ blind spot
+    assert r.metrics["score"] >= 0.2, r.metrics
+    assert r.violation_count == 1, r.metrics
+
+    # ...and the same column against its OWN baseline must still not fire: the false
+    # fires of #265/#270 are what put the value path there in the first place.
+    same = run_check_type(
+        _drift_ctx(app_db, base_dsn, "v", {"method": "psi"}), "distribution_drift"
+    )
+    assert same.violation_count == 0, same.metrics
+    assert same.metrics["score"] < 0.1, same.metrics
 
 
 def test_drift_numeric_new_values_below_the_baseline_minimum_are_caught(app_db, drift_tmp):
