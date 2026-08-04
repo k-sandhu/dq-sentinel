@@ -862,23 +862,50 @@ def test_ml_outlier_columns_param_overrides_the_profile(app_db, drift_tmp):
     assert set(r.metrics["features"]) == {"order_id", "amount"}
 
 
-def test_ml_outlier_skips_when_too_few_real_features_remain(app_db, drift_tmp):
-    # Nothing but a key, a timestamp and one measurement: a "multivariate" outlier check
-    # has no second dimension, so it reports why instead of scoring the id column.
+def test_ml_outlier_scores_a_single_genuine_measure(app_db, drift_tmp):
+    # A key, a timestamp and ONE measurement is an ordinary narrow table (the shipped
+    # `payments` sample is exactly this: `amount` next to two surrogate keys). This
+    # previously asserted the check should skip, on the reasoning that a "multivariate"
+    # outlier needs a second dimension — but IsolationForest fits and scores a single
+    # column fine, and univariate detection is precisely what catches a 100x typo.
+    # Requiring two features made the check silently no-op after #263's identifier
+    # filtering; the e2e smoke test caught it ("ml_outlier flags rows — 0 outliers").
     start = datetime(2024, 1, 1)
+    amounts = [float(x) for x in np.random.default_rng(3).normal(10, 2, 200)]
+    amounts[7] = 4000.0  # a planted 100x-style typo, the thing this check exists to find
     dsn = _make_source(
         drift_tmp, "ml_thin",
         {
             "order_id": list(range(1, 201)),
             "created_at": [(start + timedelta(minutes=i)).strftime("%Y-%m-%d %H:%M:%S")
                            for i in range(200)],
-            "amount": [float(x) for x in np.random.default_rng(3).normal(10, 2, 200)],
+            "amount": amounts,
+        },
+    )
+    ctx = _profiled_ctx(app_db, dsn, "ml_outlier", None, {"contamination": 0.01})
+    r = run_check_type(ctx, "ml_outlier")
+    assert r.metrics["features"] == ["amount"], r.metrics
+    assert "note" not in r.metrics, r.metrics  # it ran, rather than reporting why it didn't
+    assert r.violation_count > 0
+    # The id and the timestamp are still excluded — #263 must not regress.
+    assert {e["column"] for e in r.metrics["excluded_features"]} == {"order_id", "created_at"}
+
+
+def test_ml_outlier_skips_only_when_no_usable_feature_remains(app_db, drift_tmp):
+    # The skip path still exists — it just needs ZERO usable measures, not fewer than two.
+    start = datetime(2024, 1, 1)
+    dsn = _make_source(
+        drift_tmp, "ml_idonly",
+        {
+            "order_id": list(range(1, 201)),
+            "created_at": [(start + timedelta(minutes=i)).strftime("%Y-%m-%d %H:%M:%S")
+                           for i in range(200)],
         },
     )
     ctx = _profiled_ctx(app_db, dsn, "ml_outlier", None, {"contamination": 0.01})
     r = run_check_type(ctx, "ml_outlier")
     assert r.violation_count == 0
-    assert r.metrics["note"] == "fewer than 2 usable numeric features"
+    assert r.metrics["note"] == "no usable numeric features"
     assert "columns" in r.detail
 
 

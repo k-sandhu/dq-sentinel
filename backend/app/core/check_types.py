@@ -724,7 +724,13 @@ def _run_custom_sql(ctx: CheckContext) -> CheckResult:
 
 
 # ---------------------------------------------------------------- ml_outlier
-_ML_MIN_FEATURES = 2  # "multivariate outlier" needs at least two dimensions
+# One genuine measure is enough. "Multivariate" describes what IsolationForest CAN
+# do, not a precondition: it fits and scores a single column fine, and univariate
+# detection is exactly what catches a 100x amount typo. Requiring two dimensions
+# made the check silently no-op on ordinary narrow tables — the shipped `payments`
+# sample has one real measure (`amount`) next to two surrogate keys, so after the
+# #263 identifier filtering it returned 0 outliers and the e2e smoke test caught it.
+_ML_MIN_FEATURES = 1
 _ML_ID_DISTINCT_PCT = 0.98  # distinct/rows above which an integer column is a surrogate key
 
 
@@ -803,7 +809,7 @@ def _run_ml_outlier(ctx: CheckContext) -> CheckResult:
                     "excluded_features": excluded,
                     "contamination": contamination,
                     "rows_scored": 0,
-                    "note": "fewer than 2 usable numeric features",
+                    "note": "no usable numeric features",
                 },
                 detail=(
                     f"skipped: only {len(columns)} usable numeric feature(s) after excluding "
