@@ -212,3 +212,60 @@ def test_pg_migration_lock_swallows_an_unlock_failure_on_the_success_path(caplog
 
     assert "migrated" in eng.log
     assert any("advisory lock" in r.message for r in caplog.records)
+
+
+def test_init_db_survives_losing_the_bootstrap_seed_race(monkeypatch, caplog):
+    """api and worker both call init_db() at startup, and the bootstrap seed runs
+    AFTER _run_migrations releases its advisory lock — so "no users exist?" then
+    INSERT is a check-then-act race on a fresh database.
+
+    Observed in CI against a real Postgres stack: the worker won, the api died on
+    UniqueViolation(ix_users_email) with "Application startup failed. Exiting." —
+    a first `docker compose up` that never serves. Losing the race is a success:
+    the admin exists either way.
+
+    Drives the real init_db() with a session that reports an empty users table and
+    then raises on commit, exactly as the database does when the other process got
+    there first. Reverting the try/except makes this fail with IntegrityError.
+    """
+    import logging
+
+    from sqlalchemy.exc import IntegrityError
+
+    from app import db as db_module
+
+    class _LoserSession:
+        def __init__(self):
+            self.rolled_back = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def query(self, _model):
+            return self
+
+        def count(self):
+            return 0  # the pre-check that makes this process decide to seed
+
+        def add(self, _obj):
+            pass
+
+        def commit(self):
+            raise IntegrityError("INSERT INTO users", {}, Exception("duplicate key"))
+
+        def rollback(self):
+            self.rolled_back = True
+
+    session = _LoserSession()
+    monkeypatch.setattr(db_module, "_run_migrations", lambda _engine: None)
+    monkeypatch.setattr(db_module, "get_engine", lambda: object())
+    monkeypatch.setattr(db_module, "session_factory", lambda: (lambda: session))
+
+    with caplog.at_level(logging.INFO):
+        db_module.init_db()  # must NOT raise
+
+    assert session.rolled_back, "the losing process must roll back rather than propagate"
+    assert "already seeded by another process" in caplog.text
