@@ -708,6 +708,17 @@ def _run_row_count_anomaly(ctx: CheckContext) -> CheckResult:
 
 # ---------------------------------------------------------------- custom_sql
 def _run_custom_sql(ctx: CheckContext) -> CheckResult:
+    """Rows returned by an analyst-authored violation query.
+
+    ``rows_evaluated`` is the dataset's row count, exactly as ``_sample_where`` reports
+    it for not_null/range. It is not decoration: the runner only auto-resolves lingering
+    open exceptions on a passing run when ``rows_evaluated is not None`` (runner.py), so
+    leaving it at the default None put custom_sql in the same bucket as freshness /
+    schema_contract / schema_change — checks that deliberately never auto-resolve. Those
+    are alerts about a table-level *event*; custom_sql is genuinely row-level and records
+    real ExceptionRecords, so once one was fixed and went green its old exceptions stayed
+    `open` forever and every open-exception rollup overstated (#268).
+    """
     settings = get_settings()
     sql = guard_sql(ctx.params.get("sql") or "")
     count = int(ctx.connector.scalar(f"SELECT COUNT(*) FROM (\n{sql}\n) AS _v") or 0)
@@ -715,11 +726,13 @@ def _run_custom_sql(ctx: CheckContext) -> CheckResult:
     if count:
         res = ctx.connector.run_select(sql, limit=settings.exception_sample_rows)
         rows = [_truncate_row(dict(zip(res.columns, r, strict=False))) for r in res.rows]
+    total = int(ctx.connector.scalar(f"SELECT COUNT(*) FROM {ctx.ref}") or 0)
     return CheckResult(
         violation_count=count,
+        rows_evaluated=total,
         sample_rows=rows,
         reasons=["row returned by custom violation query"] * len(rows),
-        metrics={},
+        metrics={"row_count": total},
     )
 
 
@@ -1267,7 +1280,24 @@ def _run_distribution_drift(ctx: CheckContext) -> CheckResult:
     raw_max = ctx.params.get("max_rows")
     max_rows = int(raw_max) if raw_max not in (None, "") else int(settings.ml_max_rows)
 
-    values = ctx.connector.fetch_df(f"SELECT {ctx.col} AS v FROM {ctx.ref}", limit=max_rows)["v"]
+    # THE COHERENCE RULE (#269). The PSI baseline is the profiler's stored quantiles,
+    # which are computed on the profiler's SAMPLE. If the two sides are drawn
+    # differently, PSI measures the difference between the two *reads* rather than any
+    # change in the data. That is why both used to be a bare LIMIT: agreeing on a biased
+    # slice is what took the taxi false fires to 0. Now that the profiler samples
+    # properly, this read must sample properly too — with the same helper and the same
+    # seed — or the bias comes straight back as drift on unchanged tables.
+    #
+    # `reproducible_only` for KS: KS compares this run's sample against the PREVIOUS
+    # RUN's stored sample, i.e. two reads of the same table at two times. An un-seeded
+    # random draw on each run would differ by sampling noise alone and reject at the
+    # configured p-threshold on data nobody touched, so KS keeps a draw that repeats.
+    row_count = ctx.connector.row_count(ctx.table, ctx.schema)
+    sample = ctx.connector.sample_df(
+        f"{ctx.col} AS v", ctx.ref, max_rows,
+        row_count=row_count, reproducible_only=(method == "ks"),
+    )
+    values = sample.df["v"]
 
     if method == "ks":
         return _ks_drift(values, ctx, threshold)
@@ -1295,13 +1325,15 @@ def _run_distribution_drift(ctx: CheckContext) -> CheckResult:
     # exact counts), not the pandas sample size.
     nonnull_total = int(profile.row_count or 0) - int(bcol.get("null_count") or 0)
     if has_top_values and (not has_quantiles or _prefers_value_mix(bcol, nonnull_total)):
-        # Only re-count in SQL when the sampled read was truncated; when it wasn't, the
+        # Only re-count in SQL when the read really is a sample; when it isn't, the
         # frame already IS the whole column and the extra scan would buy nothing.
+        # `sample.truncated` compares the row count to the cap, so it stays right for a
+        # percentage-based sampler that lands a few rows short of `max_rows`.
         observed = (
             _observed_value_counts(
                 ctx, numeric=has_quantiles, baseline_distinct=bcol.get("distinct_count")
             )
-            if len(values) >= max_rows
+            if sample.truncated
             else None
         )
         result = _categorical_drift(
@@ -1328,6 +1360,7 @@ def _run_distribution_drift(ctx: CheckContext) -> CheckResult:
         )
 
     result.metrics["baseline_profile_id"] = profile.id
+    result.metrics["current_sampling"] = sample.as_facts(max_rows)
     score = result.metrics.get("score")
     result.detail = (
         f"PSI {score} vs baseline profile #{profile.id} (threshold {threshold})"

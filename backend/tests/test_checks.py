@@ -435,6 +435,40 @@ def test_custom_sql(ctx_factory):
     assert r.violation_count == HUGE_AGE
 
 
+def test_custom_sql_reports_rows_evaluated(ctx_factory):
+    """#268: custom_sql is a row-level check and records real ExceptionRecords, but it
+    left `rows_evaluated` at None — the exact guard runner.py uses to decide whether a
+    passing run may auto-resolve lingering open exceptions. Without it, a custom_sql
+    check that gets fixed and goes green leaves its old exceptions `open` forever."""
+    r = run_check_type(
+        ctx_factory(None, {"sql": "SELECT * FROM people WHERE age > 500"}), "custom_sql"
+    )
+    assert r.rows_evaluated == SOURCE_ROWS
+    assert r.metrics["row_count"] == SOURCE_ROWS
+
+
+@pytest.mark.parametrize(
+    ("check_type", "column", "params"),
+    [
+        ("freshness", "created_at", {"max_age_hours": 24}),
+        (
+            "schema_contract",
+            None,
+            {"expected_columns": [{"name": "id"}, {"name": "email"}, {"name": "age"},
+                                  {"name": "status"}, {"name": "score"}, {"name": "created_at"}]},
+        ),
+        ("schema_change", None, {"baseline": "previous"}),
+    ],
+)
+def test_event_style_checks_still_never_auto_resolve(ctx_factory, check_type, column, params):
+    """The other half of #268: `rows_evaluated is None` is a deliberate opt-OUT of
+    auto-resolve for checks that alert on a table-level event rather than on rows. A
+    stale-table or schema-drift alert must survive until an analyst acknowledges it, so
+    fixing custom_sql must not sweep these into the same change."""
+    r = run_check_type(ctx_factory(column, params), check_type)
+    assert r.rows_evaluated is None
+
+
 def test_custom_sql_rejects_writes(ctx_factory):
     from app.connectors.safety import SqlNotAllowed
 
@@ -516,6 +550,7 @@ def test_diff_schemas_unit():
 # These tests need a baseline Profile (PSI) and run history (KS), so they build a
 # real source table, profile it into the app DB, and run via a db-aware context.
 
+from app.connectors.sa import kind_from_dsn  # noqa: E402
 from app.core.profiler import profile_dataset  # noqa: E402
 from app.db import init_db, session_factory  # noqa: E402
 from app.models import Check, CheckRun, Connection, Dataset, Profile  # noqa: E402
@@ -549,6 +584,7 @@ def _profiled_ctx(
     column: str | None,
     params: dict,
     baseline_dsn: str | None = None,
+    baseline_sample_rows: int = 10_000,
 ):
     """Persist a Connection/Dataset, profile `baseline_dsn` (default = dsn) into a
     Profile row, create a Check, and return a db-aware CheckContext over `dsn`."""
@@ -557,7 +593,9 @@ def _profiled_ctx(
     # short-lived dict after GC, so consecutive drift tests collided on CI).
     _profiled_ctx.seq = getattr(_profiled_ctx, "seq", 0) + 1
     conn = Connection(
-        name=f"c-{check_type}-{column}-{_profiled_ctx.seq}", kind="sqlite", dsn=dsn
+        name=f"c-{check_type}-{column}-{_profiled_ctx.seq}",
+        kind=kind_from_dsn(dsn),
+        dsn=dsn,
     )
     db.add(conn)
     db.flush()
@@ -565,7 +603,9 @@ def _profiled_ctx(
     db.add(ds)
     db.flush()
 
-    prof = profile_dataset(Connector(baseline_dsn or dsn), "t", None, sample_rows=10_000)
+    prof = profile_dataset(
+        Connector(baseline_dsn or dsn), "t", None, sample_rows=baseline_sample_rows
+    )
     db.add(
         Profile(
             dataset_id=ds.id,
@@ -588,8 +628,17 @@ def _profiled_ctx(
     )
 
 
-def _drift_ctx(db, dsn: str, column: str, params: dict, baseline_dsn: str | None = None):
-    return _profiled_ctx(db, dsn, "distribution_drift", column, params, baseline_dsn)
+def _drift_ctx(
+    db,
+    dsn: str,
+    column: str,
+    params: dict,
+    baseline_dsn: str | None = None,
+    baseline_sample_rows: int = 10_000,
+):
+    return _profiled_ctx(
+        db, dsn, "distribution_drift", column, params, baseline_dsn, baseline_sample_rows
+    )
 
 
 @pytest.fixture(scope="module")
@@ -1127,3 +1176,222 @@ def test_drift_ks_first_run_captures_then_shift_fails(app_db, drift_tmp):
     assert r2.metrics["prior_n"] >= 2
     assert r2.metrics["score"] <= 0.05  # p-value tiny
     assert r2.violation_count == 1
+
+
+# ------------------------------------------- #269: sampling must stay COHERENT on both sides
+# The PSI baseline is the profiler's stored quantiles, computed on the profiler's
+# sample; the current window is this check's own bounded read. When those two are drawn
+# differently, PSI measures the difference between the two READS, not a change in the
+# data. Before #269 both were a bare `LIMIT` — biased, but biased identically, which is
+# why the taxi false fires had gone to zero. Making only one side representative brings
+# them straight back, so these pin BOTH halves on a table whose values trend with
+# physical row order (the shape that makes a positional read visible).
+
+DRIFT_ORDERED_ROWS = 60_000
+DRIFT_WINDOW = 10_000
+
+
+@pytest.fixture(scope="module")
+def ordered_source(drift_tmp) -> tuple[str, str]:
+    """(baseline dsn, genuinely-shifted dsn) over a large, physically ordered table."""
+    import duckdb
+
+    out = []
+    for name, offset in (("drift_ordered", 0), ("drift_ordered_shift", DRIFT_ORDERED_ROWS // 2)):
+        path = drift_tmp / f"{name}.duckdb"
+        con = duckdb.connect(str(path))  # writer closed before a connector opens it
+        try:
+            con.execute(
+                f"CREATE TABLE t AS SELECT CAST(i + {offset} AS DOUBLE) AS v "
+                f"FROM range({DRIFT_ORDERED_ROWS}) x(i)"
+            )
+            con.execute("CHECKPOINT")
+        finally:
+            con.close()
+        out.append(f"duckdb:///{path.as_posix()}")
+    return out[0], out[1]
+
+
+def test_drift_window_represents_the_table_not_its_head(app_db, ordered_source):
+    """Baseline over the WHOLE table vs a capped current window on the SAME table.
+
+    This is the half that the profiler fix cannot cover: with an exact full-table
+    baseline, a positional current read compares the oldest `DRIFT_WINDOW` rows against
+    the whole population and fires on data nobody touched (PSI ~6.8 here). The window
+    has to be a sample too.
+    """
+    dsn, _shifted = ordered_source
+    ctx = _drift_ctx(
+        app_db, dsn, "v", {"method": "psi", "max_rows": DRIFT_WINDOW},
+        baseline_sample_rows=DRIFT_ORDERED_ROWS,  # baseline = exact population quantiles
+    )
+    r = run_check_type(ctx, "distribution_drift")
+    assert r.metrics["binning"] == "quantile", r.metrics
+    assert r.metrics["score"] < 0.1, r.metrics
+    assert r.violation_count == 0, r.metrics
+    assert r.rows_evaluated == DRIFT_WINDOW
+
+
+def test_drift_no_false_fire_when_both_sides_sample_the_same_ordered_table(
+    app_db, ordered_source
+):
+    """Baseline and window both drawn by the shared sampler, both capped below the
+    table size — the everyday configuration on a large table."""
+    dsn, _shifted = ordered_source
+    ctx = _drift_ctx(
+        app_db, dsn, "v", {"method": "psi", "max_rows": DRIFT_WINDOW},
+        baseline_sample_rows=DRIFT_WINDOW,
+    )
+    r = run_check_type(ctx, "distribution_drift")
+    assert r.metrics["score"] < 0.1, r.metrics
+    assert r.violation_count == 0, r.metrics
+    # Both sides used the engine-native sampler with the same seed, which is what makes
+    # this exactly 0 rather than merely small.
+    assert r.metrics["current_sampling"]["method"] == "reservoir", r.metrics
+    assert r.metrics["current_sampling"]["representative"] is True
+
+
+def test_drift_still_fires_on_a_real_shift_in_a_large_ordered_table(app_db, ordered_source):
+    """The other half: representative sampling must not cost detection power."""
+    dsn, shifted = ordered_source
+    ctx = _drift_ctx(
+        app_db, shifted, "v", {"method": "psi", "max_rows": DRIFT_WINDOW},
+        baseline_dsn=dsn, baseline_sample_rows=DRIFT_WINDOW,
+    )
+    r = run_check_type(ctx, "distribution_drift")
+    assert r.metrics["score"] >= 0.2, r.metrics
+    assert r.violation_count == 1, r.metrics
+
+
+def test_drift_ks_keeps_a_reproducible_window(app_db, ordered_source):
+    """KS compares this run's sample against the PREVIOUS RUN's stored sample, i.e. two
+    reads of the same table at two times. An un-seeded random draw each run would differ
+    by sampling noise alone and reject at the configured p-threshold on unchanged data,
+    so the KS window must be one that repeats."""
+    dsn, _shifted = ordered_source
+    ctx = _drift_ctx(
+        app_db, dsn, "v", {"method": "ks", "threshold": 0.05, "max_rows": DRIFT_WINDOW}
+    )
+    r1 = run_check_type(ctx, "distribution_drift")
+    dataset_id = app_db.get(Check, ctx.check_id).dataset_id
+    app_db.add(
+        CheckRun(check_id=ctx.check_id, dataset_id=dataset_id, status="pass",
+                 violation_count=0, metrics=dict(r1.metrics))
+    )
+    app_db.commit()
+    r2 = run_check_type(ctx, "distribution_drift")
+    # Nothing changed between the runs, so KS must see the same sample and not fire.
+    assert r2.metrics["score"] == 1.0, r2.metrics
+    assert r2.violation_count == 0, r2.metrics
+
+
+# ------------------------------------------------- #268: custom_sql must auto-resolve
+
+
+def test_custom_sql_exceptions_auto_resolve_once_the_check_passes(source_db):
+    """A custom_sql check that fails, records exceptions, is then fixed and goes green.
+
+    custom_sql is the escape hatch for the most business-critical rules, so leaving its
+    historical violations `open` forever made the triage queue and every
+    open-exception health rollup permanently overstate (#268). A not_null check in the
+    same position clears them; this must behave identically.
+    """
+    import uuid as _uuid
+
+    from app.core.runner import run_check
+    from app.models import ExceptionEvent, ExceptionRecord
+
+    init_db()
+    factory = session_factory()
+    failing = "SELECT * FROM people WHERE age > 500"  # the planted 999
+    passing = "SELECT * FROM people WHERE age > 100000"  # nothing
+
+    with factory() as db:
+        conn = Connection(name=f"cs-{_uuid.uuid4().hex[:12]}", kind="sqlite", dsn=source_db)
+        db.add(conn)
+        db.flush()
+        ds = Dataset(connection_id=conn.id, schema_name=None, table_name="people")
+        db.add(ds)
+        db.flush()
+        check = Check(
+            dataset_id=ds.id, name="totals must reconcile", check_type="custom_sql",
+            column_name=None, params={"sql": failing}, severity="error", status="active",
+        )
+        db.add(check)
+        db.commit()
+        check_id = check.id
+
+        run1 = run_check(db, check, triggered_by="manual")
+        assert run1.status == "fail"
+        assert run1.rows_evaluated == SOURCE_ROWS  # the guard runner.py needs
+        opened = db.query(ExceptionRecord).filter(ExceptionRecord.check_id == check_id).all()
+        assert len(opened) == HUGE_AGE
+        assert all(r.status == "open" for r in opened)
+
+    with factory() as db:  # the rule gets fixed upstream; the check goes green
+        check = db.get(Check, check_id)
+        check.params = {"sql": passing}
+        db.commit()
+
+    with factory() as db:
+        check = db.get(Check, check_id)
+        run2 = run_check(db, check, triggered_by="schedule")
+        assert run2.status == "pass"
+        recs = db.query(ExceptionRecord).filter(ExceptionRecord.check_id == check_id).all()
+        assert [r.status for r in recs] == ["resolved"] * HUGE_AGE
+        for r in recs:
+            assert (
+                db.query(ExceptionEvent)
+                .filter(
+                    ExceptionEvent.exception_id == r.id,
+                    ExceptionEvent.comment == "auto-resolved: check passing",
+                )
+                .count()
+                == 1
+            )
+
+
+def test_schema_change_exceptions_are_not_auto_resolved(source_db, drift_tmp):
+    """The deliberate opt-out must survive the #268 fix: a schema_change alert reports a
+    table-level EVENT, so it stays open until a human acknowledges it even after the
+    next run matches the (new) baseline."""
+    import uuid as _uuid
+
+    from app.core.runner import run_check
+    from app.models import ExceptionRecord
+
+    init_db()
+    factory = session_factory()
+    dsn = _make_source(drift_tmp, "schema_evt", {"a": [1, 2, 3], "b": ["x", "y", "z"]})
+    with factory() as db:
+        conn = Connection(name=f"sc-{_uuid.uuid4().hex[:12]}", kind="sqlite", dsn=dsn)
+        db.add(conn)
+        db.flush()
+        ds = Dataset(connection_id=conn.id, schema_name=None, table_name="t")
+        db.add(ds)
+        db.flush()
+        check = Check(
+            dataset_id=ds.id, name="schema", check_type="schema_change", column_name=None,
+            params={"baseline": "previous", "on_added": True}, severity="error", status="active",
+        )
+        db.add(check)
+        db.commit()
+        check_id = check.id
+        run_check(db, check, triggered_by="manual")  # captures the baseline
+
+    # Add a column to the source -> the next run reports the change.
+    with sqlite3.connect(drift_tmp / "schema_evt.sqlite") as raw:
+        raw.execute("ALTER TABLE t ADD COLUMN c INTEGER")
+    with factory() as db:
+        check = db.get(Check, check_id)
+        run2 = run_check(db, check, triggered_by="schedule")
+        assert run2.status == "fail"
+        assert run2.rows_evaluated is None
+        assert db.query(ExceptionRecord).filter(ExceptionRecord.check_id == check_id).count() == 1
+
+    with factory() as db:  # third run: schema now MATCHES the new baseline -> passes
+        check = db.get(Check, check_id)
+        run3 = run_check(db, check, triggered_by="schedule")
+        assert run3.status == "pass"
+        recs = db.query(ExceptionRecord).filter(ExceptionRecord.check_id == check_id).all()
+        assert [r.status for r in recs] == ["open"]  # NOT auto-resolved

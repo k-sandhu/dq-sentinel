@@ -1,7 +1,7 @@
 // Reliability dashboard (#102): SLA attainment, error budgets, MTTR and a
 // per-SLA attainment trend. Editors can define dataset SLAs and re-evaluate.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useId, useState } from "react";
 import type { CSSProperties } from "react";
 import { Link } from "react-router";
 import { api } from "../api/client";
@@ -79,6 +79,11 @@ function EditSlaForm({ sla, onClose }: { sla: Sla; onClose: () => void }) {
   const [objectivePct, setObjectivePct] = useState(Number((sla.objective * 100).toFixed(2)));
   const [window, setWindow] = useState<SLAWindow>(sla.window);
   const [enabled, setEnabled] = useState(sla.enabled);
+  // One editor per SLA card, all on the same page — ids must be per-instance or
+  // every card's error message would point at the first card's inputs.
+  const uid = useId();
+  const nameErrId = `${uid}-name-err`;
+  const pctErrId = `${uid}-pct-err`;
 
   const trimmed = name.trim();
   const nameBlank = !trimmed;
@@ -140,7 +145,13 @@ function EditSlaForm({ sla, onClose }: { sla: Sla; onClose: () => void }) {
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
         <label style={{ ...FIELD, flex: 1, minWidth: 180 }}>
           <span className="sub">Name</span>
-          <input value={name} onChange={(e) => setName(e.target.value)} aria-invalid={nameBlank} />
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            aria-required
+            aria-invalid={nameBlank}
+            aria-describedby={nameBlank ? nameErrId : undefined}
+          />
         </label>
         <label style={FIELD}>
           <span className="sub">Target</span>
@@ -158,7 +169,9 @@ function EditSlaForm({ sla, onClose }: { sla: Sla; onClose: () => void }) {
             max={100}
             step={0.1}
             value={objectivePct}
+            aria-required
             aria-invalid={!pctValid}
+            aria-describedby={pctValid ? undefined : pctErrId}
             onChange={(e) => setObjectivePct(Number(e.target.value))}
             style={{ width: 90 }}
           />
@@ -186,8 +199,19 @@ function EditSlaForm({ sla, onClose }: { sla: Sla; onClose: () => void }) {
           Cancel
         </button>
       </div>
-      {nameBlank && <div className="field-error">Name can't be empty.</div>}
-      {!pctValid && <div className="field-error">Objective must be greater than 0% and at most 100%.</div>}
+      {/* Linked to the input they describe and announced when they appear —
+          previously they were loose red text a screen reader never tied to a
+          control, and Save just sat there disabled with no explanation (#260). */}
+      {nameBlank && (
+        <div className="field-error" id={nameErrId} role="alert">
+          Name can't be empty.
+        </div>
+      )}
+      {!pctValid && (
+        <div className="field-error" id={pctErrId} role="alert">
+          Objective must be greater than 0% and at most 100%.
+        </div>
+      )}
       <div className="sub" style={{ marginTop: 6 }}>
         Scope ({sla.scope} · {sla.scope_label}) can't be changed — create a new SLA to track a different
         target. Saving re-evaluates the SLA immediately; its history is kept.
@@ -336,6 +360,7 @@ function NewSlaForm() {
   const [targetType, setTargetType] = useState<"check_success" | "freshness" | "volume">("check_success");
   const [objectivePct, setObjectivePct] = useState(99);
   const [window, setWindow] = useState<"rolling_7d" | "rolling_30d">("rolling_30d");
+  const captionId = useId();
 
   const datasets = useQuery({ queryKey: ["datasets"], queryFn: () => api.get<Dataset[]>("/datasets") });
   const create = useMutation({
@@ -357,11 +382,23 @@ function NewSlaForm() {
 
   return (
     <div className="card card-pad" style={{ marginBottom: 16 }}>
-      <div style={{ fontWeight: 700, color: "var(--text-dark)", marginBottom: 8 }}>New SLA</div>
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+      <div id={captionId} style={{ fontWeight: 700, color: "var(--text-dark)", marginBottom: 8 }}>
+        New SLA
+      </div>
+      {/* The caption is a heading-ish div, so the controls under it are tied to
+          it as a named group rather than being read as five loose fields. */}
+      <div
+        role="group"
+        aria-labelledby={captionId}
+        style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}
+      >
         <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 12 }}>
           <span className="sub">Dataset</span>
-          <select value={datasetId} onChange={(e) => setDatasetId(e.target.value ? Number(e.target.value) : "")}>
+          <select
+            value={datasetId}
+            aria-required
+            onChange={(e) => setDatasetId(e.target.value ? Number(e.target.value) : "")}
+          >
             <option value="">Select…</option>
             {(datasets.data ?? []).map((d) => (
               <option key={d.id} value={d.id}>

@@ -14,6 +14,7 @@ from app.core.check_types import CHECK_TYPES
 from app.core.generator import heuristic_proposals
 from app.core.profiler import summarize_profile_for_llm
 from app.core.runner import run_check
+from app.core.scheduler import claim_due_slot
 from app.db import get_db
 from app.llm.client import llm_enabled
 from app.security import (
@@ -224,6 +225,15 @@ def run_now(
     user: models.User = Depends(require_role("editor")),
 ):
     check = _check_for_edit(db, user, check_id)
+    # Consume an already-due scheduled slot BEFORE running (#257). A freshly
+    # created active check is due immediately, so without this the worker claimed
+    # the standing slot seconds later and the analyst got the same failure twice
+    # (manual + schedule) with x2 recurrence on rows nobody had triaged. A future
+    # slot is untouched — a manual run never postpones the schedule. Claiming
+    # first (and committing) also means the worker can't sneak in mid-run; if we
+    # lose the CAS the scheduled run is already under way and we still honour the
+    # analyst's request, since a manual run must always be possible.
+    claim_due_slot(db, check)
     audit(db, user, "check.run_manual", "check", check.id, check_type=check.check_type)
     run = run_check(db, check, triggered_by="manual")  # commits the audit row in the same tx
     return run_out(db, run)

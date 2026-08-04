@@ -159,6 +159,22 @@ export interface Profile {
     pk_candidates?: string[];
     temporal_columns?: { name: string; max: string }[];
     column_count?: number;
+    // How the rich stats were sampled (#269). Absent on profiles written before it.
+    // `representative: false` means the rows are the head of the table, not a sample,
+    // so mean/stddev/quantiles describe one slice — don't present them as population
+    // stats. `sample_stats` / `population_stats` name which fields are which.
+    sampling?: {
+      method: 'full' | 'reservoir' | 'bernoulli' | 'random_sort' | 'head';
+      representative: boolean;
+      reproducible: boolean;
+      sampled: boolean;
+      seed: number | null;
+      rows: number;
+      requested_rows: number;
+      row_count: number | null;
+      sample_stats: string[];
+      population_stats: string[];
+    };
   };
 }
 
@@ -751,6 +767,12 @@ export interface Health {
   llm_enabled: boolean;
   llm_provider: string | null;
   llm_model: string | null;
+  /**
+   * Why AI features are off despite a configured API key (#266). Null when the
+   * LLM is enabled AND when nothing is configured at all — a non-null value
+   * means a key is set but unused. Names env vars only, never key material.
+   */
+  llm_disabled_reason: string | null;
 }
 
 // ---- SLA tracking (#102) ----

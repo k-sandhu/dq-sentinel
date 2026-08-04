@@ -232,10 +232,9 @@ export default function WorkbenchPage() {
   const exceptionId = params.get("exception_id") ? Number(params.get("exception_id")) : undefined;
   const checkId = params.get("check_id") ? Number(params.get("check_id")) : undefined;
   const savedQueryId = params.get("saved_query_id") ? Number(params.get("saved_query_id")) : undefined;
+  const paramConnectionId = params.get("connection_id") ? Number(params.get("connection_id")) : null;
 
-  const [connectionId, setConnectionId] = useState<number | null>(
-    params.get("connection_id") ? Number(params.get("connection_id")) : null,
-  );
+  const [connectionId, setConnectionId] = useState<number | null>(paramConnectionId);
   const [limit, setLimit] = useState(200);
   const [showSave, setShowSave] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
@@ -245,13 +244,13 @@ export default function WorkbenchPage() {
   const [history, setHistory] = useState<QueryHistoryEntry[]>(() => loadHistory());
 
   // Tabs (restored from localStorage; results stay in memory).
-  const [{ initialTabs, initialActiveId }] = useState(() => {
+  const [{ initialTabs, initialActiveId, initialSourceId }] = useState(() => {
     const saved = loadTabsState();
     const tabs = (saved?.tabs ?? [{ id: newTabId(), title: "Query 1", sql: "" }]).map((t) =>
       ({ ...makeTab(t.sql), id: t.id }),
     );
     const activeId = saved && tabs.some((t) => t.id === saved.activeId) ? saved.activeId : tabs[0].id;
-    return { initialTabs: tabs, initialActiveId: activeId };
+    return { initialTabs: tabs, initialActiveId: activeId, initialSourceId: saved?.connectionId ?? null };
   });
   const [tabs, setTabs] = useState<TabState[]>(initialTabs);
   const [activeId, setActiveId] = useState<string>(initialActiveId);
@@ -275,11 +274,21 @@ export default function WorkbenchPage() {
   // pointed at whatever entry the new tab happens to hold.
   useEffect(() => setShowEdit(false), [activeId]);
 
-  // Persist id/title/sql for the last session (titles re-derived from SQL).
+  // Which source the SQL currently in the tabs was written against — page-level,
+  // because the Workbench runs every tab against the one selected connection.
+  // Seeded from the restored session so the next visit can tell resumed SQL from
+  // SQL that belongs to another database (#255).
+  const worksheetSource = useRef<number | null>(initialSourceId);
+  // The context-implied source already applied. Keeps the context effect from
+  // snapping back over a connection the analyst picked by hand.
+  const adoptedContext = useRef<number | null>(null);
+
+  // Persist id/title/sql for the last session (titles re-derived from SQL), plus
+  // the source they belong to.
   useEffect(() => {
     const persisted: WorkbenchTab[] = tabs.map((t, i) => ({ id: t.id, title: deriveTabTitle(t.sql, i), sql: t.sql }));
-    persistTabsState({ tabs: persisted, activeId });
-  }, [tabs, activeId]);
+    persistTabsState({ tabs: persisted, activeId, connectionId: connectionId ?? worksheetSource.current });
+  }, [tabs, activeId, connectionId]);
 
   const patchTab = (id: string, patch: Partial<TabState> | ((t: TabState) => Partial<TabState>)) =>
     setTabs((prev) => prev.map((t) => (t.id === id ? { ...t, ...(typeof patch === "function" ? patch(t) : patch) } : t)));
@@ -303,10 +312,62 @@ export default function WorkbenchPage() {
   });
   const tables = useMemo(() => schemaQuery.data ?? [], [schemaQuery.data]);
 
+  /**
+   * Point the page at the source its CONTEXT implies — a dataset link, an explicit
+   * `?connection_id=`, a saved-query deep link — and drop SQL that was written for
+   * a different one.
+   *
+   * The worksheets restored from the last session belong to a single source, and
+   * arriving on another one left them sitting in the editor aimed at the wrong
+   * database (#255): the header read `trips` while the editor still held an
+   * `orders` query, one Run away from executing against the wrong source. Only
+   * tabs the analyst has NOT typed into are cleared, so this can never destroy
+   * unsaved work and needs no guard of its own — a confirm dialog firing during
+   * page load would be worse than the bug it fixes. (`confirmReplace` stays the
+   * one guard, for the paths where the analyst asks to replace the editor.)
+   *
+   * A *manual* connection switch deliberately keeps the SQL — re-running the same
+   * query against staging and prod is a real flow — so it goes through
+   * `changeConnection`, which only drops the now-meaningless results.
+   */
+  const adoptSource = (id: number) => {
+    setConnectionId(id);
+    const from = worksheetSource.current;
+    worksheetSource.current = id;
+    if (from === null || from === id) return; // unknown provenance or same source: nothing is stale
+    const staleIds = tabs.filter((t) => !t.dirty && t.sql.trim()).map((t) => t.id);
+    if (!staleIds.length) return;
+    const stale = new Set(staleIds);
+    setTabs((prev) =>
+      prev.map((t) => (stale.has(t.id) ? { ...t, sql: "", result: null, error: null, view: "table" } : t)),
+    );
+    setTabSaved((prev) => {
+      const next = { ...prev };
+      for (const tabId of staleIds) delete next[tabId];
+      return next;
+    });
+  };
+
+  // Resolve the source. Priority: an explicit `?connection_id=`, then the dataset
+  // in context, then — with no context at all — the source the restored
+  // worksheets came from, so a bare /workbench visit resumes the last session
+  // instead of snapping to connections[0] and declaring its own SQL stale.
   useEffect(() => {
-    if (!connectionId && dataset) setConnectionId(dataset.connection_id);
-    else if (!connectionId && !datasetId && connections?.length) setConnectionId(connections[0].id);
-  }, [dataset, connections, connectionId, datasetId]);
+    const context = paramConnectionId ?? dataset?.connection_id ?? null;
+    if (context !== null) {
+      if (adoptedContext.current !== context) {
+        adoptedContext.current = context;
+        adoptSource(context);
+      }
+      return;
+    }
+    if (!connectionId && !datasetId && connections?.length) {
+      const resumed = connections.find((c) => c.id === worksheetSource.current);
+      adoptSource(resumed ? resumed.id : connections[0].id);
+    }
+    // Re-runs when the context resolves or changes; `adoptSource` is re-created
+    // each render and must not be a dependency.
+  }, [paramConnectionId, dataset, connections, connectionId, datasetId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Deep-link: surface a saved query's SQL (and its connection) on arrival. Applied
   // once — reuse the active tab when it's empty, else open a dedicated tab so we
@@ -322,6 +383,9 @@ export default function WorkbenchPage() {
     deepLinkApplied.current = true;
     const { sql, connection_id } = deepLinked.data;
     setConnectionId(connection_id);
+    // The tab about to be filled belongs to the saved query's source, so this is
+    // where the worksheets now live — a later context change compares against it.
+    worksheetSource.current = connection_id;
     if (!active.dirty && !active.sql.trim()) {
       patchActive({ sql, result: null, error: null });
       linkSaved(activeId, deepLinked.data);
@@ -452,6 +516,7 @@ export default function WorkbenchPage() {
     const sameConn = sourceConnectionId === connectionId;
     if (!sameConn && sourceConnectionId) {
       setConnectionId(sourceConnectionId);
+      worksheetSource.current = sourceConnectionId; // the SQL just loaded belongs to that source
       setTabs((prev) => prev.map((t) => ({ ...t, result: null, error: null, view: "table" })));
     }
     patchActive({ sql, dirty: false, result: null, error: null });
@@ -459,10 +524,14 @@ export default function WorkbenchPage() {
     if (thenRun && sameConn) runSql(activeId, sql);
   };
 
-  // Switching the source must not leave results pointed at the old database.
+  // Switching the source must not leave results pointed at the old database. The
+  // SQL stays: picking another connection by hand is how you re-run a query
+  // against staging, then prod. That is the opposite of the context switch in
+  // `adoptSource`, where the SQL arrived with a source the analyst just left.
   const changeConnection = (id: number) => {
     if (id === connectionId) return;
     setConnectionId(id);
+    worksheetSource.current = id;
     setTabs((prev) => prev.map((t) => ({ ...t, result: null, view: "table" })));
     run.reset();
   };

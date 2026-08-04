@@ -89,6 +89,19 @@ class UnhandledErrorMiddleware:
             await response(scope, receive, send)
 
 
+def _warn_on_unused_llm_key(settings) -> None:
+    """Say once, at startup, that a configured LLM key is going unused (#266).
+
+    Silence here is how a paid key ends up doing nothing for weeks: every AI
+    feature falls back (heuristics / 503) exactly as it does with no key at all.
+    `llm_config_problem()` returns None when the LLM simply isn't configured, so
+    the default no-key deployment stays quiet.
+    """
+    problem = settings.llm_config_problem()
+    if problem:
+        log.warning("LLM features are disabled: %s", problem, extra={"event": "llm_config_problem"})
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     init_db()
@@ -97,6 +110,7 @@ async def lifespan(_app: FastAPI):
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    _warn_on_unused_llm_key(settings)
     app = FastAPI(
         title="DQ Sentinel API",
         version=__version__,
@@ -127,6 +141,10 @@ def create_app() -> FastAPI:
             "status": "ok",
             "version": __version__,
             "llm_enabled": settings.llm_enabled,
+            # Why the LLM is off when a key IS configured; null when it is on, and
+            # null when nothing is configured (#266). Names env vars only — never
+            # any part of a key.
+            "llm_disabled_reason": settings.llm_config_problem(),
             **provider_info(),
         }
 

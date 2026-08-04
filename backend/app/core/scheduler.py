@@ -3,6 +3,9 @@
 Claiming uses an optimistic compare-and-swap UPDATE on next_run_at, so multiple
 workers can poll the same database without double-running a check (on PostgreSQL;
 run a single worker against SQLite). See issue #25 for the queue-based design.
+
+The API's manual-run path goes through the same CAS (``claim_due_slot``): a run
+started by hand consumes the slot it would otherwise have raced (#257).
 """
 
 import logging
@@ -12,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import delete, update
+from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.core.incidents import process_due_escalations
@@ -107,6 +111,72 @@ def purge_audit_log(now: datetime | None = None) -> int:
     return deleted
 
 
+def _cas_next_run(db: Session, check: Check, new: datetime | None) -> bool:
+    """Optimistic compare-and-swap on ``next_run_at``: move the slot only if it is
+    still the value we read. Whoever gets rowcount 1 owns that slot; everyone else
+    backs off. Commits, so the claim is durable before the check is executed.
+    """
+    expected = check.next_run_at
+    res = db.execute(
+        update(Check)
+        .where(Check.id == check.id, Check.next_run_at == expected)
+        .values(next_run_at=new)
+    )
+    db.commit()
+    return res.rowcount == 1
+
+
+def claim_due_slot(db: Session, check: Check, now: datetime | None = None) -> bool:
+    """Consume an already-due scheduled slot ahead of an out-of-band run (#257).
+
+    A manual run and the worker are two doors onto the same check. A newly created
+    active check is due immediately (``next_run_at = utcnow()``), so clicking Run
+    produced the run the analyst asked for *and* left the slot standing: the next
+    poll claimed it seconds later, and the analyst got two identical failures in
+    the same minute plus x2 recurrence on rows nobody had triaged yet.
+
+    So the manual path claims that slot first, through the SAME CAS the worker
+    uses — a worker that read the same slot simply loses the swap and moves on
+    instead of double-running (multi-worker safe, and the single-worker default
+    can no longer race its own poll interval).
+
+    Deliberately narrow, in both directions:
+
+    * Only a slot that is **already due** is consumed. A future slot is left
+      exactly where it is, so running manually at 09:00 never postpones the 10:00
+      daily slot the analyst is relying on.
+    * Nothing is skipped: the slot is consumed by an execution of the check
+      happening right now, which is exactly what the worker would have done with
+      it. The check keeps its cadence from this run onward (no starvation), and
+      this does not move toward the "skip a slot" semantics #165 warns about.
+
+    ``next_run_at IS NULL`` on an active, scheduled check counts as due, because
+    that is precisely what ``poll_once`` initializes to ``now`` and claims in the
+    same pass.
+
+    Returns True if this caller won the slot. Caller runs the check either way —
+    a manual run must always be possible.
+    """
+    now = now or utcnow()
+    if check.status != "active":
+        return False  # disabled/proposed/archived checks have no slot to consume
+    current = check.next_run_at
+    if current is None:
+        if not check.schedule_expr:
+            return False  # unscheduled: never due, nothing to claim
+    elif current > now:
+        return False  # a future slot; a manual run must not postpone it
+    try:
+        nxt = compute_next_run(check, now)
+    except Exception:  # noqa: BLE001 - mirrors poll_once: a bad expr must not fail the run
+        log.exception(
+            "Check %s has an unparseable schedule (%s %r); running without claiming its slot",
+            check.id, check.schedule_kind, check.schedule_expr,
+        )
+        return False
+    return _cas_next_run(db, check, nxt)
+
+
 def _execute(check_id: int) -> None:
     factory = session_factory()
     with factory() as db:
@@ -170,20 +240,9 @@ def poll_once(executor: ThreadPoolExecutor) -> int:
                     "Check %s has an unparseable schedule (%s %r); parking it (next_run_at=NULL)",
                     check.id, check.schedule_kind, check.schedule_expr,
                 )
-                db.execute(
-                    update(Check)
-                    .where(Check.id == check.id, Check.next_run_at == check.next_run_at)
-                    .values(next_run_at=None)
-                )
-                db.commit()
+                _cas_next_run(db, check, None)
                 continue
-            res = db.execute(
-                update(Check)
-                .where(Check.id == check.id, Check.next_run_at == check.next_run_at)
-                .values(next_run_at=nxt)
-            )
-            db.commit()
-            if res.rowcount == 1:  # we won the claim
+            if _cas_next_run(db, check, nxt):  # we won the claim
                 claimed += 1
                 WORKER_CLAIMS.inc()
                 executor.submit(_execute, check.id)
