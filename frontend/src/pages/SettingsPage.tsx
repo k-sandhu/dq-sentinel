@@ -1091,6 +1091,12 @@ export default function SettingsPage() {
             <div className="hint">
               provider <strong>{health.llm_provider}</strong> · model <code>{health.llm_model}</code>
             </div>
+          ) : health?.llm_disabled_reason ? (
+            // A key IS configured but unusable (#266) — telling this operator to
+            // "set a key" would send them to fix something that is already set.
+            <div className="hint" style={{ color: "var(--warn-strong)" }}>
+              {health.llm_disabled_reason}
+            </div>
           ) : (
             <div className="hint">
               Provider-agnostic: set ANTHROPIC_API_KEY (native) or DQ_LLM_API_KEY + DQ_LLM_MODEL for any

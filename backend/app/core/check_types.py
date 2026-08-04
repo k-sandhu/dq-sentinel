@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.connectors.dialects import nan_predicate_builder
-from app.connectors.sa import Connector
+from app.connectors.sa import Connector, Sample
 from app.connectors.safety import guard_sql
 from app.core import ml
 from app.core.profiler import jsonable
@@ -708,6 +708,17 @@ def _run_row_count_anomaly(ctx: CheckContext) -> CheckResult:
 
 # ---------------------------------------------------------------- custom_sql
 def _run_custom_sql(ctx: CheckContext) -> CheckResult:
+    """Rows returned by an analyst-authored violation query.
+
+    ``rows_evaluated`` is the dataset's row count, exactly as ``_sample_where`` reports
+    it for not_null/range. It is not decoration: the runner only auto-resolves lingering
+    open exceptions on a passing run when ``rows_evaluated is not None`` (runner.py), so
+    leaving it at the default None put custom_sql in the same bucket as freshness /
+    schema_contract / schema_change — checks that deliberately never auto-resolve. Those
+    are alerts about a table-level *event*; custom_sql is genuinely row-level and records
+    real ExceptionRecords, so once one was fixed and went green its old exceptions stayed
+    `open` forever and every open-exception rollup overstated (#268).
+    """
     settings = get_settings()
     sql = guard_sql(ctx.params.get("sql") or "")
     count = int(ctx.connector.scalar(f"SELECT COUNT(*) FROM (\n{sql}\n) AS _v") or 0)
@@ -715,11 +726,13 @@ def _run_custom_sql(ctx: CheckContext) -> CheckResult:
     if count:
         res = ctx.connector.run_select(sql, limit=settings.exception_sample_rows)
         rows = [_truncate_row(dict(zip(res.columns, r, strict=False))) for r in res.rows]
+    total = int(ctx.connector.scalar(f"SELECT COUNT(*) FROM {ctx.ref}") or 0)
     return CheckResult(
         violation_count=count,
+        rows_evaluated=total,
         sample_rows=rows,
         reasons=["row returned by custom violation query"] * len(rows),
-        metrics={},
+        metrics={"row_count": total},
     )
 
 
@@ -870,6 +883,27 @@ _VALUE_MIX_MAX_DISTINCT = 1000
 # Cap on the distinct values we are willing to re-count in SQL (_observed_value_counts).
 _EXACT_COUNT_MAX_DISTINCT = 5000
 
+# Default significance level for method="ks". This is deliberately NOT the PSI
+# `threshold` default of 0.2: PSI's threshold is an effect size (how far the shape
+# moved), while KS's is a p-value cut-off, i.e. the probability of alerting when
+# NOTHING changed. A drift check runs on every schedule tick against a table that is
+# usually append-only, so the two samples are never the same rows and the p-value is a
+# genuine random variable — alpha IS the per-run false-alarm rate. Measured on a 1M-row
+# table appended with 10k rows drawn from its own distribution, 60 consecutive runs:
+# alpha=0.2 -> 7 false fires, alpha=0.05 -> 2, alpha=0.01 -> 0, alpha=0.001 -> 0.
+# The power it costs is small: over the 2000-vs-2000 samples this check compares, the
+# smallest reliably-detected KS distance moves from 0.034 (alpha=0.2) to 0.062
+# (alpha=0.001), while a nightly check goes from crying wolf most weeks to roughly one
+# false alert every three years.
+_KS_DEFAULT_ALPHA = 0.001
+
+
+def _ks_alpha(params: dict[str, Any]) -> float:
+    """Effective KS significance level. `threshold` is not consulted: it is the PSI
+    knob, and a value typed (or pre-filled) for PSI means nothing as a p-value."""
+    raw = params.get("ks_alpha")
+    return float(raw) if raw not in (None, "") else _KS_DEFAULT_ALPHA
+
 
 def _latest_baseline_profile(ctx: CheckContext) -> Any | None:
     """Newest Profile row for this check's dataset (resolved via the check)."""
@@ -893,6 +927,60 @@ def _baseline_column(profile: Any, column: str) -> dict[str, Any] | None:
         if c.get("name") == column:
             return c
     return None
+
+
+def _baseline_sampling(profile: Any) -> dict[str, Any]:
+    """How this baseline profile's sample was drawn — the upgrade path for #269.
+
+    ``table_facts["sampling"]`` is written only by the post-#269 profiler. A baseline
+    without that key is not "unknown": ``profile_dataset`` has two callers (an explicit
+    POST and the catalog seed) and nothing re-profiles on a schedule, so every profile
+    sitting in a customer database on the day this ships was drawn by the old bare
+    ``LIMIT`` — its quantiles describe the physical head of the table. Absent therefore
+    means **positional**, which is the one thing we do actually know about it.
+
+    Returns ``{"method", "representative", "recorded"}``; ``recorded`` is False for a
+    pre-#269 baseline so a run's metrics say which branch it took.
+    """
+    facts = (getattr(profile, "table_facts", None) or {}).get("sampling")
+    if not isinstance(facts, dict):
+        return {"method": "head", "representative": False, "recorded": False}
+    return {
+        "method": facts.get("method"),
+        "representative": bool(facts.get("representative")),
+        "recorded": True,
+    }
+
+
+def _drift_window(
+    ctx: CheckContext, max_rows: int, row_count: int, *, representative: bool
+) -> Sample:
+    """The current window, drawn to MATCH how the baseline was drawn (#269).
+
+    PSI compares the baseline's stored quantiles against this read. If the two sides are
+    drawn differently, PSI measures the difference between the two *reads* — on a 1M-row
+    DuckDB table written in time order, byte-identical data scored PSI 7.07 (a fire)
+    comparing an old head-read baseline against a representative window, and 0.0 when
+    both sides agreed. So the draw is chosen by the baseline, not by what this code
+    would prefer:
+
+    * baseline drawn representatively -> sample properly (the #269 path);
+    * baseline drawn positionally (any pre-#269 profile) -> read the head the old way,
+      so both sides stay biased *identically* until the dataset is re-profiled.
+
+    The positional branch is a compatibility shim, not a mode: it is selected per
+    baseline, so the moment a dataset is re-profiled its checks move to the
+    representative path with no configuration and no migration.
+    """
+    if representative:
+        return ctx.connector.sample_df(
+            f"{ctx.col} AS v", ctx.ref, max_rows, row_count=row_count
+        )
+    df = ctx.connector.fetch_df(f"SELECT {ctx.col} AS v FROM {ctx.ref}", limit=max_rows)
+    return Sample(
+        df=df, method="head", representative=False, reproducible=True,
+        truncated=row_count > max_rows, seed=None, row_count=row_count,
+    )
 
 
 def _psi(expected: np.ndarray, actual: np.ndarray) -> float:
@@ -1209,18 +1297,31 @@ def _reservoir_sample(values: np.ndarray, k: int = _DRIFT_SAMPLE_CAP) -> list[fl
     return [float(v) for v in values[idx]]
 
 
-def _ks_drift(values: pd.Series, ctx: CheckContext, threshold: float) -> CheckResult:
+def _ks_drift(sample: Sample, max_rows: int, ctx: CheckContext, alpha: float) -> CheckResult:
     """KS two-sample test of current numeric values vs the PREVIOUS run's stored
     reservoir sample. Baseline raw values aren't persisted in the profile, so KS
-    drift is measured run-over-run: the first run captures a sample and passes."""
+    drift is measured run-over-run: the first run captures a sample and passes.
+
+    ``alpha`` is a significance level, not a PSI-style distance — see
+    ``_KS_DEFAULT_ALPHA`` for why it has its own default and its own param.
+
+    The stored sample carries the draw that produced it, and a run whose draw does not
+    match the stored one re-captures instead of scoring. That is the KS half of the
+    #269 upgrade path: the previous run's sample in an existing install was drawn by the
+    old positional read, and scoring a representative window against it would fire on
+    every ks check the first time the new code runs. Pre-#269 runs recorded no draw at
+    all, so they land here too and cost exactly one quiet pass.
+    """
     from scipy.stats import ks_2samp  # transitively available via scikit-learn
 
     from app.models import CheckRun  # local import to avoid a cycle
 
-    nums = pd.to_numeric(values, errors="coerce").dropna().to_numpy()
+    nums = pd.to_numeric(sample.df["v"], errors="coerce").dropna().to_numpy()
     current_sample = _reservoir_sample(nums)
+    facts = sample.as_facts(max_rows)
 
     prior: list[float] = []
+    prior_method: Any = None
     if ctx.db is not None and ctx.check_id is not None:
         run = (
             ctx.db.query(CheckRun)
@@ -1230,15 +1331,17 @@ def _ks_drift(values: pd.Series, ctx: CheckContext, threshold: float) -> CheckRe
         )
         if run and run.metrics:
             prior = [float(x) for x in (run.metrics.get("drift_sample") or [])]
+            prior_method = (run.metrics.get("current_sampling") or {}).get("method")
 
     base_metrics = {
         "method": "ks",
         "kind": "numeric",
         "baseline_profile_id": None,
         "score": None,
-        "threshold": threshold,
+        "threshold": alpha,
         "drift_sample": current_sample,  # persisted by the runner into run.metrics
         "current_sample_n": len(current_sample),
+        "current_sampling": facts,
     }
     if len(prior) < 2 or len(current_sample) < 2:
         return CheckResult(
@@ -1247,31 +1350,52 @@ def _ks_drift(values: pd.Series, ctx: CheckContext, threshold: float) -> CheckRe
             metrics={**base_metrics, "prior_n": len(prior), "note": "baseline captured"},
             detail="KS baseline captured (first run) — drift measured from next run",
         )
+    if prior_method != facts["method"]:
+        return CheckResult(
+            violation_count=0,
+            rows_evaluated=int(nums.size),
+            metrics={**base_metrics, "prior_n": len(prior), "note": "baseline recaptured",
+                     "prior_sampling_method": prior_method},
+            detail=(
+                f"KS baseline recaptured: the previous run's sample was drawn "
+                f"{prior_method or 'before draw recording'}, this one {facts['method']} — "
+                f"comparing them would measure the two reads, not the data"
+            ),
+        )
     res = ks_2samp(current_sample, prior)
     pvalue = float(res.pvalue)
     statistic = float(res.statistic)
-    drifted = pvalue <= threshold
+    drifted = pvalue <= alpha
     return CheckResult(
         violation_count=1 if drifted else 0,
         rows_evaluated=int(nums.size),
         metrics={**base_metrics, "score": round(pvalue, 6), "statistic": round(statistic, 4),
                  "prior_n": len(prior)},
-        detail=f"KS p-value {pvalue:.4g} vs previous run (D={statistic:.3f}, fails when p<={threshold})",
+        detail=f"KS p-value {pvalue:.4g} vs previous run (D={statistic:.3f}, fails when p<={alpha})",
     )
 
 
 def _run_distribution_drift(ctx: CheckContext) -> CheckResult:
     settings = get_settings()
     method = str(ctx.params.get("method") or "psi").lower()
-    threshold = float(ctx.params.get("threshold", 0.2))
     raw_max = ctx.params.get("max_rows")
     max_rows = int(raw_max) if raw_max not in (None, "") else int(settings.ml_max_rows)
-
-    values = ctx.connector.fetch_df(f"SELECT {ctx.col} AS v FROM {ctx.ref}", limit=max_rows)["v"]
+    row_count = ctx.connector.row_count(ctx.table, ctx.schema)
 
     if method == "ks":
-        return _ks_drift(values, ctx, threshold)
+        # `reproducible_only`: KS compares this run's sample against the PREVIOUS RUN's
+        # stored sample, i.e. two reads of the same table at two times. An un-seeded
+        # random draw on each run would differ by sampling noise alone. It pins the draw
+        # only while the table is byte-identical — on an append-only table the two
+        # samples always differ, which is why the failing threshold is a significance
+        # level with its own default (`_KS_DEFAULT_ALPHA`) rather than PSI's 0.2.
+        sample = ctx.connector.sample_df(
+            f"{ctx.col} AS v", ctx.ref, max_rows,
+            row_count=row_count, reproducible_only=True,
+        )
+        return _ks_drift(sample, max_rows, ctx, _ks_alpha(ctx.params))
 
+    threshold = float(ctx.params.get("threshold", 0.2))
     profile = _latest_baseline_profile(ctx)
     if profile is None:
         return _drift_pass_detail(
@@ -1294,16 +1418,52 @@ def _run_distribution_drift(ctx: CheckContext) -> CheckResult:
     # Baseline denominator = full-table non-null count (top_values are full-table
     # exact counts), not the pandas sample size.
     nonnull_total = int(profile.row_count or 0) - int(bcol.get("null_count") or 0)
-    if has_top_values and (not has_quantiles or _prefers_value_mix(bcol, nonnull_total)):
-        # Only re-count in SQL when the sampled read was truncated; when it wasn't, the
-        # frame already IS the whole column and the extra scan would buy nothing.
-        observed = (
-            _observed_value_counts(
-                ctx, numeric=has_quantiles, baseline_distinct=bcol.get("distinct_count")
-            )
-            if len(values) >= max_rows
-            else None
+
+    # THE COHERENCE RULE (#269). The PSI baseline is the profiler's stored quantiles,
+    # computed on the profiler's SAMPLE, so the current window has to be drawn the same
+    # way the baseline was — see `_drift_window`. The baseline decides, which is what
+    # makes the #269 sampling fix safe to deploy on top of baselines that predate it.
+    base_sampling = _baseline_sampling(profile)
+    sample = _drift_window(
+        ctx, max_rows, row_count, representative=base_sampling["representative"]
+    )
+    values = sample.df["v"]
+
+    use_value_mix = has_top_values and (not has_quantiles or _prefers_value_mix(bcol, nonnull_total))
+    # Only re-count in SQL when the read really is a sample; when it isn't, the frame
+    # already IS the whole column and the extra scan would buy nothing. `sample.truncated`
+    # compares the row count to the cap, so it stays right for a percentage-based sampler
+    # that lands a few rows short of `max_rows`.
+    observed = (
+        _observed_value_counts(
+            ctx, numeric=has_quantiles, baseline_distinct=bcol.get("distinct_count")
         )
+        if use_value_mix and sample.truncated
+        else None
+    )
+    if (
+        sample.truncated
+        and observed is None
+        and sample.representative != base_sampling["representative"]
+    ):
+        # The baseline was sampled properly but this source can no longer draw a
+        # representative window (the engine has no sampler and the table has grown past
+        # the ORDER BY RANDOM() ceiling, or the sampler errored). There is no coherent
+        # pair left to score, and scoring the incoherent one is precisely the false fire
+        # this rule exists to prevent — so pass, and say what would fix it. `observed`
+        # exempts the value-mix path: that compares exact full-table counts on both
+        # sides and never touches the sampled frame.
+        return _drift_pass_detail(
+            f"baseline profile #{profile.id} was sampled representatively but the current "
+            f"window could only be read positionally ({sample.method}) — re-profile the "
+            f"dataset so both sides are drawn the same way",
+            method,
+            threshold,
+            baseline_profile_id=profile.id,
+            note="incoherent sampling vs baseline",
+        )
+
+    if use_value_mix:
         result = _categorical_drift(
             values, bcol, nonnull_total, threshold, numeric=has_quantiles, observed=observed
         )
@@ -1328,6 +1488,8 @@ def _run_distribution_drift(ctx: CheckContext) -> CheckResult:
         )
 
     result.metrics["baseline_profile_id"] = profile.id
+    result.metrics["current_sampling"] = sample.as_facts(max_rows)
+    result.metrics["baseline_sampling"] = base_sampling
     score = result.metrics.get("score")
     result.detail = (
         f"PSI {score} vs baseline profile #{profile.id} (threshold {threshold})"
@@ -1533,7 +1695,14 @@ CHECK_TYPES: dict[str, CheckType] = {
             "Alert when the column's distribution shifts vs the profiling baseline (PSI or KS)", True,
             [_p("method", "string", False, "psi", "psi | ks"),
              _p("threshold", "number", False, 0.2,
-                "PSI >= threshold (or KS p-value <= threshold when method=ks) fails"),
+                "PSI >= threshold fails. method=psi only — a PSI distance is not a p-value, "
+                "so method=ks ignores this and uses ks_alpha"),
+             _p("ks_alpha", "number", False, _KS_DEFAULT_ALPHA,
+                "method=ks only: fails when the KS p-value <= alpha. This is a significance "
+                "level, i.e. the chance of alerting when nothing changed, and the check runs "
+                "on every schedule tick — 0.05 alerts on roughly 1 run in 20 on an "
+                "append-only table with nothing wrong. Raise it only to trade false alerts "
+                "for sensitivity"),
              _p("max_rows", "number", False, None, "Sample cap for current data (default settings.ml_max_rows)")],
             _run_distribution_drift,
         ),
@@ -1608,6 +1777,17 @@ def validate_check(check_type: str, column_name: str | None, params: dict[str, A
         if method not in ("psi", "ks"):
             raise ValueError("distribution_drift 'method' must be 'psi' or 'ks'")
         normalized["method"] = method
+        raw_alpha = normalized.get("ks_alpha")
+        if raw_alpha not in (None, ""):
+            try:
+                alpha = float(raw_alpha)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("distribution_drift 'ks_alpha' must be a number") from exc
+            # A p-value cut-off outside (0, 1) is not a significance level: 0 can never
+            # fire and >=1 always fires.
+            if not 0.0 < alpha < 1.0:
+                raise ValueError("distribution_drift 'ks_alpha' must be between 0 and 1")
+            normalized["ks_alpha"] = alpha
     if check_type == "schema_change":
         mode = str(normalized.get("baseline") or "previous").lower()
         if mode not in ("previous", "pinned"):

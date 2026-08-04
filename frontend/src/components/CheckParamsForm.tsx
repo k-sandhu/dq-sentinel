@@ -105,14 +105,26 @@ function Field({
   const id = useId();
   const errId = `${id}-err`;
   const hintId = `${id}-hint`;
+  const labelId = `${id}-label`;
   const describedBy = [spec.description ? hintId : null, error ? errId : null].filter(Boolean).join(" ");
   const options = (spec as ParamSpec & { options?: unknown[] }).options;
 
+  // The <label> wraps the hint and the error too (that is what puts them in the
+  // right place visually), so leaving the name to the implicit association would
+  // fold both into the accessible name — and the name would then *change* as the
+  // analyst types. Point every control at the caption span instead: the name is
+  // the param, the hint/error stay in aria-describedby where they belong (#258).
+  const a11y = {
+    "aria-labelledby": labelId,
+    "aria-describedby": describedBy || undefined,
+    "aria-required": spec.required || undefined,
+  } as const;
+
   const label = (
-    <>
+    <span id={labelId}>
       {spec.name}
       {spec.required && <span className="req"> *</span>}
-    </>
+    </span>
   );
 
   let control: React.ReactNode;
@@ -126,7 +138,7 @@ function Field({
           id={id}
           type="checkbox"
           checked={checked}
-          aria-describedby={describedBy || undefined}
+          {...a11y}
           onChange={(e) => onChange(e.target.checked)}
         />
         <span>
@@ -145,7 +157,7 @@ function Field({
         id={id}
         value={value == null ? "" : String(value)}
         aria-invalid={error ? true : undefined}
-        aria-describedby={describedBy || undefined}
+        {...a11y}
         onChange={(e) => onChange(e.target.value === "" ? undefined : e.target.value)}
       >
         {!spec.required && <option value="">— none —</option>}
@@ -164,7 +176,7 @@ function Field({
         value={listToText(value)}
         placeholder="comma or newline separated"
         aria-invalid={error ? true : undefined}
-        aria-describedby={describedBy || undefined}
+        {...a11y}
         onChange={(e) => {
           const list = textToList(e.target.value);
           onChange(list.length ? list : undefined);
@@ -179,7 +191,7 @@ function Field({
         value={value == null ? "" : String(value)}
         style={{ fontFamily: "var(--mono)", fontSize: 12 }}
         aria-invalid={error ? true : undefined}
-        aria-describedby={describedBy || undefined}
+        {...a11y}
         onChange={(e) => onChange(e.target.value === "" ? undefined : e.target.value)}
       />
     );
@@ -196,7 +208,7 @@ function Field({
         placeholder={spec.default != null ? `default ${spec.default}` : undefined}
         inputMode={numeric ? "decimal" : undefined}
         aria-invalid={error ? true : undefined}
-        aria-describedby={describedBy || undefined}
+        {...a11y}
         onChange={(e) => {
           const raw = e.target.value;
           if (raw === "") return onChange(undefined);
@@ -214,7 +226,7 @@ function Field({
         value={value == null ? "" : String(value)}
         placeholder={spec.default != null ? `default ${spec.default}` : undefined}
         aria-invalid={error ? true : undefined}
-        aria-describedby={describedBy || undefined}
+        {...a11y}
         onChange={(e) => onChange(e.target.value === "" ? undefined : e.target.value)}
       />
     );
@@ -298,7 +310,9 @@ export default function CheckParamsForm({
   };
 
   return (
-    <div className="check-params">
+    // A group, so a screen reader announces which set of controls a bare param
+    // name like `min` / `max` belongs to instead of reading them as loose inputs.
+    <div className="check-params" role="group" aria-label="Check parameters">
       {allSpecs.map((spec) => (
         <Field
           key={spec.name}

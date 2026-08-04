@@ -1,6 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { api } from "../api/client";
 import { qk } from "../api/queryKeys";
@@ -60,6 +60,13 @@ function EditCheckModal({ check, onClose }: { check: Check; onClose: () => void 
   const [scheduleKind, setScheduleKind] = useState(check.schedule_kind ?? "interval");
   const [scheduleExpr, setScheduleExpr] = useState(check.schedule_expr ?? "1440");
   const [params, setParams] = useState<Record<string, unknown>>(check.params ?? {});
+  // useId, not hand-written ids: this modal is rendered from a table that can be
+  // mounted more than once on a page, and duplicate ids point a label at the
+  // wrong input.
+  const uid = useId();
+  const scheduleKindId = `${uid}-schedule-kind`;
+  const scheduleExprId = `${uid}-schedule-expr`;
+  const scheduleGroupId = `${uid}-schedule-group`;
 
   const selected = types?.find((t) => t.key === check.check_type);
   const paramErrors = validateParams(selected?.params ?? [], params);
@@ -121,21 +128,35 @@ function EditCheckModal({ check, onClose }: { check: Check; onClose: () => void 
             <option value="error">error</option>
           </select>
         </label>
-        <label className="field">
-          Schedule
+        {/* Two controls, one caption: a <label> can only name the first of them,
+            so the expression box used to reach a screen reader with no name at
+            all — just a placeholder that disappears the moment you type (#260).
+            Group them and name each one. */}
+        <div className="field-set" role="group" aria-labelledby={scheduleGroupId}>
+          <span className="field-caption" id={scheduleGroupId}>
+            Schedule
+          </span>
           <div style={{ display: "flex", gap: 6 }}>
-            <select value={scheduleKind} onChange={(e) => setScheduleKind(e.target.value)} style={{ width: 110 }}>
+            <select
+              id={scheduleKindId}
+              aria-label="Schedule kind"
+              value={scheduleKind}
+              onChange={(e) => setScheduleKind(e.target.value)}
+              style={{ width: 110 }}
+            >
               <option value="interval">interval</option>
               <option value="cron">cron</option>
             </select>
             <input
+              id={scheduleExprId}
               type="text"
+              aria-label={scheduleKind === "interval" ? "Interval in minutes" : "Cron expression"}
               value={scheduleExpr}
               onChange={(e) => setScheduleExpr(e.target.value)}
               placeholder={scheduleKind === "interval" ? "minutes, e.g. 1440" : "0 6 * * *"}
             />
           </div>
-        </label>
+        </div>
       </div>
       <div className="field-group-label">
         Parameters

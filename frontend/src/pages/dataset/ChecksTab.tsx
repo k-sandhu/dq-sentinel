@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { api } from "../../api/client";
 import { qk } from "../../api/queryKeys";
 import type { Check, CheckTypeInfo, ColumnInfo, GenerateResult, Health } from "../../api/types";
@@ -23,6 +23,13 @@ function NewCheckModal({ datasetId, onClose }: { datasetId: number; onClose: () 
   const [column, setColumn] = useState("");
   const [severity, setSeverity] = useState("error");
   const [params, setParams] = useState<Record<string, unknown>>({});
+  // The type hint sits inside the <label>, so an implicit association folds the
+  // *selected type's description* into the select's accessible name — a name
+  // that then changes on every selection ("Check type Column must never be
+  // null" → "Check type Values within bounds"). Name from the caption span and
+  // leave the description a description, as the Knowledge tab does (#260).
+  const uid = useId();
+  const id = { type: `${uid}-type`, typeCaption: `${uid}-type-caption`, typeHint: `${uid}-type-hint` };
 
   const selected = types?.find((t) => t.key === checkType);
   const paramErrors = validateParams(selected?.params ?? [], params);
@@ -66,14 +73,20 @@ function NewCheckModal({ datasetId, onClose }: { datasetId: number; onClose: () 
       }
     >
       <ErrorBox error={create.error} />
-      <label className="field">
-        Check type
-        <select value={checkType} onChange={(e) => { setCheckType(e.target.value); setParams({}); }}>
+      <label className="field" htmlFor={id.type}>
+        <span id={id.typeCaption}>Check type</span>
+        <select
+          id={id.type}
+          aria-labelledby={id.typeCaption}
+          aria-describedby={id.typeHint}
+          value={checkType}
+          onChange={(e) => { setCheckType(e.target.value); setParams({}); }}
+        >
           {types?.map((t) => (
             <option key={t.key} value={t.key}>{t.label}</option>
           ))}
         </select>
-        <div className="field-hint">{selected?.description}</div>
+        <div className="field-hint" id={id.typeHint}>{selected?.description}</div>
       </label>
       {selected?.needs_column && (
         <label className="field">

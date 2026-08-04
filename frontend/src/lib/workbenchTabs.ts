@@ -17,6 +17,13 @@ export interface WorkbenchTab {
 export interface WorkbenchTabsState {
   tabs: WorkbenchTab[];
   activeId: string;
+  /** The connection the worksheets were written against (#255). The Workbench
+   *  runs every tab against ONE selected source, so this belongs to the session,
+   *  not to a tab. Restoring it lets the page tell "resume where I left off"
+   *  (same source) from "this SQL targets another database" (a dataset link or
+   *  `?connection_id=` landing on a different source). `null` when unknown —
+   *  a pre-#255 saved state, or a session that never resolved a connection. */
+  connectionId: number | null;
 }
 
 const CAP = 12;
@@ -44,7 +51,11 @@ export function loadTabsState(): WorkbenchTabsState | null {
     .slice(0, CAP);
   if (tabs.length === 0) return null;
   const activeId = tabs.some((t) => t.id === parsed.activeId) ? parsed.activeId! : tabs[0].id;
-  return { tabs, activeId };
+  const connectionId =
+    typeof parsed.connectionId === "number" && Number.isFinite(parsed.connectionId)
+      ? parsed.connectionId
+      : null;
+  return { tabs, activeId, connectionId };
 }
 
 export function persistTabsState(state: WorkbenchTabsState): void {
@@ -53,7 +64,7 @@ export function persistTabsState(state: WorkbenchTabsState): void {
   // character. Nothing outside the Workbench reads this key.
   setPref(
     PREF_KEYS.workbenchTabs,
-    { tabs: state.tabs.slice(0, CAP), activeId: state.activeId },
+    { tabs: state.tabs.slice(0, CAP), activeId: state.activeId, connectionId: state.connectionId },
     { notify: false },
   );
 }

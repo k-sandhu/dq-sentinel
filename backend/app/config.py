@@ -23,6 +23,13 @@ MIN_SECRET_KEY_LENGTH = 32
 PROD_ENVS = frozenset({"prod", "production"})
 ALLOWED_ENVS = frozenset({"dev"}) | PROD_ENVS
 
+# Recognized DQ_LLM_PROVIDER values. Unlike DQ_ENV an unknown value here does not
+# refuse to boot — the LLM is optional and must degrade gracefully (golden rule 4)
+# — but it is reported through `Settings.llm_config_problem()` instead of silently
+# leaving a configured key unused (#266).
+LLM_PROVIDERS = frozenset({"auto", "anthropic", "openai", "openrouter"})
+DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-8"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -85,10 +92,37 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = 90.0
     llm_max_retries: int = 1
 
+    def _llm_route(self) -> str:
+        """Which provider branch the current settings select: openai | anthropic | unknown.
+
+        Shared by `resolved_llm()` and `llm_config_problem()` so the diagnosis can
+        never describe a different branch than the one that actually ran.
+        """
+        provider = self.llm_provider.strip().lower()
+        if provider in ("openai", "openrouter"):
+            return "openai"
+        if provider == "anthropic":
+            return "anthropic"
+        if provider == "auto":
+            # auto prefers the native Anthropic path when ANTHROPIC_API_KEY is set,
+            # and only takes the OpenAI-compatible path when DQ_LLM_API_KEY is the
+            # only key present. With no key at all either branch resolves to None.
+            return "openai" if (not self.anthropic_api_key and self.llm_api_key) else "anthropic"
+        return "unknown"
+
     def resolved_llm(self) -> dict | None:
-        """Which provider/model will actually be used, or None when disabled."""
-        provider = self.llm_provider.lower()
-        if provider in ("openai", "openrouter") or (provider == "auto" and not self.anthropic_api_key and self.llm_api_key):
+        """Which provider/model will actually be used, or None when disabled.
+
+        Deliberate asymmetry: the anthropic path defaults the model, the
+        OpenAI-compatible path requires one. `DQ_LLM_BASE_URL` may point at
+        OpenRouter, vLLM, Ollama, Together, ... whose model ids share no
+        namespace, so there is no default that is right anywhere — guessing one
+        would turn a config mistake into a paid 400 at the first call instead of
+        a clear "set DQ_LLM_MODEL". `llm_config_problem()` below is what makes
+        that requirement visible rather than silent (#266).
+        """
+        route = self._llm_route()
+        if route == "openai":
             if self.llm_api_key and self.llm_model and self.llm_base_url:
                 return {
                     "provider": "openai",
@@ -97,15 +131,75 @@ class Settings(BaseSettings):
                     "api_key": self.llm_api_key,
                 }
             return None
-        if provider in ("anthropic", "auto"):
-            if self.anthropic_api_key:
-                return {
-                    "provider": "anthropic",
-                    "model": self.llm_model or "claude-opus-4-8",
-                    "base_url": None,
-                    "api_key": self.anthropic_api_key,
-                }
+        if route == "anthropic" and self.anthropic_api_key:
+            return {
+                "provider": "anthropic",
+                "model": self.llm_model or DEFAULT_ANTHROPIC_MODEL,
+                "base_url": None,
+                "api_key": self.anthropic_api_key,
+            }
         return None
+
+    def llm_config_problem(self) -> str | None:
+        """Why a configured LLM API key is going unused, or None (#266).
+
+        None means "nothing to report": either the LLM resolved fine, or nothing
+        is configured at all — an unconfigured LLM is a supported mode, not a
+        problem. A non-None value means an API key IS set (possibly a paid one)
+        and every AI feature is nevertheless off, which the operator has no other
+        way to notice.
+
+        The text is operator-facing (startup log, /health, Settings) and names
+        only environment *variables* — never key material, not even a prefix.
+        """
+        if self.resolved_llm() is not None:
+            return None
+        if not (self.anthropic_api_key or self.llm_api_key):
+            return None  # not configured at all — nothing to warn about
+
+        route = self._llm_route()
+        if route == "unknown":
+            # Echo the offending value so the typo is obvious, but truncate and
+            # repr() it: /health is unauthenticated, and this string also lands in
+            # a log line.
+            got = self.llm_provider[:32]
+            return (
+                f"An LLM API key is set but DQ_LLM_PROVIDER={got!r} is not a recognized "
+                f"provider (expected one of {', '.join(sorted(LLM_PROVIDERS))}), so AI "
+                "features are off."
+            )
+        if route == "openai":
+            if not self.llm_api_key:
+                return (
+                    "DQ_LLM_PROVIDER selects the OpenAI-compatible path, which reads "
+                    "DQ_LLM_API_KEY, but only ANTHROPIC_API_KEY is set — so AI features are "
+                    "off. Set DQ_LLM_API_KEY, or set DQ_LLM_PROVIDER=anthropic to use the "
+                    "key you already have."
+                )
+            if not self.llm_model:
+                return (
+                    "LLM key detected but DQ_LLM_MODEL is unset — set a model to enable AI "
+                    "features. The OpenAI-compatible path has no default model because "
+                    "model ids differ per endpoint (e.g. DQ_LLM_MODEL=anthropic/"
+                    "claude-haiku-4.5 on OpenRouter)."
+                )
+            if not self.llm_base_url:
+                return (
+                    "LLM key detected but DQ_LLM_BASE_URL is empty — set the OpenAI-compatible "
+                    "endpoint URL (e.g. https://openrouter.ai/api/v1) to enable AI features."
+                )
+        elif not self.anthropic_api_key:
+            return (
+                "DQ_LLM_PROVIDER=anthropic requires ANTHROPIC_API_KEY, but only DQ_LLM_API_KEY "
+                "is set — so AI features are off. Set ANTHROPIC_API_KEY, or set "
+                "DQ_LLM_PROVIDER=openai (or openrouter) to use the key you already have."
+            )
+        # Defensive: a key is set, resolution failed, and none of the specific
+        # causes above matched. Still better than silence.
+        return (
+            "An LLM API key is set but the LLM configuration is incomplete, so AI features "
+            "are off — check DQ_LLM_PROVIDER, DQ_LLM_MODEL and DQ_LLM_BASE_URL."
+        )
 
     # Built-in data catalog (one-click sample datasets, see app/catalog/). The
     # backing SQLite/DuckDB files are generated lazily on connect under this dir,

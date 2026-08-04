@@ -122,6 +122,82 @@ describe("fields rendered per check type", () => {
 });
 
 // ---------------------------------------------------------------------------
+// accessible names (#258 / #260)
+// ---------------------------------------------------------------------------
+
+describe("accessible names", () => {
+  // The <label> wraps the hint and the error as well as the control, so relying
+  // on the implicit association folded both into the accessible name — "min"
+  // was announced as "min Lower bound", and once the value went bad it became
+  // "min Lower bound Must be a number or date". Each control must be named by
+  // its param and nothing else.
+  it("names each control by its param alone, not by its hint", () => {
+    render(<Harness specs={RANGE} />);
+    expect(screen.getByRole("spinbutton", { name: "min" })).toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: "max" })).toBeInTheDocument();
+    // the hint is still reachable — as a description, which is what it is
+    expect(screen.getByRole("spinbutton", { name: "min" })).toHaveAccessibleDescription("Lower bound");
+  });
+
+  it("keeps the name stable when the value goes invalid", () => {
+    render(<Harness specs={RANGE} initial={{ min: "yesterday" }} />);
+    const min = screen.getByRole("textbox", { name: "min" }); // falls back to text
+    expect(min).toHaveAttribute("aria-invalid", "true");
+    expect(min).toHaveAccessibleDescription(/Must be a number or date/);
+  });
+
+  it("names every control shape — textarea, checkbox, select", () => {
+    render(<Harness specs={ACCEPTED_VALUES} />);
+    expect(screen.getByRole("textbox", { name: "values *" })).toHaveProperty("tagName", "TEXTAREA");
+    expect(screen.getByRole("checkbox", { name: "case_sensitive" })).toBeChecked();
+    expect(screen.getByRole("spinbutton", { name: "tolerance" })).toBeInTheDocument();
+
+    render(<Harness specs={CUSTOM_SQL} />);
+    expect(screen.getByRole("textbox", { name: "sql *" })).toBeInTheDocument();
+
+    const withOptions = [
+      { ...spec("strategy", "string"), options: ["static", "adaptive"] } as ParamSpec,
+    ];
+    render(<Harness specs={withOptions} />);
+    expect(screen.getByRole("combobox", { name: "strategy" })).toBeInTheDocument();
+  });
+
+  it("exposes required-ness programmatically, not just with a red asterisk", () => {
+    render(<Harness specs={ACCEPTED_VALUES} />);
+    expect(screen.getByRole("textbox", { name: "values *" })).toHaveAttribute("aria-required", "true");
+    // optional params must not claim to be required
+    expect(screen.getByRole("checkbox", { name: "case_sensitive" })).not.toHaveAttribute("aria-required");
+    expect(screen.getByRole("spinbutton", { name: "tolerance" })).not.toHaveAttribute("aria-required");
+  });
+
+  it("announces the fields as one named group, so a bare `min` has context", () => {
+    render(<Harness specs={RANGE} />);
+    const group = screen.getByRole("group", { name: "Check parameters" });
+    expect(group).toContainElement(screen.getByRole("spinbutton", { name: "min" }));
+  });
+
+  it("gives every instance its own ids when the form renders twice on a page", () => {
+    // The edit modal and the contract tab can both be mounted; duplicate ids
+    // would make a label point at the wrong instance's input.
+    render(
+      <>
+        <Harness specs={RANGE} />
+        <Harness specs={RANGE} />
+      </>,
+    );
+    const mins = screen.getAllByRole("spinbutton", { name: "min" });
+    expect(mins).toHaveLength(2);
+    expect(mins[0].id).not.toBe(mins[1].id);
+    expect(mins[0].getAttribute("aria-labelledby")).not.toBe(mins[1].getAttribute("aria-labelledby"));
+
+    // and typing in the second one only moves the second one
+    fireEvent.change(mins[1], { target: { value: "7" } });
+    expect(mins[0]).toHaveValue(null);
+    expect(mins[1]).toHaveValue(7);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // inline validation
 // ---------------------------------------------------------------------------
 

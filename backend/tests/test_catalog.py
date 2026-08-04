@@ -10,6 +10,7 @@ import contextlib
 import os
 import sqlite3
 import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -335,3 +336,130 @@ def test_seats_check_flags_every_planted_bad_seat_row(client, editor_headers, ad
         assert seats["params"].get("min") == 1, "clause bound must be strictly positive"
     finally:
         client.delete(f"{API}/{key}/disconnect", headers=admin_headers)
+
+
+# --------------------------------------------------------------------------- #
+# Shared catalog directory (#261). A curated entry's backing DB is generated    #
+# lazily, in-process, by whoever connects it — the API. SCHEDULED checks run in #
+# the separate worker process. If the two do not see the SAME directory, every  #
+# scheduled check on a catalog dataset errors "unable to open database file"    #
+# (SQLite opens `mode=ro`, DuckDB `read_only=True` — neither creates the file). #
+# The shipped deployment is the only place that can break this, so pin it       #
+# there: one image-level default + one volume mounted at it in both services.   #
+# --------------------------------------------------------------------------- #
+
+CATALOG_DIR_ENV = "DQ_CATALOG_DATA_DIR"
+
+
+def _service_env(svc: dict) -> dict[str, str]:
+    """A compose service's `environment`, which may be a mapping or a KEY=VALUE list."""
+    env = svc.get("environment") or {}
+    if isinstance(env, list):
+        pairs = [item.split("=", 1) for item in env]
+        return {p[0]: (p[1] if len(p) > 1 else "") for p in pairs}
+    return {k: ("" if v is None else str(v)) for k, v in env.items()}
+
+
+def _mounts(svc: dict) -> list[dict]:
+    """A compose service's volumes, normalized from the short (`src:dst:ro`) and
+    long (mapping) forms to {source, target, read_only}."""
+    out: list[dict] = []
+    for v in svc.get("volumes") or []:
+        if isinstance(v, str):
+            parts = v.split(":")
+            out.append({
+                "source": parts[0],
+                "target": parts[1] if len(parts) > 1 else "",
+                "read_only": len(parts) > 2 and "ro" in parts[2].split(","),
+            })
+        else:
+            out.append({
+                "source": str(v.get("source", "")),
+                "target": str(v.get("target", "")),
+                "read_only": bool(v.get("read_only")),
+            })
+    return out
+
+
+def _image_catalog_dir(dockerfile: str) -> str:
+    """The catalog dir the backend image defaults to — asserting the image also
+    CREATES it and hands it to the non-root runtime user *before* `USER` drops
+    privileges. Docker seeds a fresh named volume from the image directory,
+    ownership included, so a root-owned dir would leave the non-root api unable
+    to generate into the very volume that exists to share the files."""
+    lines = [ln.strip() for ln in dockerfile.splitlines()]
+    envs = [ln for ln in lines if ln.startswith("ENV ") and CATALOG_DIR_ENV in ln]
+    assert len(envs) == 1, f"expected exactly one {CATALOG_DIR_ENV} default in the image, got {envs}"
+    path = envs[0].split(f"{CATALOG_DIR_ENV}=", 1)[1].split()[0].strip("\"'")
+    users = [ln for ln in lines if ln.startswith("USER ")]
+    assert users, "the backend image must drop to a non-root user"
+    user = users[0].split()[1]
+    assert user != "root", users[0]
+    prep = [ln for ln in lines[: lines.index(users[0])] if ln.startswith("RUN ") and path in ln]
+    assert any("mkdir" in ln for ln in prep), f"the image never creates {path}: {prep}"
+    assert any(f"chown {user}:" in ln for ln in prep), (
+        f"the image never chowns {path} to {user} before USER — a root-owned dir makes the "
+        f"fresh named volume root-owned, so the non-root api cannot generate backing files"
+    )
+    return path
+
+
+def test_catalog_dir_is_one_writable_volume_shared_by_api_and_worker():
+    """#261: api and worker must resolve the catalog dir to the same path AND mount
+    the same read-write storage there. Any per-container path is the bug."""
+    import yaml
+
+    from app.config import REPO_DIR
+
+    image_dir = _image_catalog_dir((REPO_DIR / "backend" / "Dockerfile").read_text(encoding="utf-8"))
+    compose = yaml.safe_load((REPO_DIR / "docker-compose.yml").read_text(encoding="utf-8"))
+
+    sources: dict[str, str] = {}
+    for name in ("api", "worker"):
+        svc = compose["services"][name]
+        resolved = _service_env(svc).get(CATALOG_DIR_ENV) or image_dir
+        assert resolved == image_dir, (
+            f"{name} overrides {CATALOG_DIR_ENV} to {resolved!r} — api and worker must resolve "
+            "the SAME catalog dir or the worker cannot open what the api generated (#261)"
+        )
+        at_dir = [m for m in _mounts(svc) if m["target"] == resolved]
+        assert len(at_dir) == 1, (
+            f"{name} must mount exactly one volume at {resolved}, got {_mounts(svc)} (#261)"
+        )
+        assert not at_dir[0]["read_only"], (
+            f"{name}'s {resolved} mount is read-only, but the catalog generates backing files there"
+        )
+        sources[name] = at_dir[0]["source"]
+
+    assert sources["api"] == sources["worker"], (
+        f"api and worker mount DIFFERENT storage at {image_dir}: {sources} — "
+        "scheduled checks would error 'unable to open database file' (#261)"
+    )
+    assert sources["api"] in (compose.get("volumes") or {}), (
+        f"{sources['api']!r} must be a top-level named volume so both services share one volume, "
+        f"not a per-container anonymous one (declared: {sorted(compose.get('volumes') or {})})"
+    )
+
+
+def test_catalog_dsn_is_absolute_and_rooted_in_the_configured_dir(client):
+    """The DSN is computed once, by the api, and persisted on the Connection; the
+    worker later opens that stored string. So it must be an absolute path under the
+    configured (shared) dir — never relative to whichever cwd a process happens to
+    have — and it must follow DQ_CATALOG_DATA_DIR rather than a second hardcoded
+    default that could diverge from the deployment's mount.
+
+    (`client` is requested only for its import side effect: app.catalog.seed and
+    app.core.contracts form an import cycle that resolves once the app package has
+    been imported — same reason the sibling test above imports seed lazily.)"""
+    from app.catalog import seed
+
+    root = get_settings().catalog_path
+    assert root == Path(os.environ[CATALOG_DIR_ENV]), (
+        f"{CATALOG_DIR_ENV} must be the single source of the catalog dir, got {root}"
+    )
+    for key, ext in (("healthcare-ehr", "sqlite"), ("marketing-clickstream", "duckdb")):
+        entry = definitions.entry_by_key(key)
+        assert entry is not None, key
+        path = seed.db_path(entry)
+        assert path.is_absolute() and path.parent == root, path
+        assert seed.dsn_for(entry) == f"{'duckdb' if ext == 'duckdb' else 'sqlite'}:///{path.as_posix()}"

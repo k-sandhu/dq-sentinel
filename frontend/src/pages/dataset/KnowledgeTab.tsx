@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { api } from "../../api/client";
 import { qk } from "../../api/queryKeys";
 import type { Knowledge } from "../../api/types";
@@ -37,6 +37,26 @@ export default function KnowledgeTab({ datasetId }: { datasetId: number }) {
   const [sloTargetText, setSloTargetText] = useState("");
   const [sloWindowText, setSloWindowText] = useState("");
   const [saved, setSaved] = useState(false);
+  // Ids for the controls whose caption, hint or error has to be associated
+  // explicitly (#260). useId keeps them unique if the tab is ever mounted twice.
+  const uid = useId();
+  const id = {
+    freshness: `${uid}-freshness`,
+    freshnessCaption: `${uid}-freshness-caption`,
+    freshnessHint: `${uid}-freshness-hint`,
+    pii: `${uid}-pii`,
+    piiCaption: `${uid}-pii-caption`,
+    piiHint: `${uid}-pii-hint`,
+    sloGroup: `${uid}-slo-group`,
+    sloEnabled: `${uid}-slo-enabled`,
+    sloHint: `${uid}-slo-hint`,
+    target: `${uid}-target`,
+    targetCaption: `${uid}-target-caption`,
+    targetErr: `${uid}-target-err`,
+    window: `${uid}-window`,
+    windowCaption: `${uid}-window-caption`,
+    windowErr: `${uid}-window-err`,
+  };
 
   const { data, isLoading, error } = useQuery({
     queryKey: qk.knowledge.detail(datasetId),
@@ -113,6 +133,7 @@ export default function KnowledgeTab({ datasetId }: { datasetId: number }) {
         <ErrorBox error={error || save.error} />
         {saved && <div className="info-box">Saved.</div>}
         <fieldset disabled={!editable} style={{ border: "none", padding: 0, margin: 0 }}>
+          <legend className="sr-only">Table knowledge</legend>
           <label className="field">
             Business context
             <textarea
@@ -155,39 +176,71 @@ export default function KnowledgeTab({ datasetId }: { datasetId: number }) {
             </label>
           </div>
           <div className="form-row">
-            <label className="field">
-              Freshness SLA (hours)
+            {/* The hint sits inside the <label>, so leaving the association
+                implicit folded it into the accessible name. Name the control
+                from the caption span; the hint stays a description. */}
+            <label className="field" htmlFor={id.freshness}>
+              <span id={id.freshnessCaption}>Freshness SLA (hours)</span>
               <input
+                id={id.freshness}
                 type="number"
+                aria-labelledby={id.freshnessCaption}
+                aria-describedby={id.freshnessHint}
                 value={form.freshness_sla_hours ?? ""}
                 onChange={(e) => set("freshness_sla_hours", e.target.value ? Number(e.target.value) : null)}
                 placeholder="24"
               />
-              <div className="field-hint">Used as the threshold for generated freshness checks</div>
+              <div className="field-hint" id={id.freshnessHint}>
+                Used as the threshold for generated freshness checks
+              </div>
             </label>
-            <label className="field">
-              PII columns
-              <input type="text" value={piiText} onChange={(e) => setPiiText(e.target.value)} placeholder="email, full_name" />
-              <div className="field-hint">Comma-separated. Values in these columns are redacted before being sent to the LLM.</div>
+            <label className="field" htmlFor={id.pii}>
+              <span id={id.piiCaption}>PII columns</span>
+              <input
+                id={id.pii}
+                type="text"
+                aria-labelledby={id.piiCaption}
+                aria-describedby={id.piiHint}
+                value={piiText}
+                onChange={(e) => setPiiText(e.target.value)}
+                placeholder="email, full_name"
+              />
+              <div className="field-hint" id={id.piiHint}>
+                Comma-separated. Values in these columns are redacted before being sent to the LLM.
+              </div>
             </label>
           </div>
           <div className="form-row">
-            <label className="field">
-              Reliability SLO
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 500, marginTop: 8 }}>
+            {/* Was a <label> nested inside a <label> — invalid, and it made the
+                checkbox's accessible name the whole block ("Reliability SLO
+                Enabled Target source: …"). A group caption + one label per
+                control instead. */}
+            <div className="field-set" role="group" aria-labelledby={id.sloGroup}>
+              <span className="field-caption" id={id.sloGroup}>
+                Reliability SLO
+              </span>
+              <label
+                htmlFor={id.sloEnabled}
+                style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 500, fontSize: 12.5, marginTop: 8 }}
+              >
                 <input
+                  id={id.sloEnabled}
                   type="checkbox"
                   checked={form.slo_enabled}
+                  aria-describedby={id.sloHint}
                   onChange={(e) => set("slo_enabled", e.target.checked)}
                   style={{ width: "auto", marginTop: 0 }}
                 />
                 Enabled
               </label>
-              <div className="field-hint">Target source: {sloTargetLabel}</div>
-            </label>
-            <label className="field">
-              Target score
+              <div className="field-hint" id={id.sloHint}>
+                Target source: {sloTargetLabel}
+              </div>
+            </div>
+            <label className="field" htmlFor={id.target}>
+              <span id={id.targetCaption}>Target score</span>
               <input
+                id={id.target}
                 type="number"
                 min={0}
                 max={100}
@@ -200,13 +253,22 @@ export default function KnowledgeTab({ datasetId }: { datasetId: number }) {
                   if (!parsed.invalid) set("slo_target_score", parsed.value);
                 }}
                 placeholder="Importance default"
+                aria-labelledby={id.targetCaption}
                 aria-invalid={targetInvalid}
+                aria-describedby={targetInvalid ? id.targetErr : undefined}
               />
-              {targetInvalid && <div className="field-hint" style={{ color: "var(--danger-dark)" }}>Use 0-100.</div>}
+              {/* Announced and linked, not colour-only: the old copy was a tinted
+                  hint div a screen reader never connected to the input. */}
+              {targetInvalid && (
+                <span className="field-error" id={id.targetErr} role="alert">
+                  Use 0-100.
+                </span>
+              )}
             </label>
-            <label className="field">
-              Window days
+            <label className="field" htmlFor={id.window}>
+              <span id={id.windowCaption}>Window days</span>
               <input
+                id={id.window}
                 type="number"
                 min={1}
                 step={1}
@@ -218,9 +280,15 @@ export default function KnowledgeTab({ datasetId }: { datasetId: number }) {
                   if (!parsed.invalid) set("slo_window_days", parsed.value);
                 }}
                 placeholder="30"
+                aria-labelledby={id.windowCaption}
                 aria-invalid={windowInvalid}
+                aria-describedby={windowInvalid ? id.windowErr : undefined}
               />
-              {windowInvalid && <div className="field-hint" style={{ color: "var(--danger-dark)" }}>Use a positive number.</div>}
+              {windowInvalid && (
+                <span className="field-error" id={id.windowErr} role="alert">
+                  Use a positive number.
+                </span>
+              )}
             </label>
           </div>
           <label className="field">

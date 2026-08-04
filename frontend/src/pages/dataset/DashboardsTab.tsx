@@ -61,19 +61,41 @@ export default function DashboardsTab({ datasetId, hasProfile }: { datasetId: nu
     queryKey: qk.adhoc.byDataset(datasetId),
     queryFn: () => api.get<AdhocDashboardMeta[]>(`/adhoc-dashboards?dataset_id=${datasetId}`),
   });
+  const boards = metas.data;
+
+  // The tab used to open with an empty right pane even when a board existed: the
+  // "Pick or generate a dashboard" prompt reads as "there is nothing saved here",
+  // which is exactly what pushed analysts into generating a second copy (#259).
+  // Default to the most recent board (the list comes back id-desc) and let a
+  // click override it — derived rather than an effect, so there is no empty first
+  // paint and a board that disappears (deleted here or elsewhere) falls back to
+  // the next one instead of leaving a selection pointed at a 404. Opening re-runs
+  // the board's SQL against the source, so this stays behind the same editor gate
+  // as the rows: a viewer auto-selects nothing.
+  const selectedId = !canOpen
+    ? null
+    : openId !== null && (!boards || boards.some((m) => m.id === openId))
+      ? openId
+      : (boards?.[0]?.id ?? null);
 
   const dashboard = useQuery({
-    queryKey: qk.adhocOpen.detail(openId),
-    queryFn: () => api.get<AdhocDashboard>(`/adhoc-dashboards/${openId}`),
-    enabled: !!openId,
+    queryKey: qk.adhocOpen.detail(selectedId),
+    queryFn: () => api.get<AdhocDashboard>(`/adhoc-dashboards/${selectedId}`),
+    enabled: selectedId !== null,
   });
 
   const generate = useMutation({
     mutationFn: () => api.post<AdhocDashboard>("/adhoc-dashboards/generate", { dataset_id: datasetId, focus }),
     onSuccess: (d) => {
       setFocus("");
-      qc.invalidateQueries({ queryKey: qk.adhoc.all });
+      // Seed both caches before the refetch lands: without the list entry the
+      // derived selection below would bounce off the new id and show the older
+      // board for a beat.
+      qc.setQueryData<AdhocDashboardMeta[]>(qk.adhoc.byDataset(datasetId), (prev) =>
+        prev ? [d, ...prev.filter((m) => m.id !== d.id)] : prev,
+      );
       qc.setQueryData(qk.adhocOpen.detail(d.id), d);
+      qc.invalidateQueries({ queryKey: qk.adhoc.all });
       setOpenId(d.id);
     },
   });
@@ -81,10 +103,49 @@ export default function DashboardsTab({ datasetId, hasProfile }: { datasetId: nu
   const remove = useMutation({
     mutationFn: (id: number) => api.del(`/adhoc-dashboards/${id}`),
     onSuccess: (_d, id) => {
+      // Drop it locally too — the derived selection must not land back on the
+      // deleted board while the list refetches.
+      qc.setQueryData<AdhocDashboardMeta[]>(qk.adhoc.byDataset(datasetId), (prev) =>
+        prev?.filter((m) => m.id !== id),
+      );
+      qc.removeQueries({ queryKey: qk.adhocOpen.detail(id) });
       if (openId === id) setOpenId(null);
       qc.invalidateQueries({ queryKey: qk.adhoc.all });
     },
   });
+
+  // Generation always creates a NEW board — the server derives the title from the
+  // dataset (plus the focus), so two runs minutes apart produced two identical
+  // `trips overview`s in the QA pass (#259). Same dataset + same focus means the
+  // same board, so ask first and point at Refresh, which re-runs the existing
+  // panels against the source. The button is disabled while a generate is in
+  // flight; this guard covers the second *deliberate* click.
+  const trimmedFocus = focus.trim().toLowerCase();
+  const duplicateOf = boards?.find((m) => m.focus.trim().toLowerCase() === trimmedFocus) ?? null;
+
+  const startGenerate = async () => {
+    if (generate.isPending) return;
+    if (duplicateOf) {
+      const proceed = await confirm({
+        title: "Generate a second dashboard?",
+        confirmLabel: "Generate another",
+        cancelLabel: "Open the existing one",
+        body: (
+          <>
+            This dataset already has <strong>{duplicateOf.title}</strong> ({duplicateOf.panel_count} panels,
+            saved {fmtDateTime(duplicateOf.created_at)}){trimmedFocus ? " for the same focus" : ""}. Generating
+            adds a separate board rather than updating it — <strong>Refresh</strong> re-runs the existing
+            panels against the source.
+          </>
+        ),
+      });
+      if (!proceed) {
+        setOpenId(duplicateOf.id);
+        return;
+      }
+    }
+    generate.mutate();
+  };
 
   return (
     <div>
@@ -93,6 +154,7 @@ export default function DashboardsTab({ datasetId, hasProfile }: { datasetId: nu
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <input
               type="text"
+              aria-label="Dashboard focus (optional)"
               placeholder={llm ? 'Optional focus, e.g. "why are totals drifting this week?"' : "Optional focus label"}
               value={focus}
               onChange={(e) => setFocus(e.target.value)}
@@ -100,12 +162,25 @@ export default function DashboardsTab({ datasetId, hasProfile }: { datasetId: nu
             />
             <button
               className="primary"
-              onClick={() => generate.mutate()}
+              onClick={() => void startGenerate()}
               disabled={generate.isPending || !hasProfile}
-              title={!hasProfile ? "Profile the dataset first" : undefined}
+              aria-busy={generate.isPending}
+              title={
+                !hasProfile
+                  ? "Profile the dataset first"
+                  : duplicateOf
+                    ? `This dataset already has “${duplicateOf.title}” — generating adds a second board`
+                    : undefined
+              }
             >
               {generate.isPending ? <span className="spinner" style={{ width: 13, height: 13 }} /> : <Icon name="bolt" size={14} />}
-              {generate.isPending ? "Designing dashboard…" : llm ? "Generate dashboard (AI)" : "Generate dashboard"}
+              {generate.isPending
+                ? "Designing dashboard…"
+                : duplicateOf
+                  ? "Generate another dashboard"
+                  : llm
+                    ? "Generate dashboard (AI)"
+                    : "Generate dashboard"}
             </button>
           </div>
           <ErrorBox error={generate.error} />
@@ -124,12 +199,12 @@ export default function DashboardsTab({ datasetId, hasProfile }: { datasetId: nu
           <ErrorBox error={metas.error} />
           {metas.isLoading ? (
             <Spinner />
-          ) : !metas.data?.length ? (
+          ) : !boards?.length ? (
             <div className="empty" style={{ padding: 14 }}>
               {canOpen ? "None yet — generate one." : "None yet."}
             </div>
           ) : (
-            metas.data.map((m) => {
+            boards.map((m) => {
               // Only an editor gets an activatable row: no role/tabIndex/handlers for a
               // viewer, so the list reads as reference rather than a wall of 403s.
               const open = () => setOpenId(m.id);
@@ -137,7 +212,7 @@ export default function DashboardsTab({ datasetId, hasProfile }: { datasetId: nu
                 ? {
                     role: "button",
                     tabIndex: 0,
-                    "aria-pressed": openId === m.id,
+                    "aria-pressed": selectedId === m.id,
                     onClick: open,
                     onKeyDown: activateOnKey(open),
                   }
@@ -151,7 +226,7 @@ export default function DashboardsTab({ datasetId, hasProfile }: { datasetId: nu
                     padding: "8px 10px",
                     borderRadius: 6,
                     cursor: canOpen ? "pointer" : "default",
-                    background: openId === m.id ? "var(--brand-light)" : undefined,
+                    background: selectedId === m.id ? "var(--brand-light)" : undefined,
                     marginBottom: 4,
                   }}
                 >
@@ -169,7 +244,13 @@ export default function DashboardsTab({ datasetId, hasProfile }: { datasetId: nu
         </div>
 
         <div>
-          {!openId ? (
+          {generate.isPending ? (
+            // Progress belongs where the board will appear: the button alone left
+            // the pane looking idle, so a waiting analyst clicked Generate again (#259).
+            <div className="card card-pad" aria-live="polite">
+              <Spinner label="Designing dashboard — writing panel SQL and running it against the source…" />
+            </div>
+          ) : selectedId === null ? (
             <div className="card">
               <EmptyState
                 title={canOpen ? "Pick or generate a dashboard" : "Dashboards are listed, not runnable here"}
@@ -203,7 +284,9 @@ export default function DashboardsTab({ datasetId, hasProfile }: { datasetId: nu
                     <button
                       className="small danger"
                       onClick={async () => {
-                        if (openId == null) return;
+                        // `selectedId`, not `openId`: the shown board may be the
+                        // auto-selected default the analyst never clicked.
+                        if (selectedId === null) return;
                         if (
                           await confirm({
                             title: "Delete dashboard",
@@ -217,7 +300,7 @@ export default function DashboardsTab({ datasetId, hasProfile }: { datasetId: nu
                             ),
                           })
                         )
-                          remove.mutate(openId);
+                          remove.mutate(selectedId);
                       }}
                     >
                       Delete

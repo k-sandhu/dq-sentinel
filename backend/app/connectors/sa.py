@@ -34,6 +34,84 @@ ALLOWED_SCHEMES = frozenset(SPEC_BY_SCHEME)
 _engines: dict[int, Engine] = {}
 _lock = threading.Lock()
 
+# ---------------------------------------------------------------- sampling (#269)
+# Seed used for every engine-native sample. It is a module constant, NOT a per-call
+# value, on purpose: a profile baseline and a distribution_drift check's current
+# window are drawn by two different code paths, and on engines with a seedable
+# sampler the same seed makes them draw the same rows out of unchanged data. Two
+# independently-seeded samples would still be unbiased, but identical ones make PSI
+# on unchanged data exactly 0 instead of "small".
+SAMPLE_SEED = 1337
+
+# Ceiling for the ORDER BY RANDOM() fallback. That fallback is a top-N sort of the
+# whole table, so it must never be what a 100M-row table gets by default; past this
+# many rows an engine with no native sampler falls back to the positional read and
+# says so (`representative=False`) rather than melting the source.
+RANDOM_SORT_MAX_ROWS = 2_000_000
+
+# How each engine spells "a fresh random value per row" in ORDER BY. SQL Server's
+# RAND() is evaluated ONCE per statement (it would order by a constant), so it gets
+# NEWID(); everything else has a genuine per-row function.
+_RANDOM_ORDER_FN: dict[str, str] = {
+    "sqlite": "RANDOM()",
+    "duckdb": "RANDOM()",
+    "postgresql": "RANDOM()",
+    "mysql": "RAND()",
+    "mssql": "NEWID()",
+    "snowflake": "RANDOM()",
+    "bigquery": "RAND()",
+    "trino": "RANDOM()",
+    "clickhouse": "rand()",
+}
+
+
+@dataclass(frozen=True)
+class Sample:
+    """A bounded read plus an honest description of HOW it was drawn.
+
+    ``method`` is one of:
+
+    ``full``
+        The table fits inside the cap — every row was read, nothing was sampled.
+    ``reservoir``
+        DuckDB ``USING SAMPLE reservoir(n ROWS) REPEATABLE (seed)`` — a uniform
+        random sample of exactly n rows in one scan, reproducible.
+    ``bernoulli``
+        PostgreSQL ``TABLESAMPLE BERNOULLI (pct) REPEATABLE (seed)`` — per-row coin
+        flip, reproducible. (SYSTEM is deliberately not used: it samples whole pages,
+        which on a clustered table reproduces the very bias this exists to remove.)
+    ``random_sort``
+        ``ORDER BY <random> LIMIT n`` — representative but NOT reproducible, and a
+        top-N sort, so it is gated on ``RANDOM_SORT_MAX_ROWS``.
+    ``head``
+        The old behaviour: a bare ``LIMIT n`` with no ORDER BY, i.e. whatever rows
+        the engine reaches first. Deterministic but positionally biased — on a table
+        written in time order this is "the oldest n rows", not a sample (#269).
+        ``representative`` is False here and callers must label the stats they
+        derive from it.
+    """
+
+    df: pd.DataFrame
+    method: str
+    representative: bool
+    reproducible: bool
+    truncated: bool  # the table is larger than the cap, so this is a real sample
+    seed: int | None
+    row_count: int | None
+
+    def as_facts(self, requested_rows: int) -> dict[str, Any]:
+        """JSON-able description for a profile payload / check metrics."""
+        return {
+            "method": self.method,
+            "representative": self.representative,
+            "reproducible": self.reproducible,
+            "sampled": self.truncated,
+            "seed": self.seed,
+            "rows": int(len(self.df)),
+            "requested_rows": int(requested_rows),
+            "row_count": self.row_count,
+        }
+
 
 def _spec_from_dsn(dsn: str) -> DialectSpec:
     scheme = make_url(dsn).drivername
@@ -237,7 +315,11 @@ class Connector:
         return int(self.scalar(f"SELECT COUNT(*) FROM {self.table_ref(table, schema)}") or 0)
 
     def fetch_df(self, sql: str, limit: int) -> pd.DataFrame:
-        """Bounded DataFrame fetch for profiling / ML sampling."""
+        """Bounded DataFrame fetch for profiling / ML sampling.
+
+        NOTE: this is a bare ``LIMIT`` — the FIRST n rows the engine reaches, not a
+        sample. Anything computing a *statistic* wants ``sample_df()`` instead.
+        """
         cleaned = enforce_limit(guard_sql(sql), limit)
         start = time.perf_counter()
         try:
@@ -245,6 +327,106 @@ class Connector:
                 return pd.read_sql(text(cleaned), conn)
         finally:
             self._observe(start)
+
+    def _sample_candidates(
+        self, select: str, ref: str, limit: int, row_count: int | None, seed: int
+    ) -> list[tuple[str, str, bool]]:
+        """Ordered (method, sql, reproducible) attempts, best first."""
+        out: list[tuple[str, str, bool]] = []
+        if self.kind == "duckdb":
+            # Reservoir sampling: one pass, exactly `limit` rows, uniform over the
+            # whole table regardless of physical clustering.
+            out.append(
+                (
+                    "reservoir",
+                    f"SELECT {select} FROM {ref} USING SAMPLE reservoir({limit} ROWS) "
+                    f"REPEATABLE ({seed})",
+                    True,
+                )
+            )
+        elif self.kind == "postgresql" and row_count:
+            # TABLESAMPLE takes a percentage, so it needs the row count. Aim at exactly
+            # `limit` rows: overshoot would be trimmed by the outer LIMIT, and trimming
+            # is positional again. Undershoot just means a slightly smaller sample.
+            pct = min(100.0, max(round(limit / row_count * 100.0, 6), 0.000001))
+            out.append(
+                (
+                    "bernoulli",
+                    f"SELECT {select} FROM {ref} TABLESAMPLE BERNOULLI ({pct}) "
+                    f"REPEATABLE ({seed})",
+                    True,
+                )
+            )
+        random_fn = _RANDOM_ORDER_FN.get(self.kind)
+        if random_fn and row_count is not None and row_count <= RANDOM_SORT_MAX_ROWS:
+            # Inner LIMIT makes this a top-N sort rather than a full materialised sort,
+            # and it also pins the ordering that the enforce_limit() wrapper would
+            # otherwise be free to discard.
+            out.append(
+                ("random_sort", f"SELECT {select} FROM {ref} ORDER BY {random_fn} LIMIT {limit}", False)
+            )
+        return out
+
+    def sample_df(
+        self,
+        select: str,
+        ref: str,
+        limit: int,
+        *,
+        row_count: int | None = None,
+        seed: int = SAMPLE_SEED,
+        reproducible_only: bool = False,
+    ) -> Sample:
+        """Representative bounded read of ``SELECT {select} FROM {ref}`` (#269).
+
+        ``fetch_df`` returns the first n rows the engine reaches. On a large table
+        written in time order those rows are one contiguous, temporally clustered
+        slice, so every statistic derived from them (mean, stddev, p1..p99, pattern
+        ratios) describes the oldest slice of the table while being served next to an
+        exact full-table row count. This draws a sample instead: engine-native where
+        the engine has a sampler, an ORDER BY RANDOM() top-N where it does not and the
+        table is small enough to afford the sort, and — only when neither is possible
+        — the old positional read, flagged ``representative=False`` so the caller can
+        label the stats honestly rather than pretending.
+
+        Every candidate still goes through ``guard_sql`` + ``enforce_limit`` (via
+        ``fetch_df``), so the read-only guarantees are unchanged. ``select``/``ref``
+        must already be quoted by the caller; ``limit``/``seed`` are coerced to int.
+
+        ``reproducible_only`` drops the un-seeded ``random_sort`` candidate. Callers
+        that compare two reads of the *same* table to each other (KS drift measures
+        run-over-run) need both draws to land on the same rows when nothing changed;
+        two independent random draws would make such a comparison fire at its own
+        significance level on data nobody touched.
+        """
+        limit = int(limit)
+        seed = int(seed)
+        base = f"SELECT {select} FROM {ref}"
+        if row_count is not None and row_count <= limit:
+            # Not a sample at all — the cap already covers the table.
+            return Sample(
+                df=self.fetch_df(base, limit), method="full", representative=True,
+                reproducible=True, truncated=False, seed=None, row_count=row_count,
+            )
+        for method, sql, reproducible in self._sample_candidates(select, ref, limit, row_count, seed):
+            if reproducible_only and not reproducible:
+                continue
+            try:
+                df = self.fetch_df(sql, limit)
+            except Exception:  # noqa: BLE001 - sampling is best-effort; e.g. TABLESAMPLE
+                continue       # is rejected on a view, and a sample must never fail a run
+            if len(df) == 0 and row_count:
+                continue  # a rounded-down percentage that selected nothing
+            return Sample(
+                df=df, method=method, representative=True, reproducible=reproducible,
+                truncated=True, seed=seed if reproducible else None, row_count=row_count,
+            )
+        df = self.fetch_df(base, limit)
+        return Sample(
+            df=df, method="head", representative=False, reproducible=True,
+            truncated=row_count > limit if row_count is not None else len(df) >= limit,
+            seed=None, row_count=row_count,
+        )
 
     def test(self) -> tuple[bool, str, int | None]:
         try:

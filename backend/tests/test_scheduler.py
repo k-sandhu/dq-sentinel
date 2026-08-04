@@ -2,9 +2,9 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 from app.core.runner import compute_next_run
-from app.core.scheduler import poll_once
+from app.core.scheduler import claim_due_slot, poll_once
 from app.db import init_db, session_factory
-from app.models import Check, CheckRun, Connection, Dataset
+from app.models import Check, CheckRun, Connection, Dataset, ExceptionRecord, utcnow
 
 
 def test_compute_next_run_interval_and_cron():
@@ -63,6 +63,179 @@ def test_worker_claims_and_runs_due_check(source_db, unique_name):
     with factory() as db:
         runs = db.query(CheckRun).filter(CheckRun.check_id == check_id).count()
     assert runs == 1, f"check ran again unexpectedly (claimed={again})"
+
+
+def _sched_fixture(db, unique_name, source_db, **check_kwargs) -> Check:
+    """A connection + dataset + one check, straight on the ORM. Caller commits."""
+    conn = Connection(name=unique_name("sched-src"), kind="sqlite", dsn=source_db)
+    db.add(conn)
+    db.flush()
+    ds = Dataset(connection_id=conn.id, table_name="people", display_name="people")
+    db.add(ds)
+    db.flush()
+    check = Check(
+        dataset_id=ds.id,
+        name=unique_name("slot"),
+        check_type="not_null",
+        column_name="email",
+        severity="warn",
+        status="active",
+        schedule_kind="interval",
+        schedule_expr="1440",
+        **check_kwargs,
+    )
+    db.add(check)
+    db.flush()
+    return check
+
+
+def test_manual_run_is_not_duplicated_by_the_scheduler(
+    client, admin_headers, source_db, unique_name
+):
+    """#257: a freshly created active check is due immediately, so clicking Run
+    left the due slot standing and the worker re-ran the same check seconds later
+    — two failures in the same minute (manual + schedule) and x2 recurrence on the
+    same sampled rows before an analyst had touched anything.
+
+    The manual run must consume that already-due slot, and the check must still
+    run when its NEXT slot comes round (consumed, not starved).
+    """
+    h = admin_headers
+    conn = client.post(
+        "/api/v1/connections", json={"name": unique_name("dup-src"), "dsn": source_db}, headers=h
+    ).json()
+    ds = client.post(
+        "/api/v1/datasets/register",
+        json={"connection_id": conn["id"], "tables": [{"table_name": "people"}]},
+        headers=h,
+    ).json()[0]
+    resp = client.post(
+        "/api/v1/checks",
+        json={
+            "dataset_id": ds["id"],
+            "name": unique_name("dup email not_null"),
+            "check_type": "not_null",
+            "column_name": "email",
+            "severity": "error",
+            "schedule_kind": "interval",
+            "schedule_expr": "1440",  # "daily", as in the report
+            "status": "active",
+        },
+        headers=h,
+    )
+    assert resp.status_code == 201, resp.text
+    check_id = resp.json()["id"]
+
+    # Make this the OLDEST due slot before the first poll, for the same reason the
+    # second poll below backdates: the claim query is `ORDER BY next_run_at LIMIT 20`
+    # over a session-shared app DB, and a check created just now holds the NEWEST due
+    # slot. Measured in the full suite, it ranked 73rd of 74 due checks — so the
+    # scheduler never even considered it, and the "was it duplicated?" assertion below
+    # was inert (it passed no matter what the production code did). The slot is still
+    # already-due, so claim_due_slot's semantics and everything asserted are unchanged.
+    factory = session_factory()
+    with factory() as db:
+        db.get(Check, check_id).next_run_at = utcnow() - timedelta(days=365)
+        db.commit()
+
+    run = client.post(f"/api/v1/checks/{check_id}/run", headers=h)
+    assert run.status_code == 200, run.text
+    assert run.json()["status"] == "fail"
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        poll_once(executor)
+
+    with factory() as db:
+        triggers = [
+            r.triggered_by
+            for r in db.query(CheckRun).filter(CheckRun.check_id == check_id).order_by(CheckRun.id)
+        ]
+        assert triggers == ["manual"], f"the manual run was duplicated by the scheduler: {triggers}"
+        recurrence = [
+            r.occurrence_count
+            for r in db.query(ExceptionRecord).filter(ExceptionRecord.check_id == check_id)
+        ]
+        assert recurrence and set(recurrence) == {1}, f"recurrence inflated on first sight: {recurrence}"
+        check = db.get(Check, check_id)
+        assert check.next_run_at is not None, "manual run parked the schedule"
+        assert check.next_run_at > utcnow(), "due slot was not consumed"
+
+        # Not starved: when the next slot falls due the worker still runs it.
+        #
+        # Backdate hard rather than by a second. The claim query is
+        # `ORDER BY next_run_at LIMIT 20`, and this suite shares one app DB across
+        # every file, so by the time this runs there are other active checks left
+        # due by earlier tests. A check that is one second overdue sorts BEHIND
+        # them and falls outside the batch — the test then passes alone and fails
+        # in the full suite. Being the most-overdue check makes the claim
+        # deterministic without weakening what is asserted.
+        check.next_run_at = utcnow() - timedelta(days=365)
+        db.commit()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        poll_once(executor)
+
+    with factory() as db:
+        triggers = [
+            r.triggered_by
+            for r in db.query(CheckRun).filter(CheckRun.check_id == check_id).order_by(CheckRun.id)
+        ]
+        assert triggers == ["manual", "schedule"], f"check was starved by its manual run: {triggers}"
+
+
+def test_manual_run_does_not_postpone_a_future_slot(source_db, unique_name):
+    """Running manually at 09:00 must not push a 10:00 slot out by a day: only an
+    ALREADY-DUE slot is consumed, a future one is left exactly where it is (#257).
+    """
+    init_db()
+    factory = session_factory()
+    with factory() as db:
+        slot = utcnow() + timedelta(minutes=30)
+        check = _sched_fixture(db, unique_name, source_db, next_run_at=slot)
+        db.commit()
+        assert claim_due_slot(db, check) is False
+        db.refresh(check)
+        assert check.next_run_at == slot
+
+
+def test_claim_due_slot_covers_every_slot_poll_once_treats_as_due(source_db, unique_name):
+    """``poll_once`` initializes an active+scheduled check with no next_run_at to
+    ``now`` and claims it in the SAME pass, so the manual path has to consume that
+    shape too — otherwise the duplicate run just moves one poll later. A check
+    with no schedule has no slot to consume at all."""
+    init_db()
+    factory = session_factory()
+    with factory() as db:
+        pending = _sched_fixture(db, unique_name, source_db, next_run_at=None)
+        unscheduled = _sched_fixture(db, unique_name, source_db, next_run_at=None)
+        unscheduled.schedule_expr = None
+        db.commit()
+
+        assert claim_due_slot(db, pending) is True
+        assert pending.next_run_at > utcnow()
+        assert claim_due_slot(db, unscheduled) is False
+        assert unscheduled.next_run_at is None
+
+
+def test_claim_due_slot_is_won_by_exactly_one_caller(source_db, unique_name):
+    """The manual path claims through the same optimistic CAS as the worker, so a
+    worker that read the same slot loses it rather than double-running (#257)."""
+    init_db()
+    factory = session_factory()
+    with factory() as db:
+        check = _sched_fixture(
+            db, unique_name, source_db, next_run_at=utcnow() - timedelta(minutes=5)
+        )
+        db.commit()
+        check_id = check.id
+
+    with factory() as db_a, factory() as db_b:
+        a, b = db_a.get(Check, check_id), db_b.get(Check, check_id)  # both read the same due slot
+        assert claim_due_slot(db_a, a) is True
+        assert claim_due_slot(db_b, b) is False  # CAS loser: someone else owns this slot
+
+    with factory() as db:
+        assert db.get(Check, check_id).next_run_at > utcnow()
 
 
 def test_validate_schedule_rejects_unparseable_expr():

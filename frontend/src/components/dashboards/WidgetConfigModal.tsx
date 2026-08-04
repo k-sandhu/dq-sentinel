@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { api } from "../../api/client";
 import type {
   Check,
@@ -86,6 +86,10 @@ function FilterForm({
   datasets: Dataset[];
 }) {
   const [pasteValue, setPasteValue] = useState("");
+  // A dashboard can hold several widgets being configured over one session, and
+  // FilterForm is rendered by three widget types — ids have to be per-instance.
+  const uid = useId();
+  const pasteId = `${uid}-paste`;
   const set = (k: string, v: string) => {
     const next = { ...params };
     if (v) next[k] = v;
@@ -180,10 +184,14 @@ function FilterForm({
         />
       </label>
 
-      <label className="cd-field">
+      {/* htmlFor is explicit here on purpose: this label also wraps the Apply
+          button, and a button is labelable — leaving the association implicit
+          makes "which control does this name?" depend on source order. */}
+      <label className="cd-field" htmlFor={pasteId}>
         <span>Paste filters from a workspace URL</span>
         <div className="cd-paste">
           <input
+            id={pasteId}
             type="text"
             value={pasteValue}
             onChange={(e) => setPasteValue(e.target.value)}
@@ -219,6 +227,8 @@ function CheckPicker({
   onChange: (ids: number[]) => void;
 }) {
   const [q, setQ] = useState("");
+  const uid = useId();
+  const captionId = `${uid}-caption`;
   const sel = new Set(selected);
   const atCap = selected.length >= MAX_MATRIX_CHECKS;
   const needle = q.trim().toLowerCase();
@@ -241,12 +251,16 @@ function CheckPicker({
   };
 
   return (
-    <div className="cd-field">
-      <span>
+    // The caption lives in a <span>, not a <label>, because it names the whole
+    // picker (search box + checkbox list). The search box therefore needs its
+    // own name — a placeholder is not one, and it vanishes on first keystroke.
+    <div className="cd-field" role="group" aria-labelledby={captionId}>
+      <span id={captionId}>
         Checks ({selected.length}/{MAX_MATRIX_CHECKS}) — across any datasets / connections
       </span>
       <input
         type="text"
+        aria-label="Search checks"
         value={q}
         onChange={(e) => setQ(e.target.value)}
         placeholder="Search checks…"
@@ -329,6 +343,8 @@ export default function WidgetConfigModal({
 }) {
   const [draft, setDraft] = useState<Widget>(initial);
   const [showPreview, setShowPreview] = useState(false);
+  const uid = useId();
+  const datasetsCaptionId = `${uid}-datasets`;
 
   const { data: datasets } = useQuery({
     queryKey: ["datasets"],
@@ -446,8 +462,8 @@ export default function WidgetConfigModal({
 
       {draft.type === "checks" && (
         <>
-          <div className="cd-field">
-            <span>Datasets (up to 20)</span>
+          <div className="cd-field" role="group" aria-labelledby={datasetsCaptionId}>
+            <span id={datasetsCaptionId}>Datasets (up to 20)</span>
             <div className="cd-ds-multi">
               {dsList.map((d) => {
                 const on = draft.config.dataset_ids.includes(d.id);
@@ -623,6 +639,9 @@ export default function WidgetConfigModal({
           ) : (
             <textarea
               rows={8}
+              // The Edit/Preview toggle is the only visible chrome here, so this
+              // is the one control in the modal with no caption of its own.
+              aria-label="Note content (Markdown)"
               value={draft.config.markdown}
               onChange={(e) => patchConfig<typeof draft>((d) => ({ ...d, config: { ...d.config, markdown: e.target.value } }))}
               placeholder="Markdown — runbook links, context… (no raw HTML)"

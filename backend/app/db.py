@@ -5,6 +5,7 @@ from collections.abc import Callable, Generator
 
 from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import BACKEND_DIR, Settings, get_settings
@@ -195,8 +196,22 @@ def init_db() -> None:
                 role="admin",
             )
             db.add(admin)
-            db.commit()
-            log.warning("Seeded bootstrap admin %s (change this password!)", admin.email)
+            try:
+                db.commit()
+            except IntegrityError:
+                # api and worker both call init_db() at startup, and this seed runs
+                # AFTER _run_migrations releases its advisory lock — so "no users
+                # exist?" then INSERT is a check-then-act race on a fresh database.
+                # Observed in CI: the worker won and the api died on
+                # UniqueViolation(ix_users_email) with "Application startup failed",
+                # i.e. a first `docker compose up` that never serves. Losing the race
+                # is a success, not an error — the admin exists either way. Tolerating
+                # it here (rather than widening the lock) also covers SQLite, which
+                # has no advisory lock to widen.
+                db.rollback()
+                log.info("Bootstrap admin already seeded by another process; continuing")
+            else:
+                log.warning("Seeded bootstrap admin %s (change this password!)", admin.email)
 
 
 def reset_for_tests() -> None:
