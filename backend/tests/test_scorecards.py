@@ -553,3 +553,137 @@ def test_dataset_delete_removes_dataset_grain_snapshots_only(client, admin_heade
             .count()
             == 1
         )
+
+
+# ---- monitoring state: broken checks are not a data-quality verdict (#262) ----
+
+#: Carries a host, an IP, a port and a service account — the datasets list must not.
+DRIVER_ERROR = (
+    'OperationalError: connection to server at "db.internal" (10.0.0.5), port 5432 '
+    'failed: FATAL: password authentication failed for user "svc_dq"'
+)
+
+
+def _insert_monitoring_fixture(statuses: list[str], *, error_message: str = DRIVER_ERROR) -> int:
+    """A dataset with one active check per entry in ``statuses``; errored checks get
+    a matching errored run so the newest error can be resolved."""
+    init_db()
+    suffix = uuid4().hex[:8]
+    with session_factory()() as db:
+        conn = Connection(name=f"monitoring-src-{suffix}", kind="sqlite", dsn="sqlite:///:memory:")
+        db.add(conn)
+        db.flush()
+        dataset = Dataset(
+            connection_id=conn.id,
+            table_name=f"encounters_{suffix}",
+            display_name=f"Encounters {suffix}",
+        )
+        db.add(dataset)
+        db.flush()
+        db.add(TableKnowledge(dataset_id=dataset.id, importance="critical"))
+        for i, status in enumerate(statuses):
+            check = Check(
+                dataset_id=dataset.id,
+                name=f"check {i}",
+                check_type="not_null",
+                column_name="id",
+                params={},
+                severity="error",
+                status="active",
+                last_status=status,
+            )
+            db.add(check)
+            db.flush()
+            if status == "error":
+                # Two errored runs: the newest one is the reason we surface.
+                for age, message in ((2, "OperationalError: stale error"), (1, error_message)):
+                    db.add(
+                        CheckRun(
+                            check_id=check.id,
+                            dataset_id=dataset.id,
+                            started_at=utcnow() - timedelta(hours=age),
+                            status="error",
+                            error_message=message,
+                            metrics={},
+                        )
+                    )
+                db.flush()
+        db.commit()
+        return dataset.id
+
+
+def test_monitoring_state_separates_broken_monitoring_from_failing_data():
+    assert scorecards.monitoring_state(0, 0) == "unknown"
+    assert scorecards.monitoring_state(4, 0) == "ok"
+    assert scorecards.monitoring_state(4, 1) == "degraded"
+    assert scorecards.monitoring_state(4, 4) == "broken"
+
+
+def test_dataset_monitoring_reports_broken_checks_and_the_newest_redacted_error():
+    dataset_id = _insert_monitoring_fixture(["error", "error"])
+    with session_factory()() as db:
+        dataset = db.get(models.Dataset, dataset_id)
+        state = scorecards.dataset_monitoring(db, [dataset])[dataset_id]
+        newest = (
+            db.query(models.CheckRun)
+            .filter(models.CheckRun.dataset_id == dataset_id)
+            .order_by(models.CheckRun.started_at.desc(), models.CheckRun.id.desc())
+            .first()
+        )
+
+    assert state.state == "broken"
+    assert state.active_checks == 2
+    assert state.errored_checks == 2
+    assert state.failing_checks == 0
+    assert state.last_error_run_id == newest.id
+    # Surfaced, but through the source-error redaction chokepoint (#307).
+    assert state.last_error
+    assert "db.internal" not in state.last_error
+    assert "10.0.0.5" not in state.last_error
+    assert "svc_dq" not in state.last_error
+
+
+def test_dataset_monitoring_calls_a_partly_broken_dataset_degraded():
+    dataset_id = _insert_monitoring_fixture(["fail", "error", "pass"])
+    with session_factory()() as db:
+        state = scorecards.dataset_monitoring(db, [db.get(models.Dataset, dataset_id)])[dataset_id]
+
+    assert state.state == "degraded"
+    assert state.failing_checks == 1
+    assert state.errored_checks == 1
+
+
+def test_dataset_monitoring_is_ok_when_nothing_errors_and_unknown_without_checks():
+    healthy_id = _insert_monitoring_fixture(["pass", "fail"])
+    bare_id = _insert_monitoring_fixture([])
+    with session_factory()() as db:
+        healthy = scorecards.dataset_monitoring(db, [db.get(models.Dataset, healthy_id)])[healthy_id]
+        bare = scorecards.dataset_monitoring(db, [db.get(models.Dataset, bare_id)])[bare_id]
+
+    assert healthy.state == "ok"
+    assert healthy.last_error is None and healthy.last_error_run_id is None
+    assert bare.state == "unknown"
+
+
+def test_datasets_api_marks_an_all_errored_dataset_as_broken_monitoring(client, admin_headers):
+    """The #262 repro: 'critical - fail - 0 open exceptions' with nothing to triage.
+
+    `health` keeps its four values (other surfaces key off them); the new
+    `monitoring`/`errored_checks`/`last_error_run_id` fields say REPAIR, not TRIAGE.
+    """
+    dataset_id = _insert_monitoring_fixture(["error", "error"])
+
+    listed = client.get("/api/v1/datasets", headers=admin_headers)
+    assert listed.status_code == 200, listed.text
+    row = next(d for d in listed.json() if d["id"] == dataset_id)
+    assert row["health"] == "fail"  # unchanged: additive API change
+    assert row["open_exceptions"] == 0
+    assert row["monitoring"] == "broken"
+    assert row["errored_checks"] == 2
+    assert row["failing_checks"] == 0
+    assert row["last_error_run_id"] is not None
+    assert row["last_error"]
+
+    detail = client.get(f"/api/v1/datasets/{dataset_id}", headers=admin_headers)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["monitoring"] == "broken"

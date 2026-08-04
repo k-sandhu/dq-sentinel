@@ -12,9 +12,10 @@ from app.connectors.sa import Connector
 from app.core.check_types import (
     CheckContext,
     _categorical_drift,
-    _decile_edges,
     _nan_violation_predicate,
     _numeric_drift,
+    _prefers_value_mix,
+    _quantile_bins,
     run_check_type,
     validate_check,
 )
@@ -231,24 +232,88 @@ def test_string_length(ctx_factory):
     assert r.violation_count == 1  # "a@b"
 
 
-def test_decile_edges_distributes_mass_on_ties():
-    # zero-inflated baseline: p1..p50 all 0 -> several deciles collapse onto one edge.
-    # The merged bin must carry the deciles' pooled mass, not a flat 1/nbins (else PSI
-    # fires on data identical to the baseline).
-    q = {"0.01": 0, "0.05": 0, "0.25": 0, "0.5": 0, "0.75": 5, "0.95": 20, "0.99": 50}
-    edges, expected = _decile_edges(q)
+_ZERO_INFLATED_Q = {"0.01": 0, "0.05": 0, "0.25": 0, "0.5": 0, "0.75": 5, "0.95": 20, "0.99": 50}
+
+
+def test_quantile_bins_pool_ties_and_leave_the_lower_sentinel_empty():
+    # zero-inflated baseline: p1..p50 all 0 -> several quantiles collapse onto one edge.
+    # The merged bin must carry their pooled mass (it is P(0 <= x < p75) = 0.75), and the
+    # [-inf, min) sentinel must carry NONE: nothing in the baseline sits below the
+    # baseline's own minimum, and the 0.1 it used to get injected ~0.69 PSI on unchanged
+    # data (#270).
+    edges, expected = _quantile_bins({"quantiles": _ZERO_INFLATED_Q, "min": 0})
     assert abs(float(expected.sum()) - 1.0) < 1e-9
-    nbins = edges.size - 1
-    assert float(expected.max()) > 1.5 / nbins  # a collapsed bin holds many deciles
+    assert edges[0] == -np.inf and float(expected[0]) == 0.0
+    assert list(edges[1:]) == [0.0, 5.0, 20.0, 50.0, np.inf]
+    assert float(expected[1]) == pytest.approx(0.75)  # p1..p50 ties + [p50, p75)
+
+
+def test_quantile_bins_without_a_baseline_minimum_keep_the_lower_bin_real():
+    # Older profiles may not carry `min`; then [-inf, p1) is a genuine 1% bin and must
+    # keep its mass rather than being zeroed.
+    edges, expected = _quantile_bins({"quantiles": _ZERO_INFLATED_Q})
+    assert edges[0] == -np.inf
+    assert float(expected[0]) == pytest.approx(0.01)
+
+
+def test_numeric_drift_scores_zero_on_a_self_identical_zero_inflated_column():
+    # The exact repro from #270: quantiles taken from the data itself must reproduce
+    # the same histogram, so PSI is 0 — it used to be ~0.9 and failed the check.
+    values = pd.Series([0.0] * 700 + [float(v) for v in np.linspace(0.5, 60, 300)])
+    bcol = {
+        "quantiles": {p: float(values.quantile(float(p)))
+                      for p in ("0.01", "0.05", "0.25", "0.5", "0.75", "0.95", "0.99")},
+        "min": float(values.min()),
+    }
+    r = _numeric_drift(values, bcol, 0.2)
+    assert r.metrics["score"] < 0.01, r.metrics
+    assert r.violation_count == 0
 
 
 def test_numeric_drift_matching_data_scores_below_shifted():
-    bcol = {"quantiles": {"0.01": 0, "0.05": 0, "0.25": 0, "0.5": 0, "0.75": 5, "0.95": 20, "0.99": 50}}
+    bcol = {"quantiles": _ZERO_INFLATED_Q, "min": 0}
     matching = pd.Series([0] * 70 + list(range(1, 31)))
     shifted = pd.Series(list(range(100, 200)))
     r_match = _numeric_drift(matching, bcol, 0.2)
     r_shift = _numeric_drift(shifted, bcol, 0.2)
     assert r_match.metrics["score"] < r_shift.metrics["score"]
+    assert r_shift.violation_count == 1
+
+
+def test_prefers_value_mix_separates_codes_from_amounts():
+    # a 4-value payment code: the 10 stored values ARE the column -> value mix
+    code = {"distinct_count": 4,
+            "top_values": [{"value": v, "count": c} for v, c in ((1, 700), (2, 200), (3, 60), (4, 40))]}
+    assert _prefers_value_mix(code, 1000) is True
+    # a continuous amount: the stored values are 3% of the column -> quantile bins
+    amount = {"distinct_count": 5000,
+              "top_values": [{"value": float(i), "count": 3} for i in range(10)]}
+    assert _prefers_value_mix(amount, 1000) is False
+    # lumpy but very high cardinality: the tail carries structure 10 values can't hold
+    lumpy_tail = {"distinct_count": 40_000,
+                  "top_values": [{"value": 0, "count": 8000}]}
+    assert _prefers_value_mix(lumpy_tail, 10_000) is False
+    # mid coverage: the 10 stored values are only half the column, and everything else
+    # folds into ONE __other__ bucket where a shift is invisible (PSI exactly 0.0). Half
+    # a column is far too much to make blind, so this stays on the quantile path.
+    half_covered = {"distinct_count": 300,
+                    "top_values": [{"value": float(i), "count": 520} for i in range(10)]}
+    assert _prefers_value_mix(half_covered, 9840) is False
+    # no cardinality recorded (older profile) -> stay on the quantile path
+    assert _prefers_value_mix({"top_values": [{"value": 1, "count": 900}]}, 1000) is False
+
+
+def test_categorical_drift_matches_numeric_values_across_json_and_pandas():
+    # The baseline stores JSON numbers (5) while pandas hands back float64 (5.0) for the
+    # same column; comparing them as strings puts every row in __other__.
+    bcol = {"top_values": [{"value": 5, "count": 60}, {"value": 7, "count": 40}],
+            "null_count": 0}
+    cur = pd.Series([5.0] * 60 + [7.0] * 40)
+    r = _categorical_drift(cur, bcol, 100, 0.2, numeric=True)
+    assert r.metrics["score"] < 1e-6, r.metrics
+    assert r.metrics["kind"] == "numeric" and r.metrics["binning"] == "value"
+    other = next(b for b in r.metrics["bins"] if b["category"] == "__other__")
+    assert other["actual_pct"] == 0.0
 
 
 def test_categorical_drift_denominator_is_full_table_nonnull():
@@ -477,14 +542,23 @@ def _make_source(tmp_dir: Path, name: str, columns: dict[str, list]) -> str:
     return f"sqlite:///{path.as_posix()}"
 
 
-def _drift_ctx(db, dsn: str, column: str, params: dict, baseline_dsn: str | None = None):
+def _profiled_ctx(
+    db,
+    dsn: str,
+    check_type: str,
+    column: str | None,
+    params: dict,
+    baseline_dsn: str | None = None,
+):
     """Persist a Connection/Dataset, profile `baseline_dsn` (default = dsn) into a
     Profile row, create a Check, and return a db-aware CheckContext over `dsn`."""
     # Monotonic per-process counter — the session-shared app DB requires a globally
     # unique connection name, and id(params) is unreliable (CPython reuses the id of a
     # short-lived dict after GC, so consecutive drift tests collided on CI).
-    _drift_ctx.seq = getattr(_drift_ctx, "seq", 0) + 1
-    conn = Connection(name=f"c-{column}-{_drift_ctx.seq}", kind="sqlite", dsn=dsn)
+    _profiled_ctx.seq = getattr(_profiled_ctx, "seq", 0) + 1
+    conn = Connection(
+        name=f"c-{check_type}-{column}-{_profiled_ctx.seq}", kind="sqlite", dsn=dsn
+    )
     db.add(conn)
     db.flush()
     ds = Dataset(connection_id=conn.id, schema_name=None, table_name="t")
@@ -502,8 +576,8 @@ def _drift_ctx(db, dsn: str, column: str, params: dict, baseline_dsn: str | None
         )
     )
     chk = Check(
-        dataset_id=ds.id, name="drift", check_type="distribution_drift",
-        column_name=column, params=validate_check("distribution_drift", column, params),
+        dataset_id=ds.id, name=check_type, check_type=check_type,
+        column_name=column, params=validate_check(check_type, column, params),
         severity="warn", status="active",
     )
     db.add(chk)
@@ -512,6 +586,10 @@ def _drift_ctx(db, dsn: str, column: str, params: dict, baseline_dsn: str | None
         connector=Connector(dsn), table="t", schema=None, column=column,
         params=chk.params, db=db, check_id=chk.id,
     )
+
+
+def _drift_ctx(db, dsn: str, column: str, params: dict, baseline_dsn: str | None = None):
+    return _profiled_ctx(db, dsn, "distribution_drift", column, params, baseline_dsn)
 
 
 @pytest.fixture(scope="module")
@@ -728,6 +806,292 @@ def test_drift_no_profile_passes_with_message(app_db, drift_tmp):
     r = run_check_type(ctx, "distribution_drift")
     assert r.violation_count == 0
     assert "no baseline profile" in r.detail
+
+
+# --------------------------------------------------------------- #263 ml_outlier features
+
+
+def _ml_source(tmp_dir: Path, name: str) -> tuple[str, list[int]]:
+    """A table shaped like a real fact table: surrogate key, timestamp, zone code and
+    two actual measurements, with three planted multivariate outliers."""
+    rng = np.random.default_rng(5)
+    n = 400
+    amount = [float(x) for x in rng.normal(100, 8, n)]
+    quantity = [float(x) for x in rng.normal(3, 0.5, n)]
+    planted = [50, 200, 350]
+    for i in planted:
+        amount[i], quantity[i] = 5000.0, 80.0
+    start = datetime(2024, 1, 1)
+    cols = {
+        "order_id": list(range(1, n + 1)),
+        "created_at": [(start + timedelta(minutes=i)).strftime("%Y-%m-%d %H:%M:%S")
+                       for i in range(n)],
+        "zone_id": [int(x) for x in rng.integers(1, 266, n)],
+        "amount": amount,
+        "quantity": quantity,
+    }
+    return _make_source(tmp_dir, name, cols), planted
+
+
+def test_ml_outlier_excludes_identifier_and_non_numeric_columns(app_db, drift_tmp):
+    # `SELECT *` hands the whole row to IsolationForest, so the surrogate key, the
+    # timestamp and the zone code became "features" and the newest/oldest rows scored as
+    # anomalies (#263). The profile knows enough to drop all three.
+    dsn, planted = _ml_source(drift_tmp, "ml_features")
+    ctx = _profiled_ctx(app_db, dsn, "ml_outlier", None, {"contamination": 0.01})
+    r = run_check_type(ctx, "ml_outlier")
+
+    assert r.metrics["feature_source"] == "profile"
+    assert set(r.metrics["features"]) == {"amount", "quantity"}
+    excluded = {e["column"] for e in r.metrics["excluded_features"]}
+    assert {"order_id", "created_at", "zone_id"} <= excluded
+    # the planted rows are the outliers; the id extremes are not
+    flagged = {row["order_id"] for row in r.sample_rows}
+    assert {i + 1 for i in planted} <= flagged
+    assert 1 not in flagged and 400 not in flagged
+
+
+def test_ml_outlier_columns_param_overrides_the_profile(app_db, drift_tmp):
+    dsn, _planted = _ml_source(drift_tmp, "ml_explicit")
+    ctx = _profiled_ctx(
+        app_db, dsn, "ml_outlier", None,
+        {"contamination": 0.01, "columns": ["order_id", "amount"]},
+    )
+    r = run_check_type(ctx, "ml_outlier")
+    assert r.metrics["feature_source"] == "params"
+    assert set(r.metrics["features"]) == {"order_id", "amount"}
+
+
+def test_ml_outlier_scores_a_single_genuine_measure(app_db, drift_tmp):
+    # A key, a timestamp and ONE measurement is an ordinary narrow table (the shipped
+    # `payments` sample is exactly this: `amount` next to two surrogate keys). This
+    # previously asserted the check should skip, on the reasoning that a "multivariate"
+    # outlier needs a second dimension — but IsolationForest fits and scores a single
+    # column fine, and univariate detection is precisely what catches a 100x typo.
+    # Requiring two features made the check silently no-op after #263's identifier
+    # filtering; the e2e smoke test caught it ("ml_outlier flags rows — 0 outliers").
+    start = datetime(2024, 1, 1)
+    amounts = [float(x) for x in np.random.default_rng(3).normal(10, 2, 200)]
+    amounts[7] = 4000.0  # a planted 100x-style typo, the thing this check exists to find
+    dsn = _make_source(
+        drift_tmp, "ml_thin",
+        {
+            "order_id": list(range(1, 201)),
+            "created_at": [(start + timedelta(minutes=i)).strftime("%Y-%m-%d %H:%M:%S")
+                           for i in range(200)],
+            "amount": amounts,
+        },
+    )
+    ctx = _profiled_ctx(app_db, dsn, "ml_outlier", None, {"contamination": 0.01})
+    r = run_check_type(ctx, "ml_outlier")
+    assert r.metrics["features"] == ["amount"], r.metrics
+    assert "note" not in r.metrics, r.metrics  # it ran, rather than reporting why it didn't
+    assert r.violation_count > 0
+    # The id and the timestamp are still excluded — #263 must not regress.
+    assert {e["column"] for e in r.metrics["excluded_features"]} == {"order_id", "created_at"}
+
+
+def test_ml_outlier_skips_only_when_no_usable_feature_remains(app_db, drift_tmp):
+    # The skip path still exists — it just needs ZERO usable measures, not fewer than two.
+    start = datetime(2024, 1, 1)
+    dsn = _make_source(
+        drift_tmp, "ml_idonly",
+        {
+            "order_id": list(range(1, 201)),
+            "created_at": [(start + timedelta(minutes=i)).strftime("%Y-%m-%d %H:%M:%S")
+                           for i in range(200)],
+        },
+    )
+    ctx = _profiled_ctx(app_db, dsn, "ml_outlier", None, {"contamination": 0.01})
+    r = run_check_type(ctx, "ml_outlier")
+    assert r.violation_count == 0
+    assert r.metrics["note"] == "no usable numeric features"
+    assert "columns" in r.detail
+
+
+def test_ml_outlier_keeps_all_distinct_float_measurements(app_db, drift_tmp):
+    # `pk_candidates` only means "no nulls and distinct == row_count" — which a
+    # continuous measurement (a sensor reading, a price, a latency) satisfies routinely.
+    # Excluding every pk_candidate with no integrality test dropped those measurements as
+    # "primary-key candidate", left fewer than 2 features, and made ml_outlier pass with a
+    # note — i.e. silently stop working on exactly the columns it exists for. Only an
+    # INTEGER near-unique column may be dropped as a surrogate key.
+    rng = np.random.default_rng(17)
+    n = 300
+    temperature = [float(x) for x in rng.normal(20.0, 1.5, n)]
+    pressure = [float(x) for x in rng.normal(1000.0, 12.0, n)]
+    planted = [40, 150, 260]
+    for k, i in enumerate(planted):  # distinct values, so the columns stay all-distinct
+        temperature[i], pressure[i] = 95.0 + k, 300.0 + k
+    dsn = _make_source(
+        drift_tmp, "ml_measurements",
+        # `serial` is an integer surrogate key with a name no token rule catches, so the
+        # only thing that can drop it is the cardinality/dtype rule under test.
+        {"serial": list(range(1, n + 1)), "temperature": temperature, "pressure": pressure},
+    )
+    ctx = _profiled_ctx(app_db, dsn, "ml_outlier", None, {"contamination": 0.01})
+    r = run_check_type(ctx, "ml_outlier")
+
+    assert set(r.metrics["features"]) == {"temperature", "pressure"}, r.metrics
+    assert {e["column"] for e in r.metrics["excluded_features"]} == {"serial"}
+    assert "note" not in r.metrics  # the check actually ran
+    assert {i + 1 for i in planted} <= {row["serial"] for row in r.sample_rows}
+
+
+# ------------------------------------------------- #265 / #270: PSI on unchanged data
+# Both issues are the same failure seen through different column shapes: a
+# distribution_drift check firing on its OWN baseline. These are auto-active
+# monitor-pack checks, so a false fire here is a day-one incident on data that never
+# changed. The matrix pins both halves — identical data must pass, genuinely shifted
+# data must still fail — across every shape the two issues name.
+
+
+def _drift_shapes() -> dict[str, tuple[list, list, str]]:
+    """name -> (baseline values, genuinely shifted values, expected binning strategy)."""
+    rng = np.random.default_rng(11)
+    zones = np.arange(1, 266)
+    zone_w = 1.0 / np.power(rng.permutation(zones), 0.9)
+    zone_w = zone_w / zone_w.sum()
+    return {
+        # single-distinct: the phantom [-inf, min) bin alone scored PSI 0.7006 (#270)
+        "constant": ([5.0] * 2000, [9.0] * 2000, "value"),
+        # zero-inflated / left-bounded: p1..p50 collapse onto the minimum (#270)
+        "zero_inflated": (
+            [0.0] * 3000 + [float(x) for x in rng.exponential(8.0, 2000)],
+            [0.0] * 1000 + [float(x) for x in rng.exponential(8.0, 4000)],
+            "quantile",
+        ),
+        "left_bounded": (
+            [float(x) for x in rng.lognormal(1.0, 0.8, 3000)],
+            [float(x) for x in rng.lognormal(2.0, 0.8, 3000)],
+            "quantile",
+        ),
+        # discrete integer zone id, NYC taxi DOLocationID-like: scored 0.3631 (#265)
+        "discrete_integer": (
+            [int(x) for x in rng.choice(zones, 6000, p=zone_w)],
+            [int(x) for x in rng.integers(200, 266, 6000)],
+            "quantile",
+        ),
+        # low-cardinality numeric code: quantile bins scored > 2 against itself (#265)
+        "numeric_code": (
+            [int(x) for x in rng.choice([1, 2, 3, 4, 5], 4000, p=[0.65, 0.28, 0.04, 0.02, 0.01])],
+            [int(x) for x in rng.choice([1, 2, 3, 4, 5], 4000, p=[0.2, 0.2, 0.3, 0.2, 0.1])],
+            "value",
+        ),
+        "binary_flag": (
+            [int(x) for x in rng.choice([0, 1], 4000, p=[0.3, 0.7])],
+            [int(x) for x in rng.choice([0, 1], 4000, p=[0.7, 0.3])],
+            "value",
+        ),
+        # the shape that already worked — it must not regress
+        "continuous": (
+            [float(x) for x in rng.normal(0, 1, 3000)],
+            [float(x) for x in rng.normal(3, 1, 3000)],
+            "quantile",
+        ),
+    }
+
+
+DRIFT_SHAPES = _drift_shapes()
+
+
+@pytest.mark.parametrize("shape", sorted(DRIFT_SHAPES))
+def test_drift_psi_is_zero_against_an_identical_baseline(app_db, drift_tmp, shape):
+    base, _shifted, binning = DRIFT_SHAPES[shape]
+    dsn = _make_source(drift_tmp, f"same_{shape}", {"v": base})
+    ctx = _drift_ctx(app_db, dsn, "v", {"method": "psi"})  # baseline == current table
+    r = run_check_type(ctx, "distribution_drift")
+    assert r.violation_count == 0, r.metrics
+    assert r.metrics["score"] < 0.1, r.metrics
+    assert r.metrics["binning"] == binning, r.metrics
+
+
+@pytest.mark.parametrize("shape", sorted(DRIFT_SHAPES))
+def test_drift_psi_still_fails_on_a_real_shift(app_db, drift_tmp, shape):
+    base, shifted, _binning = DRIFT_SHAPES[shape]
+    base_dsn = _make_source(drift_tmp, f"shift_base_{shape}", {"v": base})
+    cur_dsn = _make_source(drift_tmp, f"shift_cur_{shape}", {"v": shifted})
+    ctx = _drift_ctx(app_db, cur_dsn, "v", {"method": "psi"}, baseline_dsn=base_dsn)
+    r = run_check_type(ctx, "distribution_drift")
+    assert r.metrics["score"] >= 0.2, r.metrics
+    assert r.violation_count == 1, r.metrics
+
+
+@pytest.mark.parametrize(
+    ("label", "values"),
+    [("int_codes", [1] * 1000 + [2] * 2000), ("str_codes", ["a"] * 1000 + ["b"] * 2000)],
+)
+def test_drift_value_mix_recounts_in_sql_when_the_sampled_read_is_truncated(
+    app_db, drift_tmp, label, values
+):
+    # 3000 rows: the first 1000 carry one code, the rest another. The check's own read
+    # is capped at 1000 rows, so the sampled frame sees ONLY the first code while the
+    # baseline top_values are full-table counts — comparing those two populations
+    # reports drift on a table nobody touched (this is why NYC taxi `payment_type`
+    # scored 0.31 comparing full-table shares against the first 50k rows). The current
+    # side must be counted over the same population the baseline came from.
+    dsn = _make_source(drift_tmp, f"trunc_{label}", {"v": values})
+    ctx = _drift_ctx(app_db, dsn, "v", {"method": "psi", "max_rows": 1000})
+    r = run_check_type(ctx, "distribution_drift")
+    assert r.metrics["score"] < 0.01, r.metrics
+    assert r.violation_count == 0
+    assert r.metrics["binning"] == "value"
+    assert r.rows_evaluated == 3000  # whole table, not the 1000-row sample
+
+
+def _mid_coverage_column(tail_start: int) -> list[float]:
+    """10 head values carrying ~53% of the rows, plus a 290-value tail carrying the rest.
+
+    The tail starts at ``tail_start`` so two of these frames can share a head and have
+    disjoint tails — a shift that lives entirely outside the profile's stored top 10.
+    """
+    head = [float(v) for v in range(10) for _ in range(520)]  # 5200 rows
+    tail = [float(tail_start + v) for v in range(290) for _ in range(16)]  # 4640 rows
+    return head + tail
+
+
+def test_drift_tail_confined_shift_on_a_mid_coverage_column_is_still_detected(
+    app_db, drift_tmp
+):
+    # The value path keeps the baseline's 10 top values and folds EVERYTHING else into a
+    # single __other__ bucket. A shift whose source AND destination both live in that
+    # tail therefore leaves all 11 bins bit-identical and scores PSI exactly 0.0 at any
+    # magnitude — it is not seen at all. A column whose top 10 cover only ~half the rows
+    # must not be routed there: here the entire 47% tail is replaced by never-seen
+    # values, which the quantile path (which resolves the tail) catches.
+    base = _mid_coverage_column(1000)
+    shifted = _mid_coverage_column(50_000)
+    base_dsn = _make_source(drift_tmp, "tail_shift_base", {"v": base})
+    cur_dsn = _make_source(drift_tmp, "tail_shift_cur", {"v": shifted})
+
+    ctx = _drift_ctx(app_db, cur_dsn, "v", {"method": "psi"}, baseline_dsn=base_dsn)
+    r = run_check_type(ctx, "distribution_drift")
+    assert r.metrics["binning"] == "quantile", r.metrics  # not the __other__ blind spot
+    assert r.metrics["score"] >= 0.2, r.metrics
+    assert r.violation_count == 1, r.metrics
+
+    # ...and the same column against its OWN baseline must still not fire: the false
+    # fires of #265/#270 are what put the value path there in the first place.
+    same = run_check_type(
+        _drift_ctx(app_db, base_dsn, "v", {"method": "psi"}), "distribution_drift"
+    )
+    assert same.violation_count == 0, same.metrics
+    assert same.metrics["score"] < 0.1, same.metrics
+
+
+def test_drift_numeric_new_values_below_the_baseline_minimum_are_caught(app_db, drift_tmp):
+    # The [-inf, min) sentinel carries no baseline mass — which must mean "nothing was
+    # ever seen down here", not "we stopped looking". Negative values arriving in a
+    # previously non-negative column are exactly the drift the bin exists for.
+    base = [float(x) for x in np.random.default_rng(4).lognormal(1.0, 0.6, 3000)]
+    cur = base[:1500] + [-5.0] * 1500
+    base_dsn = _make_source(drift_tmp, "sentinel_base", {"v": base})
+    cur_dsn = _make_source(drift_tmp, "sentinel_cur", {"v": cur})
+    ctx = _drift_ctx(app_db, cur_dsn, "v", {"method": "psi"}, baseline_dsn=base_dsn)
+    r = run_check_type(ctx, "distribution_drift")
+    assert r.metrics["bins"][0]["expected_pct"] == 0.0
+    assert r.metrics["bins"][0]["actual_pct"] == pytest.approx(0.5, abs=0.01)
+    assert r.violation_count == 1, r.metrics
 
 
 def test_drift_ks_first_run_captures_then_shift_fails(app_db, drift_tmp):

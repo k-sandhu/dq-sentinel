@@ -2,7 +2,7 @@ import time
 
 import pytest
 
-from app.connectors.safety import SqlNotAllowed, enforce_limit, guard_sql
+from app.connectors.safety import _DENY_FUNCTIONS, SqlNotAllowed, enforce_limit, guard_sql
 
 
 @pytest.mark.parametrize(
@@ -212,6 +212,17 @@ def test_allows_lookalike_identifiers_and_literals(sql):
         # Table functions and modifiers do not end the item list either.
         "SELECT * FROM generate_series(1, 3) g, '/tmp/secret.csv'",
         "SELECT * FROM t TABLESAMPLE BERNOULLI (10), '/tmp/secret.csv'",
+        # DuckDB's FROM-first syntax inside a subquery: the outer statement still
+        # starts with SELECT, so _STARTS_OK never sees the bare FROM.
+        "SELECT * FROM (FROM '/tmp/secret.csv')",
+        "SELECT * FROM (FROM '/tmp/secret.csv' SELECT *) x",
+        # Set-operation arms and scalar subqueries are separate item lists.
+        "SELECT 1 UNION SELECT 1 FROM '/tmp/secret.csv'",
+        "SELECT 1 UNION ALL SELECT 1 FROM '/tmp/secret.csv'",
+        "SELECT 1 INTERSECT SELECT 1 FROM '/tmp/secret.csv'",
+        "SELECT 1 EXCEPT SELECT 1 FROM '/tmp/secret.csv'",
+        "SELECT (SELECT count(*) FROM '/tmp/secret.csv') AS n",
+        "SELECT * FROM orders WHERE id IN (SELECT 1 FROM '/tmp/secret.csv')",
     ],
 )
 def test_rejects_string_literal_in_table_position(sql):
@@ -345,3 +356,138 @@ def test_keyword_denial_message_style_is_unchanged():
     with pytest.raises(SqlNotAllowed) as excinfo:
         guard_sql("WITH x AS (SELECT 1) UPDATE t SET a = 1")
     assert str(excinfo.value) == "Keyword not allowed in read-only queries: UPDATE"
+
+
+# --- #267 regression: the filed P0 payloads, pinned at the statement layer -------
+#
+# #267 reported an arbitrary server-side file read on a DuckDB connection. The
+# PRIMARY fix is engine-level (dialects.py opens with enable_external_access=false,
+# sa.py strips the DSN config surface) and is pinned in test_connector_dialects.py.
+# The tests below pin the statement-level backstop for the same payloads, so a
+# regression in one layer cannot silently leave the other as the only defence.
+#
+# The distinction matters per engine: on DuckDB a guard hole is still caught by the
+# kill switch, but SQLite has NO driver-level equivalent — an audit of the ATTACH
+# risk #267 asked about confirmed that a SQLite connection opened mode=ro will
+# happily ATTACH another connection's database file and read it. guard_sql() is the
+# only thing that stops that, which is why the ATTACH spellings are pinned here.
+
+
+def test_every_denylisted_function_name_is_actually_rejected():
+    """Every name in _DENY_FUNCTIONS must reject as a call, in both positions.
+
+    Two failure modes this catches: a name added to the set but not reachable by the
+    alternation, and a shorter name shadowing a longer one (the pattern is built
+    longest-first precisely so READ_CSV_AUTO() is not reported as READ_CSV()).
+    """
+    assert len(_DENY_FUNCTIONS) >= 100  # the set is the control; don't let it shrink
+    for name in sorted(_DENY_FUNCTIONS):
+        for sql in (f"SELECT * FROM {name}('/etc/passwd')", f"SELECT {name}('/etc/passwd') AS c"):
+            with pytest.raises(SqlNotAllowed) as excinfo:
+                guard_sql(sql)
+            assert str(excinfo.value) == (
+                f"Function not allowed in read-only queries: {name.upper()}()"
+            ), sql
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        # ATTACH is the cross-connection theft vector #267 asked us to audit. On
+        # SQLite the driver does NOT stop it (verified), so these are the only layer.
+        "ATTACH DATABASE '/data/other_tenant.sqlite' AS stolen",
+        "attach database '/data/other_tenant.sqlite' as stolen",
+        "/* comment first */ ATTACH DATABASE '/data/other.sqlite' AS stolen",
+        "-- lead\nATTACH DATABASE '/data/other.sqlite' AS stolen",
+        "SELECT 1; ATTACH DATABASE '/data/other.sqlite' AS stolen",
+        "WITH q AS (SELECT 1) ATTACH DATABASE '/data/other.sqlite' AS stolen",
+        "SELECT 1 FROM (ATTACH DATABASE '/data/other.sqlite' AS stolen)",
+        "DETACH DATABASE stolen",
+        # DuckDB spellings of the same idea, including its SQLite/Postgres attachers.
+        "ATTACH '/data/other.duckdb' AS stolen (READ_ONLY)",
+        "ATTACH '/data/other.sqlite' AS stolen (TYPE SQLITE)",
+        "ATTACH 'dbname=other host=db' AS stolen (TYPE POSTGRES)",
+        # Extension loading would re-add every scanner the function denylist removes.
+        "INSTALL httpfs",
+        "LOAD httpfs",
+        "INSTALL sqlite_scanner; LOAD sqlite_scanner",
+        # COPY writes the source out to a host path; EXPORT/IMPORT do it wholesale.
+        "COPY orders TO '/tmp/exfil.csv'",
+        "COPY (SELECT * FROM orders) TO '/tmp/exfil.parquet'",
+        "EXPORT DATABASE '/tmp/exfil'",
+        "IMPORT DATABASE '/tmp/payload'",
+        # Session settings, incl. trying to turn the kill switch back on.
+        "SET enable_external_access=true",
+        "PRAGMA enable_external_access=true",
+        "PRAGMA database_list",
+    ],
+)
+def test_rejects_statements_that_reach_other_databases_or_the_host(sql):
+    with pytest.raises(SqlNotAllowed):
+        guard_sql(sql)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        # "read any file the app process can ... the raw SQLite/DuckDB files backing
+        # OTHER connections (read_blob -> cross-connection data theft)" — #267.
+        "SELECT * FROM read_blob('/data/other_tenant.sqlite')",
+        "SELECT content FROM read_text('/data/other_tenant.sqlite')",
+        "SELECT * FROM read_blob('/app/dqsentinel.db')",
+        "SELECT * FROM '/data/other_tenant.duckdb'",
+        "SELECT * FROM sqlite_scan('/data/other_tenant.sqlite', 'connections')",
+        "SELECT * FROM sqlite_query('/data/other_tenant.sqlite', 'select dsn from connections')",
+        # ...and the environment / credential material the issue also called out.
+        "SELECT content FROM read_text('/app/.env')",
+        "SELECT content FROM read_text('/etc/hostname')",
+        "SELECT * FROM glob('/app/*')",
+        "SELECT * FROM read_csv('/etc/passwd')",
+    ],
+)
+def test_rejects_cross_connection_and_host_credential_theft(sql):
+    with pytest.raises(SqlNotAllowed):
+        guard_sql(sql)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM pragma_database_list",
+        "SELECT * FROM pragma_table_list",
+        "SELECT * FROM pragma_function_list",
+        "SELECT * FROM pragma_table_info('orders')",
+        "SELECT * FROM pragma_module_list",
+        "SELECT * FROM pragma_compile_options",
+        "SELECT * FROM PRAGMA_DATABASE_LIST",
+        "SELECT * FROM duckdb_databases()",
+        "WITH q AS (SELECT * FROM pragma_table_list) SELECT * FROM q",
+    ],
+)
+def test_rejects_metadata_table_functions_that_disclose_server_paths(sql):
+    """SQLite's pragma table-functions are referenced WITHOUT parentheses, so the
+    function-call denylist (which requires a trailing `(`) never saw them and
+    `PRAGMA x` as a statement is refused only by the SELECT/WITH rule. Verified
+    leak before this guard: `SELECT * FROM pragma_database_list` returned the
+    absolute path of the SQLite file backing the connection, end to end through
+    run_select. Found while verifying #267."""
+    with pytest.raises(SqlNotAllowed):
+        guard_sql(sql)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        # get_ddl() reads these through scalar() -> guard_sql, so denying them
+        # would break DDL introspection on every DuckDB source.
+        "SELECT sql FROM duckdb_views() WHERE view_name = :t",
+        "SELECT sql FROM duckdb_tables() WHERE table_name = :t",
+        # A curated name list, not a `pragma_*` prefix rule: an ordinary column
+        # called pragma_col must stay legal.
+        "SELECT pragma_col FROM t",
+        "SELECT * FROM my_pragma_table",
+        "SELECT pragma_notes, from_date FROM t",
+    ],
+)
+def test_metadata_rule_does_not_reject_legitimate_sql(sql):
+    assert guard_sql(sql)

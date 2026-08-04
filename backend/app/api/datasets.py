@@ -9,7 +9,7 @@ from app.api._filters import LIKE_ESCAPE, contains_pattern
 from app.api.serialize import dataset_out
 from app.config import get_settings
 from app.connectors.sa import connector_for
-from app.core import schema_monitor
+from app.core import schema_monitor, scorecards
 from app.core.deletion import cleanup_dataset_dependents
 from app.core.monitors import ensure_monitor_pack, reconcile_monitor_pack
 from app.core.profiler import jsonable, profile_dataset
@@ -67,7 +67,13 @@ def list_datasets(
         .group_by(models.ExceptionRecord.dataset_id)
         .all()
     ) if datasets else {}
-    return [dataset_out(db, d, open_exceptions=open_counts.get(d.id, 0)) for d in datasets]
+    # Monitoring state rides alongside `health` (#262): "checks are erroring" is a
+    # repair job, not a triage job, and health alone cannot say which one this is.
+    return scorecards.annotate_monitoring(
+        db,
+        [dataset_out(db, d, open_exceptions=open_counts.get(d.id, 0)) for d in datasets],
+        datasets,
+    )
 
 
 @router.post("/register", response_model=list[schemas.DatasetOut], status_code=201)
@@ -113,7 +119,8 @@ def register_datasets(
             db.rollback()
     created_rows = db.query(models.Dataset).filter(models.Dataset.id.in_(created_ids)).all()
     by_id = {d.id: d for d in created_rows}
-    return [dataset_out(db, by_id[i]) for i in created_ids if i in by_id]
+    ordered = [by_id[i] for i in created_ids if i in by_id]
+    return scorecards.annotate_monitoring(db, [dataset_out(db, d) for d in ordered], ordered)
 
 
 def _get_dataset(db: Session, dataset_id: int, user: models.User) -> models.Dataset:
@@ -125,7 +132,8 @@ def _get_dataset(db: Session, dataset_id: int, user: models.User) -> models.Data
 def get_dataset(
     dataset_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)
 ):
-    return dataset_out(db, _get_dataset(db, dataset_id, user))
+    ds = _get_dataset(db, dataset_id, user)
+    return scorecards.annotate_monitoring(db, [dataset_out(db, ds)], [ds])[0]
 
 
 @router.get("/{dataset_id}/columns", response_model=list[schemas.ColumnInfo])

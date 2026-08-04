@@ -16,6 +16,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
 from app import models
+from app.core.errors import redact_source_text
 from app.models import utcnow
 
 RunStatus = Literal["pass", "warn", "fail", "error", "unknown"]
@@ -24,6 +25,8 @@ SloStatus = Literal["met", "at_risk", "breached", "unknown", "disabled"]
 SloTargetSource = Literal["explicit", "importance_default", "disabled"]
 RollupDimension = Literal["domain", "team", "owner", "importance"]
 HistoryGrain = Literal["global", "domain", "team", "owner", "importance", "dataset"]
+#: Operational half of dataset health (#262) — see ``monitoring_state``.
+MonitoringState = Literal["ok", "degraded", "broken", "unknown"]
 
 SEVERITY_WEIGHTS = {"info": 0.5, "warn": 1.0, "error": 2.0}
 STATUS_POINTS = {"pass": 1.0, "warn": 0.7, "fail": 0.0, "error": 0.0, "unknown": 0.5}
@@ -400,6 +403,155 @@ def open_exception_counts(db: Session, *, include_current: bool = True) -> dict[
         .all()
     )
     return {int(dataset_id): int(count) for dataset_id, count in rows}
+
+
+# ---------------------------------------------------------------------------
+# Monitoring state: the OPERATIONAL half of dataset health (#262)
+#
+# A check that ERRORED never evaluated the data — it could not connect, its SQL
+# would not compile, the driver blew up. It writes zero ExceptionRecords, so a
+# dataset whose checks all error reads as "critical - fail - 0 open exceptions":
+# a red data-quality verdict with nothing an analyst can triage. "Broken" is an
+# engineering problem (REPAIR); "failing" is a data-quality problem (TRIAGE).
+#
+# This is deliberately a SEPARATE axis rather than a fifth ``health`` value.
+# ``health`` (pass/warn/fail/unknown) is keyed off by the datasets health filter,
+# the lineage overlay's colour map, StatusPage's tone table and the dataset
+# detail/connection pages, and its scorecard sibling ``slo_status`` is *persisted*
+# in ScorecardSnapshot rows — a new member would fall through those maps to a
+# neutral default and silently change the meaning of stored history. The two
+# questions are independent anyway: a dataset can have three real failures AND
+# five checks that cannot run.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class DatasetMonitoring:
+    """Whether a dataset's checks are actually *running*, and what broke.
+
+    ``last_error``/``last_error_run_id`` point at the newest errored run so the
+    UI can link to the run detail, which already carries the full driver text and
+    the "test the source connection" remedy (PR #278).
+    """
+
+    dataset_id: int
+    active_checks: int
+    failing_checks: int
+    errored_checks: int
+    state: MonitoringState
+    last_error: str | None = None
+    last_error_run_id: int | None = None
+    last_error_at: datetime | None = None
+
+    def apply_to(self, out: Any) -> Any:
+        """Copy the operational fields onto a ``DatasetOut``-shaped object.
+
+        Duck-typed on purpose: this module scores app metadata and must not import
+        the API schemas (the API layer owns serialization).
+        """
+        out.monitoring = self.state
+        out.failing_checks = self.failing_checks
+        out.errored_checks = self.errored_checks
+        out.last_error = self.last_error
+        out.last_error_run_id = self.last_error_run_id
+        return out
+
+
+def monitoring_state(active_checks: int, errored_checks: int) -> MonitoringState:
+    """``unknown`` with no active checks, ``ok`` when none error, ``broken`` when
+    every active check errors, ``degraded`` in between."""
+    if active_checks <= 0:
+        return "unknown"
+    if errored_checks <= 0:
+        return "ok"
+    if errored_checks >= active_checks:
+        return "broken"
+    return "degraded"
+
+
+def _latest_errored_runs(db: Session, check_ids: list[int]) -> dict[int, models.CheckRun]:
+    """Newest errored run per dataset, for the given checks.
+
+    Two bounded queries, not one unbounded scan: a broken source can pile up
+    thousands of errored runs, so narrow to ``max(id)`` per check first (at most
+    one row per errored check) and only then fetch those rows.
+    """
+    if not check_ids:
+        return {}
+    run_ids = [
+        int(run_id)
+        for (run_id,) in db.query(func.max(models.CheckRun.id))
+        .filter(
+            models.CheckRun.check_id.in_(check_ids),
+            models.CheckRun.status == "error",
+        )
+        .group_by(models.CheckRun.check_id)
+        .all()
+        if run_id is not None
+    ]
+    if not run_ids:
+        return {}
+    newest: dict[int, models.CheckRun] = {}
+    for run in db.query(models.CheckRun).filter(models.CheckRun.id.in_(run_ids)).all():
+        current = newest.get(int(run.dataset_id))
+        if current is None or (run.started_at, run.id) > (current.started_at, current.id):
+            newest[int(run.dataset_id)] = run
+    return newest
+
+
+def dataset_monitoring(db: Session, datasets: Iterable[Any]) -> dict[int, DatasetMonitoring]:
+    """Monitoring state per dataset, keyed by dataset id.
+
+    Reads ``Check.last_status`` — the same field ``serialize.dataset_out`` rolls up
+    into ``health`` — so the two signals can never disagree about which checks are
+    erroring.
+    """
+    rows = list(datasets)
+    if not rows:
+        return {}
+    counts: dict[int, tuple[int, int, int]] = {}
+    errored_check_ids: list[int] = []
+    for ds in rows:
+        active = [c for c in getattr(ds, "checks", []) or [] if text_attr(c, "status") == "active"]
+        errored = [
+            c for c in active if normalize_run_status(getattr(c, "last_status", None)) == "error"
+        ]
+        failing = [
+            c for c in active if normalize_run_status(getattr(c, "last_status", None)) == "fail"
+        ]
+        counts[int(ds.id)] = (len(active), len(failing), len(errored))
+        errored_check_ids.extend(int(c.id) for c in errored)
+
+    newest = _latest_errored_runs(db, errored_check_ids)
+    out: dict[int, DatasetMonitoring] = {}
+    for dataset_id, (active_count, failing_count, errored_count) in counts.items():
+        run = newest.get(dataset_id)
+        # The datasets list is a broad surface (every row, every granted viewer), so
+        # the reason goes through the source-error redaction chokepoint (#307); the
+        # run drill-in keeps the raw driver text for the engineer who has to fix it.
+        message = redact_source_text(run.error_message) if run is not None and run.error_message else None
+        out[dataset_id] = DatasetMonitoring(
+            dataset_id=dataset_id,
+            active_checks=active_count,
+            failing_checks=failing_count,
+            errored_checks=errored_count,
+            state=monitoring_state(active_count, errored_count),
+            last_error=message,
+            last_error_run_id=int(run.id) if run is not None else None,
+            last_error_at=run.started_at if run is not None else None,
+        )
+    return out
+
+
+def annotate_monitoring(db: Session, outs: Iterable[Any], datasets: Iterable[Any]) -> list[Any]:
+    """Attach monitoring state to already-serialized ``DatasetOut`` rows, in place."""
+    states = dataset_monitoring(db, datasets)
+    rows = list(outs)
+    for out in rows:
+        state = states.get(int(out.id))
+        if state is not None:
+            state.apply_to(out)
+    return rows
 
 
 def load_dataset_scores(

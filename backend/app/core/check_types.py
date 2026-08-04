@@ -724,13 +724,103 @@ def _run_custom_sql(ctx: CheckContext) -> CheckResult:
 
 
 # ---------------------------------------------------------------- ml_outlier
+# One genuine measure is enough. "Multivariate" describes what IsolationForest CAN
+# do, not a precondition: it fits and scores a single column fine, and univariate
+# detection is exactly what catches a 100x amount typo. Requiring two dimensions
+# made the check silently no-op on ordinary narrow tables — the shipped `payments`
+# sample has one real measure (`amount`) next to two surrogate keys, so after the
+# #263 identifier filtering it returned 0 outliers and the e2e smoke test caught it.
+_ML_MIN_FEATURES = 1
+_ML_ID_DISTINCT_PCT = 0.98  # distinct/rows above which an integer column is a surrogate key
+
+
+def _ml_feature_columns(profile: Any, available: set[str]) -> tuple[list[str], list[dict[str, str]]]:
+    """Pick IsolationForest features out of the dataset's newest profile.
+
+    The check reads ``SELECT *`` so exception rows stay readable, which means the frame
+    also carries primary keys, foreign keys, zone/vendor codes and timestamps. Those are
+    numeric (or numeric-coercible) but have no magnitude, so the forest scores "rare id"
+    and "recent row" as anomalies (#263). The profile already knows enough to drop them:
+    ``kind`` separates temporal/string columns, ``pk_candidates`` names the surrogate
+    keys, ``distinct_pct`` catches unnamed ones, and the column name catches codes.
+
+    Both cardinality-based rules require an *integral* dtype, and that is load-bearing:
+    ``pk_candidates`` means only "no nulls and distinct == row_count", which a continuous
+    float measurement — a sensor reading, a price, a latency — satisfies routinely.
+    Excluding those left fewer than two features and made the check pass with a note,
+    i.e. ml_outlier silently stopped working on exactly the columns it exists for.
+    ``pk_candidates`` is kept alongside ``distinct_pct`` rather than folded into it
+    because it is the one signal that survives a profile row missing ``distinct_pct``.
+
+    Bounds of the heuristic: a measurement named like a code (``error_code_seconds``) is
+    dropped, a code with a plain name and low cardinality (``priority``) is kept, and a
+    column added since the last profile is not a feature until the dataset is
+    re-profiled. All three are recoverable — the check's ``columns`` param overrides
+    everything here — and the dropped columns plus reasons land in the run's metrics.
+    """
+    facts = profile.table_facts or {}
+    pk_candidates = {str(c).lower() for c in facts.get("pk_candidates", [])}
+    keep: list[str] = []
+    excluded: list[dict[str, str]] = []
+    for col in profile.columns or []:
+        name = col.get("name")
+        if not name or name not in available:
+            continue
+        kind = col.get("kind")
+        dtype = str(col.get("dtype") or "").lower()
+        distinct_pct = _finite_float(col.get("distinct_pct")) or 0.0
+        if kind != "numeric":
+            reason = f"not a numeric column (kind={kind})"
+        elif str(name).lower() in pk_candidates and "int" in dtype:
+            reason = "primary-key candidate"
+        elif ml.looks_like_identifier_name(str(name)):
+            reason = "identifier/code-like name"
+        elif distinct_pct >= _ML_ID_DISTINCT_PCT and "int" in dtype:
+            reason = f"near-unique integer ({distinct_pct:.0%} distinct) — surrogate key"
+        else:
+            keep.append(name)
+            continue
+        excluded.append({"column": str(name), "reason": reason})
+    return keep, excluded
+
+
 def _run_ml_outlier(ctx: CheckContext) -> CheckResult:
     settings = get_settings()
-    columns = ctx.params.get("columns") or None
+    explicit = ctx.params.get("columns") or None
     contamination = float(ctx.params.get("contamination", 0.005))
     max_rows = int(ctx.params.get("max_rows", settings.ml_max_rows))
 
     df = ctx.connector.fetch_df(f"SELECT * FROM {ctx.ref}", limit=max_rows)
+
+    excluded: list[dict[str, str]] = []
+    profile = None if explicit else _latest_baseline_profile(ctx)
+    if explicit:
+        columns, feature_source = list(explicit), "params"
+    elif profile is not None:
+        columns, excluded = _ml_feature_columns(profile, set(df.columns))
+        feature_source = "profile"
+        if len(columns) < _ML_MIN_FEATURES:
+            return CheckResult(
+                violation_count=0,
+                rows_evaluated=len(df),
+                metrics={
+                    "features": columns,
+                    "feature_source": feature_source,
+                    "excluded_features": excluded,
+                    "contamination": contamination,
+                    "rows_scored": 0,
+                    "note": "no usable numeric features",
+                },
+                detail=(
+                    f"skipped: only {len(columns)} usable numeric feature(s) after excluding "
+                    f"{len(excluded)} identifier/non-numeric column(s) — set the check's "
+                    "'columns' param to choose features explicitly"
+                ),
+            )
+    else:
+        # No profile to reason from: ml.detect_outliers' own auto-select applies.
+        columns, feature_source = None, "auto"
+
     result = ml.detect_outliers(df, columns=columns, contamination=contamination)
 
     keep = result.indices[: settings.exception_sample_rows]
@@ -747,6 +837,8 @@ def _run_ml_outlier(ctx: CheckContext) -> CheckResult:
         scores=scores,
         metrics={
             "features": result.features,
+            "feature_source": feature_source,
+            "excluded_features": excluded,
             "contamination": contamination,
             "score_threshold": result.threshold,
             "rows_scored": result.rows_scored,
@@ -758,6 +850,25 @@ def _run_ml_outlier(ctx: CheckContext) -> CheckResult:
 # ---------------------------------------------------------------- distribution_drift
 _PSI_EPS = 1e-4  # epsilon-clamp for empty bins so ln(a/e) stays finite
 _DRIFT_SAMPLE_CAP = 2000  # reservoir sample size persisted for the KS path
+# A numeric column is compared value-by-value instead of by quantile bins when the
+# profile's exact top-value counts already describe essentially ALL of it (#265/#270):
+# quantile bins cannot resolve point masses, and a coded / flag / zone / surcharge
+# column *is* its value mix. Coverage, not cardinality, is the test — a 250-distinct
+# zone column whose top 10 zones carry 99% of the rows is a value mix; a 250-distinct
+# amount column whose top 10 values carry 3% of the rows is a continuous distribution.
+# The distinct ceiling bounds the other end: past it the tail carries structure that 10
+# stored values cannot represent, so the quantile path (which resolves the tail) wins.
+#
+# The coverage bar has to be near-total because the value path's weakness is a hard
+# blind spot, not a soft one: everything outside the stored top 10 collapses into a
+# single __other__ bucket, so a shift whose source AND destination both sit in that tail
+# leaves all 11 bins bit-identical and scores PSI exactly 0.0 at any magnitude. Such a
+# shift is not "seen but not localised" — it is not seen at all. At 0.5 that made half a
+# column undetectable; at 0.95 the tail a shift can hide in is at most 5% of the rows.
+_VALUE_MIX_MIN_COVERAGE = 0.95
+_VALUE_MIX_MAX_DISTINCT = 1000
+# Cap on the distinct values we are willing to re-count in SQL (_observed_value_counts).
+_EXACT_COUNT_MAX_DISTINCT = 5000
 
 
 def _latest_baseline_profile(ctx: CheckContext) -> Any | None:
@@ -792,52 +903,87 @@ def _psi(expected: np.ndarray, actual: np.ndarray) -> float:
     return float(np.sum((a - e) * np.log(a / e)))
 
 
-def _decile_edges(quantiles: dict[str, Any]) -> tuple[np.ndarray, np.ndarray] | None:
-    """Build histogram edges + the baseline probability of each bin from a profile's
-    stored quantiles.
+def _finite_float(v: Any) -> float | None:
+    """float(v) for anything numeric-looking, or None for NULL/NaN/inf/non-numeric."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if np.isfinite(f) else None
 
-    The profiler stores p1/p5/p25/p50/p75/p95/p99 (see profiler.py), not deciles,
-    so we interpolate the quantile function at the deciles to get 10 equiprobable
-    (0.1 each) baseline bins. Returns ``(edges, expected)`` where ``expected`` sums
-    to 1; degenerate (single-value) columns return None.
 
-    Ties matter: a skewed / zero-inflated column collapses several deciles onto one
-    edge. Collapsing with ``np.unique`` alone and then assuming ``1/nbins`` per bin
-    (the old behaviour) understates a merged bin's true mass — e.g. a 70%-zero column
-    merges ~7 deciles into one bin that then carries 0.7 of the baseline but was
-    scored as 1/nbins, producing a huge PSI on data identical to the baseline. So we
-    distribute each decile's 0.1 into whichever surviving bin contains it.
+def _quantile_bins(bcol: dict[str, Any]) -> tuple[np.ndarray, np.ndarray] | None:
+    """Histogram edges + each bin's baseline probability, from a profile column's
+    stored quantiles. Returns ``(edges, expected)`` with ``expected`` summing to 1,
+    or None when there is no usable distribution.
+
+    The profiler stores p1/p5/p25/p50/p75/p95/p99. Those *are* exact quantiles of the
+    baseline sample, so using their values as the bin edges makes each bin's baseline
+    mass exactly the gap between the two surrounding probabilities — nothing is
+    interpolated, and identical data reproduces `expected` exactly.
+
+    That is the fix for #265: the previous scheme interpolated 10 equiprobable deciles
+    out of those 7 points and then asserted 0.1 of the mass per bin. On a lumpy column
+    (integers, codes, point masses) the interpolated deciles are not the real deciles,
+    so the check scored drift against its own baseline — NYC taxi `DOLocationID`
+    reproduced at PSI 0.363, a `warn` on unchanged data.
+
+    Two sentinel bins, ``[-inf, min)`` and ``[p99, inf)``, catch values outside the
+    baseline's observed range. The lower one carries **zero** baseline mass: nothing in
+    the baseline sits below the baseline's own minimum. Handing it 0.1 (the old
+    behaviour) put ~0.69 PSI into every constant / zero-inflated / left-bounded column
+    on data that never changed (#270) — a constant column scored 0.7006.
+
+    Ties still matter and are still pooled forward: when several quantiles land on the
+    same value (a 70%-zero column collapses p1..p50 onto 0) their masses accumulate in
+    the single bin that starts at that value, which is exactly ``P(v <= x < next)`` for
+    half-open bins. Without pooling a merged bin would be scored at one segment's mass
+    while really carrying several.
     """
-    pts = sorted(
-        (float(k), float(v))
-        for k, v in quantiles.items()
-        if v is not None and not (isinstance(v, float) and (np.isnan(v) or np.isinf(v)))
-    )
+    pts: list[tuple[float, float]] = []
+    for k, v in (bcol.get("quantiles") or {}).items():
+        prob, val = _finite_float(k), _finite_float(v)
+        if prob is not None and val is not None and 0.0 < prob < 1.0:
+            pts.append((prob, val))
+    pts.sort()
     if len(pts) < 2:
         return None
     probs = np.array([p for p, _ in pts])
-    vals = np.array([v for _, v in pts])
-    inner = np.interp(np.arange(1, 10) / 10.0, probs, vals)
-    raw = np.concatenate(([-np.inf], inner, [np.inf]))  # 11 edges → 10 equiprobable deciles
-    edges = np.unique(raw)  # monotonic edges for np.histogram
-    if edges.size < 3:  # near-constant column → no usable distribution
-        return None
+    # A quantile function is non-decreasing; enforce it so a rounded/garbled profile
+    # can't produce non-monotonic edges (np.histogram raises on those).
+    vals = np.maximum.accumulate(np.array([v for _, v in pts]))
+
+    lo = _finite_float(bcol.get("min"))
+    lo = min(lo, float(vals[0])) if lo is not None else -np.inf
+    # Baseline segments: [min, p1), [p1, p5), ... [p99, inf) with the exact mass of each.
+    raw = np.concatenate(([lo], vals, [np.inf]))
+    masses = np.concatenate(([probs[0]], np.diff(probs), [1.0 - probs[-1]]))
+
+    support = np.unique(raw[:-1])
+    edges = (
+        np.concatenate((support, [np.inf]))
+        if support[0] == -np.inf  # baseline min unknown: keep [-inf, p1) as a real bin
+        else np.concatenate(([-np.inf], support, [np.inf]))
+    )
     nbins = edges.size - 1
-    # Assign each of the 10 baseline deciles' 0.1 mass to the surviving bin holding
-    # its representative point (midpoint, or the point value for a zero-width tie).
+    if nbins < 2:
+        return None
     expected = np.zeros(nbins)
     for k in range(raw.size - 1):
-        lo, hi = raw[k], raw[k + 1]
-        if lo == -np.inf:
-            idx = 0
-        elif hi == np.inf:
+        a, b = raw[k], raw[k + 1]
+        if b == np.inf:
             idx = nbins - 1
-        elif lo == hi:
-            idx = min(int(np.searchsorted(edges, lo, side="right")) - 1, nbins - 1)
+        elif a == -np.inf:
+            idx = 0
+        elif a == b:  # tied quantiles = a point mass -> the bin that starts at it
+            idx = int(np.searchsorted(edges, a, side="right")) - 1
         else:
-            idx = min(int(np.searchsorted(edges, (lo + hi) / 2.0, side="right")) - 1, nbins - 1)
-        expected[max(idx, 0)] += 0.1
-    return edges, expected
+            idx = int(np.searchsorted(edges, a + (b - a) / 2.0, side="right")) - 1
+        expected[min(max(idx, 0), nbins - 1)] += masses[k]
+    total = float(expected.sum())
+    if total <= 0:
+        return None
+    return edges, expected / total
 
 
 def _drift_pass_detail(
@@ -863,8 +1009,8 @@ def _drift_pass_detail(
 
 
 def _numeric_drift(values: pd.Series, bcol: dict[str, Any], threshold: float) -> CheckResult | None:
-    """PSI of current numeric values vs the baseline profile's decile distribution."""
-    built = _decile_edges(bcol.get("quantiles") or {})
+    """PSI of current numeric values vs the baseline profile's quantile distribution."""
+    built = _quantile_bins(bcol)
     if built is None:
         return None
     edges, expected = built
@@ -877,6 +1023,7 @@ def _numeric_drift(values: pd.Series, bcol: dict[str, Any], threshold: float) ->
             metrics={
                 "method": "psi",
                 "kind": "numeric",
+                "binning": "quantile",
                 "score": None,
                 "threshold": threshold,
                 "bins": [],
@@ -899,8 +1046,8 @@ def _numeric_drift(values: pd.Series, bcol: dict[str, Any], threshold: float) ->
     return CheckResult(
         violation_count=1 if drifted else 0,
         rows_evaluated=int(nums.size),
-        metrics={"method": "psi", "kind": "numeric", "score": round(score, 4),
-                 "threshold": threshold, "bins": bins},
+        metrics={"method": "psi", "kind": "numeric", "binning": "quantile",
+                 "score": round(score, 4), "threshold": threshold, "bins": bins},
         detail=f"PSI {score:.3f} (threshold {threshold})",
     )
 
@@ -911,41 +1058,144 @@ def _edge(x: float) -> Any:
     return round(float(x), 4)
 
 
+def _mix_key(value: Any, numeric: bool) -> Any | None:
+    """Comparison key for one distinct value. Numeric columns compare as floats:
+    the baseline stores JSON numbers (``5``) while pandas may hand back ``5.0`` for
+    the same column, and ``str()`` on those two does not match."""
+    if numeric:
+        return _finite_float(value)
+    return None if value is None else str(value)
+
+
+def _prefers_value_mix(bcol: dict[str, Any], nonnull_total: int) -> bool:
+    """Should a numeric column be compared value-by-value instead of by quantile bins?
+
+    Yes when the profile's 10 stored top values cover all but a sliver of the column and
+    the column has few enough distinct values that the rest is a tail rather than
+    structure. Anything they do not cover is invisible on this path (see
+    ``_VALUE_MIX_MIN_COVERAGE``), so "most of it" is not good enough.
+    Quantile bins are blind to point masses — a 0/1 flag or a 4-value payment code has
+    no meaningful decile, and comparing it by bins scored PSI > 1 against its own
+    baseline (#265). ``top_values`` are exact counts, so the value mix reproduces the
+    baseline exactly on unchanged data at any cardinality; coverage is what decides
+    whether it still *describes* the column.
+    """
+    tops = bcol.get("top_values") or []
+    distinct = _finite_float(bcol.get("distinct_count"))
+    # Unknown cardinality (an older profile) stays on the quantile path: that is the
+    # path with no cap on how much of the column it can describe.
+    if not tops or distinct is None or not 0 < distinct <= _VALUE_MIX_MAX_DISTINCT:
+        return False
+    covered = float(sum(_finite_float(t.get("count")) or 0.0 for t in tops))
+    total = max(float(nonnull_total), covered)
+    return total > 0 and covered / total >= _VALUE_MIX_MIN_COVERAGE
+
+
+def _observed_value_counts(
+    ctx: CheckContext,
+    *,
+    numeric: bool,
+    baseline_distinct: Any = None,
+    max_distinct: int = _EXACT_COUNT_MAX_DISTINCT,
+) -> tuple[dict[Any, int], int] | None:
+    """Exact per-value counts for ``ctx.column`` over the WHOLE table, in one GROUP BY.
+
+    The baseline ``top_values`` are full-table exact counts while the check's own read
+    is capped at ``max_rows``, so on a table bigger than that cap the two sides describe
+    different populations and PSI is non-zero on unchanged data — NYC taxi `payment_type`
+    scored 0.31 comparing full-table shares against the first 50k rows. Re-counting in
+    SQL puts both sides on the same population.
+
+    Returns None — caller falls back to the sampled frame — when the column has more
+    distinct values than we are willing to materialise, or the source can't answer.
+    """
+    if not ctx.column:
+        return None
+    if isinstance(baseline_distinct, int) and baseline_distinct > max_distinct:
+        return None  # known-wide column: don't pay for a GROUP BY we'd throw away
+    sql = (
+        f"SELECT {ctx.col} AS v, COUNT(*) AS c FROM {ctx.ref} "
+        f"WHERE {ctx.col} IS NOT NULL GROUP BY {ctx.col}"
+    )
+    try:
+        res = ctx.connector.run_select(sql, limit=max_distinct + 1)
+    except Exception:  # noqa: BLE001 - any source-side failure just means "use the sample"
+        return None
+    if len(res.rows) > max_distinct:
+        return None
+    counts: dict[Any, int] = {}
+    total = 0
+    for row in res.rows:
+        n = int(row[1] or 0)
+        total += n  # denominator counts every non-null row, keyed or not
+        key = _mix_key(row[0], numeric)
+        if key is not None:
+            counts[key] = counts.get(key, 0) + n
+    return counts, total
+
+
 def _categorical_drift(
-    values: pd.Series, bcol: dict[str, Any], nonnull_total: int, threshold: float
+    values: pd.Series,
+    bcol: dict[str, Any],
+    nonnull_total: int,
+    threshold: float,
+    *,
+    numeric: bool = False,
+    observed: tuple[dict[Any, int], int] | None = None,
 ) -> CheckResult:
-    """PSI of current category mix vs the baseline top_values (+ __other__).
+    """PSI of the current value mix vs the baseline top_values (+ __other__).
 
     ``top_values`` are *full-table* exact counts (profiler.py), so the baseline
     denominator must be the full-table non-null count — NOT the pandas sample size.
     Using the sample size made ``sum(top_counts) > total`` for columns with >10
     distinct values, collapsing the ``__other__`` expected mass to ~0 and inflating
-    PSI on unchanged data (the 11–20-distinct band the generator targets)."""
+    PSI on unchanged data (the 11–20-distinct band the generator targets).
+
+    ``observed`` supplies exact current counts (see ``_observed_value_counts``); without
+    it the current side is counted from the sampled frame, which is exact only while the
+    read wasn't truncated."""
     tops = bcol.get("top_values") or []
-    cats = [str(t["value"]) for t in tops]
-    base_counts = np.array([float(t["count"]) for t in tops])
+    labels: list[str] = []
+    keys: list[Any] = []
+    counts: list[float] = []
+    for t in tops:
+        key = _mix_key(t.get("value"), numeric)
+        if key is None:
+            continue
+        labels.append(str(t.get("value")))
+        keys.append(key)
+        counts.append(float(t.get("count") or 0))
+    base_counts = np.array(counts, dtype=float)
     base_total = max(float(nonnull_total), float(base_counts.sum()), 1.0)
     expected = np.append(base_counts / base_total, max(0.0, 1.0 - base_counts.sum() / base_total))
 
-    cur = values.dropna().astype(str)
-    cur_total = max(len(cur), 1)
-    vc = cur.value_counts()
-    actual_named = np.array([float(vc.get(c, 0)) for c in cats]) / cur_total
+    if observed is not None:
+        obs_counts, cur_total = observed
+    else:
+        cur = values.dropna()
+        cur = pd.to_numeric(cur, errors="coerce").dropna() if numeric else cur.astype(str)
+        obs_counts = {
+            (float(k) if numeric else str(k)): int(v) for k, v in cur.value_counts().items()
+        }
+        cur_total = int(len(cur))
+    denom = max(cur_total, 1)
+    actual_named = np.array([float(obs_counts.get(k, 0)) for k in keys]) / denom
     actual_other = max(0.0, 1.0 - actual_named.sum())
     actual = np.append(actual_named, actual_other)
 
     score = _psi(expected, actual)
-    labels = [*cats, "__other__"]
+    bin_labels = [*labels, "__other__"]
     bins = [
-        {"category": labels[i], "expected_pct": round(float(expected[i]), 4),
+        {"category": bin_labels[i], "expected_pct": round(float(expected[i]), 4),
          "actual_pct": round(float(actual[i]), 4)}
-        for i in range(len(labels))
+        for i in range(len(bin_labels))
     ]
     drifted = score >= threshold
     return CheckResult(
         violation_count=1 if drifted else 0,
-        rows_evaluated=int(len(cur)),
-        metrics={"method": "psi", "kind": "categorical", "score": round(score, 4),
+        rows_evaluated=cur_total,
+        metrics={"method": "psi", "kind": "numeric" if numeric else "categorical",
+                 "binning": "value", "score": round(score, 4),
                  "threshold": threshold, "bins": bins},
         detail=f"PSI {score:.3f} (threshold {threshold})",
     )
@@ -1039,7 +1289,25 @@ def _run_distribution_drift(ctx: CheckContext) -> CheckResult:
             baseline_profile_id=profile.id,
             note="column missing from baseline profile",
         )
-    if bcol.get("quantiles"):
+    has_quantiles = bool(bcol.get("quantiles"))
+    has_top_values = bool(bcol.get("top_values"))
+    # Baseline denominator = full-table non-null count (top_values are full-table
+    # exact counts), not the pandas sample size.
+    nonnull_total = int(profile.row_count or 0) - int(bcol.get("null_count") or 0)
+    if has_top_values and (not has_quantiles or _prefers_value_mix(bcol, nonnull_total)):
+        # Only re-count in SQL when the sampled read was truncated; when it wasn't, the
+        # frame already IS the whole column and the extra scan would buy nothing.
+        observed = (
+            _observed_value_counts(
+                ctx, numeric=has_quantiles, baseline_distinct=bcol.get("distinct_count")
+            )
+            if len(values) >= max_rows
+            else None
+        )
+        result = _categorical_drift(
+            values, bcol, nonnull_total, threshold, numeric=has_quantiles, observed=observed
+        )
+    elif has_quantiles:
         result = _numeric_drift(values, bcol, threshold)
         if result is None:
             return _drift_pass_detail(
@@ -1050,11 +1318,6 @@ def _run_distribution_drift(ctx: CheckContext) -> CheckResult:
                 kind="numeric",
                 note="unusable numeric baseline",
             )
-    elif bcol.get("top_values"):
-        # Baseline denominator = full-table non-null count (top_values are full-table
-        # exact counts), not the pandas sample size.
-        nonnull_total = int(profile.row_count or 0) - int(bcol.get("null_count") or 0)
-        result = _categorical_drift(values, bcol, nonnull_total, threshold)
     else:
         return _drift_pass_detail(
             f"baseline profile #{profile.id} has neither quantiles nor categories for {ctx.column!r}",

@@ -267,8 +267,21 @@ def test_duckdb_still_reads_the_database_file(duckdb_connector):
         "SELECT * FROM '{secret}'",  # replacement scan
         "WITH x AS (SELECT * FROM '{secret}') SELECT * FROM x",
         "SELECT * FROM orders o, '{secret}' s",
+        "SELECT * FROM orders JOIN '{secret}' s ON 1 = 1",
+        "SELECT * FROM (FROM '{secret}')",  # DuckDB FROM-first syntax
+        "SELECT (SELECT count(*) FROM '{secret}') AS n",
         "SELECT * FROM read_csv('{secret}')",
+        "SELECT * FROM read_csv_auto('{secret}')",
         "SELECT * FROM read_text('{secret}')",
+        "SELECT * FROM read_blob('{secret}')",  # the byte-level read (#267)
+        "SELECT * FROM read_parquet('{secret}')",
+        "SELECT * FROM parquet_scan('{secret}')",
+        "SELECT * FROM read_json_auto('{secret}')",
+        "SELECT * FROM sniff_csv('{secret}')",
+        # Outbound network, not just local files: SSRF at the cloud metadata endpoint
+        # is the same capability and the same switch turns it off.
+        "SELECT * FROM read_json_auto('http://169.254.169.254/latest/meta-data')",
+        "SELECT * FROM 'https://evil.example/x.csv'",
     ],
 )
 def test_duckdb_engine_refuses_host_file_reads(duckdb_connector, template):
@@ -279,6 +292,133 @@ def test_duckdb_engine_refuses_host_file_reads(duckdb_connector, template):
         with pytest.raises(Exception) as ei:  # noqa: PT011 - driver-specific type
             conn.execute(text(template.format(secret=secret))).fetchall()
     assert "Permission Error" in str(ei.value)
+    assert "SECRET" not in str(ei.value)  # the payload must not come back in the error
+
+
+def test_duckdb_engine_refuses_a_replacement_scan_spelled_as_a_quoted_identifier(duckdb_connector):
+    """A path in DOUBLE QUOTES is still a replacement scan to DuckDB.
+
+    guard_sql() masks quoted identifiers before looking for a literal in table
+    position, so this spelling reaches the driver — verified: with the pre-#296
+    connect_args (read_only only) it returns the CSV's contents. It is the
+    engine-level kill switch, not the regex backstop, that refuses it. Asserting the
+    ENGINE refuses keeps this honest and stays true if the guard later learns the
+    spelling too.
+    """
+    from sqlalchemy import text
+
+    connector, secret, _dir = duckdb_connector
+    for sql in (
+        f'SELECT * FROM "{secret}"',
+        f'SELECT * FROM orders o, "{secret}" s',
+    ):
+        assert guard_sql(sql)  # documents the layer that does NOT catch it
+        with connector.engine.connect() as conn:
+            with pytest.raises(Exception) as ei:  # noqa: PT011 - driver-specific type
+                conn.execute(text(sql)).fetchall()
+        assert "Permission Error" in str(ei.value)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        # ATTACH is the cross-connection theft vector; both the native and the
+        # sqlite/postgres attachers are refused (the latter needs an extension load,
+        # which the same switch disables).
+        "ATTACH '{other}' AS stolen (READ_ONLY)",
+        "ATTACH '{other}' AS stolen (TYPE SQLITE)",
+        # COPY writes the source out to a host path.
+        "COPY orders TO '{dir}/exfil.csv'",
+        "COPY (SELECT * FROM orders) TO '{dir}/exfil.parquet'",
+        # Extension install/load would re-add every scanner the denylist removes.
+        "INSTALL httpfs",
+        "LOAD httpfs",
+        "INSTALL sqlite_scanner",
+    ],
+)
+def test_duckdb_engine_refuses_attach_copy_and_extension_loading(tmp_path, statement):
+    """#267 asked for ATTACH to be audited. On DuckDB the driver refuses it outright,
+    so guard_sql's keyword denylist is a backstop rather than the only defence."""
+    db, _secret = _seed_duckdb(tmp_path)
+    other = tmp_path / "other_connection.duckdb"
+    import duckdb
+
+    con = duckdb.connect(str(other))
+    try:
+        con.execute("CREATE TABLE creds AS SELECT 'root' AS u, 'CROSSCONNSECRET' AS p")
+    finally:
+        con.close()
+
+    connector = Connector(f"duckdb:///{db}")
+    try:
+        with connector.engine.connect() as conn:  # deliberately NOT via guard_sql
+            with pytest.raises(Exception) as ei:  # noqa: PT011 - driver-specific type
+                conn.exec_driver_sql(
+                    statement.format(other=other.as_posix(), dir=tmp_path.as_posix())
+                )
+        assert "Permission Error" in str(ei.value)
+    finally:
+        connector.engine.dispose()
+
+
+def test_duckdb_cannot_read_another_connections_backing_file(tmp_path):
+    """The cross-connection data-theft scenario #267 describes: one DuckDB source
+    reaching the raw database file behind a DIFFERENT connection. Every payload is
+    driven through Connector.run_select, i.e. exactly what /query/run, custom_sql
+    checks and the LLM agents do."""
+    db, _secret = _seed_duckdb(tmp_path)
+
+    victim = tmp_path / "other_connection.sqlite"
+    import sqlite3
+
+    con = sqlite3.connect(str(victim))
+    try:
+        con.execute("CREATE TABLE connections (name TEXT, dsn TEXT)")
+        con.execute("INSERT INTO connections VALUES ('prod', 'CROSSCONNSECRET')")
+        con.commit()
+    finally:
+        con.close()
+    assert "CROSSCONNSECRET" in victim.read_bytes().decode("latin-1")  # it IS in the file
+
+    path = victim.as_posix()
+    connector = Connector(f"duckdb:///{db}")
+    try:
+        for sql in (
+            f"SELECT * FROM read_blob('{path}')",
+            f"SELECT content FROM read_text('{path}')",
+            f"SELECT * FROM '{path}'",
+            f'SELECT * FROM "{path}"',
+            f"SELECT * FROM sqlite_scan('{path}', 'connections')",
+            f"SELECT * FROM sqlite_query('{path}', 'select dsn from connections')",
+            f"SELECT * FROM glob('{tmp_path.as_posix()}/*')",
+        ):
+            with pytest.raises(Exception) as ei:  # noqa: PT011 - guard or driver
+                connector.run_select(sql, limit=10)
+            assert "CROSSCONNSECRET" not in str(ei.value)
+    finally:
+        connector.engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "SET enable_external_access=true",
+        "SET GLOBAL enable_external_access=true",
+        "PRAGMA enable_external_access=true",
+    ],
+)
+def test_duckdb_external_access_cannot_be_turned_on_mid_session(duckdb_connector, statement):
+    """The switch is a startup-time setting: even bypassing guard_sql entirely, a
+    session cannot hand itself the capability back."""
+    from sqlalchemy import text
+
+    connector, _secret, _dir = duckdb_connector
+    with connector.engine.connect() as conn:  # a failed SET aborts the transaction
+        with pytest.raises(Exception) as ei:  # noqa: PT011 - driver-specific type
+            conn.exec_driver_sql(statement)
+    assert "Cannot enable external access" in str(ei.value)
+    with connector.engine.connect() as conn:
+        assert conn.execute(text("SELECT current_setting('enable_external_access')")).scalar() is False
 
 
 def test_duckdb_engine_refuses_directory_listing(duckdb_connector):
@@ -320,6 +460,33 @@ def test_duckdb_external_access_cannot_be_re_enabled_from_the_dsn(tmp_path):
         connector.engine.dispose()
 
 
+@pytest.mark.parametrize(
+    "query",
+    [
+        "enable_external_access=true",
+        "enable_external_access=True",  # duckdb-engine lower-cases nothing for us
+        "ENABLE_EXTERNAL_ACCESS=true",
+        "enable_external_access=1",
+        "allow_unsigned_extensions=true&enable_external_access=true",
+        "memory_limit=1GB&enable_external_access=true",
+        "config=%7B%27enable_external_access%27%3A%27true%27%7D",  # config={'...':'...'}
+    ],
+)
+def test_duckdb_dsn_config_surface_is_stripped_in_every_spelling(tmp_path, query):
+    """sa.py drops the WHOLE query string rather than denylisting one key, so an
+    admin authoring a connection cannot spell the override differently and win."""
+    from sqlalchemy import text
+
+    db, _secret = _seed_duckdb(tmp_path)
+    connector = Connector(f"duckdb:///{db}?{query}")
+    try:
+        with connector.engine.connect() as conn:
+            setting = conn.execute(text("SELECT current_setting('enable_external_access')"))
+            assert setting.scalar() is False
+    finally:
+        connector.engine.dispose()
+
+
 def test_duckdb_refuses_catalog_objects_backed_by_external_files(tmp_path):
     """CMP-1, the documented cost of the kill switch: a view DEFINED over an external
     file cannot be read either, so a DuckDB catalog that fronts a lake is unusable
@@ -340,6 +507,105 @@ def test_duckdb_refuses_catalog_objects_backed_by_external_files(tmp_path):
     notes = REGISTRY["duckdb"].notes
     assert "read_parquet" in notes
     assert "DSN query parameters are dropped" in notes
+
+
+# ---- SQLite: the ATTACH audit #267 asked for -------------------------------
+# AUDIT RESULT (verified against this driver, not assumed): a SQLite source opened
+# the way sa.py opens it — file:...?mode=ro&uri=true — will still ATTACH an arbitrary
+# database file and read it. mode=ro only makes the attachment read-only. There is no
+# SQLite equivalent of DuckDB's enable_external_access, so DuckDB's "the driver
+# refuses, the regex is a backstop" ordering is INVERTED here: everything stopping
+# cross-connection reads on SQLite lives in guard_sql — the SELECT/WITH-only rule,
+# the `attach` keyword denylist, and the multi-statement rule (with sqlite3's own
+# one-statement-per-execute as an accidental fourth). Three thin layers, none of them
+# a driver permission.
+#
+# These tests pin the app-level property — no connector API lets a query reach
+# another database file — rather than the driver's permissiveness, so adding a
+# driver-level control (e.g. sqlite3 set_authorizer denying SQLITE_ATTACH) later
+# strengthens the picture without breaking them.
+
+
+def _seed_sqlite_pair(tmp_path) -> tuple[str, str]:
+    """(source db, another connection's db holding a marker row)."""
+    import sqlite3
+
+    src = tmp_path / "shop.sqlite"
+    con = sqlite3.connect(str(src))
+    try:
+        con.execute("CREATE TABLE orders (id INTEGER, amount REAL)")
+        con.execute("INSERT INTO orders VALUES (1, 10.5)")
+        con.commit()
+    finally:
+        con.close()
+
+    other = tmp_path / "other_connection.sqlite"
+    con = sqlite3.connect(str(other))
+    try:
+        con.execute("CREATE TABLE connections (name TEXT, dsn TEXT)")
+        con.execute("INSERT INTO connections VALUES ('prod', 'CROSSCONNSECRET')")
+        con.commit()
+    finally:
+        con.close()
+    return src.as_posix(), other.as_posix()
+
+
+def test_sqlite_connector_never_reaches_another_database_file(tmp_path):
+    src, other = _seed_sqlite_pair(tmp_path)
+    connector = Connector(f"sqlite:///{src}")
+    try:
+        assert connector.run_select("SELECT * FROM orders").rows == [[1, 10.5]]  # still usable
+        for sql in (
+            f"ATTACH DATABASE '{other}' AS stolen",
+            f"attach database '{other}' as stolen",
+            f"/* c */ ATTACH DATABASE '{other}' AS stolen",
+            f"SELECT 1; ATTACH DATABASE '{other}' AS stolen",
+            f"WITH q AS (SELECT 1) ATTACH DATABASE '{other}' AS stolen",
+            f"SELECT * FROM read_blob('{other}')",
+            f"SELECT readfile('{other}')",
+            "SELECT * FROM stolen.connections",  # no attachment may survive on the pool
+        ):
+            with pytest.raises(Exception) as ei:  # noqa: PT011 - guard or driver
+                connector.run_select(sql, limit=10)
+            assert "CROSSCONNSECRET" not in str(ei.value)
+    finally:
+        connector.engine.dispose()
+
+
+def test_sqlite_attach_is_rejected_by_each_guard_rule_independently(tmp_path):
+    """Name the rule that refuses each spelling, so a change to any one of them shows
+    up as this test rather than as a silent narrowing of the SQLite defence."""
+    _src, other = _seed_sqlite_pair(tmp_path)
+    for sql, message in (
+        (
+            f"ATTACH DATABASE '{other}' AS stolen",
+            "Only SELECT / WITH queries are allowed",
+        ),
+        (
+            f"WITH q AS (SELECT 1) ATTACH DATABASE '{other}' AS stolen",
+            "Keyword not allowed in read-only queries: ATTACH",
+        ),
+        (
+            f"SELECT 1; ATTACH DATABASE '{other}' AS stolen",
+            "Multiple statements are not allowed",
+        ),
+    ):
+        with pytest.raises(SqlNotAllowed) as ei:
+            guard_sql(sql)
+        assert str(ei.value) == message, sql
+
+
+def test_sqlite_connection_is_read_only_at_the_driver_level(tmp_path):
+    """The mode=ro rewrite in sa.py, exercised rather than asserted as a string."""
+    src, _other = _seed_sqlite_pair(tmp_path)
+    connector = Connector(f"sqlite:///{src}")
+    try:
+        with connector.engine.connect() as conn:  # deliberately NOT via guard_sql
+            with pytest.raises(Exception) as ei:  # noqa: PT011 - driver-specific type
+                conn.exec_driver_sql("INSERT INTO orders VALUES (99, 1.0)")
+        assert "readonly database" in str(ei.value)
+    finally:
+        connector.engine.dispose()
 
 
 # ---- API surface ----

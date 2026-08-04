@@ -6,32 +6,51 @@ import { EmptyState, ErrorBox, Icon, SeverityDot, Spinner, StatCard, StatusPill 
 import { fmtNum, timeAgo } from "../lib/format";
 
 /** Active checks failing/erroring right now — error first. Each links to its
- *  detail; "view exceptions" deep-links into the (check-scoped) triage queue. */
+ *  detail; "view exceptions" deep-links into the (check-scoped) triage queue.
+ *
+ *  A check whose last run ERRORED never evaluated the data, so it captured no
+ *  exceptions — sending the analyst to a guaranteed-empty triage queue was the
+ *  dead end in #262. Errored rows say so and offer the repair route (the run,
+ *  which carries the driver error and the source-connection remedy) instead. */
 function FailingNowList({ checks }: { checks: Check[] }) {
   if (checks.length === 0) {
     return <EmptyState title="Nothing failing right now" hint="Active checks that fail or error will show up here." />;
   }
   return (
     <div className="dense-list">
-      {checks.map((c) => (
-        <div key={c.id} className="dense-item mywork-fail">
-          <SeverityDot severity={c.severity} />
-          <div className="mywork-fail-main">
-            <Link to={`/checks/${c.id}`} className="mywork-strong" title={c.name}>
-              {c.name}
-            </Link>
-            <div className="sub">
-              {c.dataset_name} · {timeAgo(c.last_run_at)}
+      {checks.map((c) => {
+        const broken = c.last_status === "error";
+        return (
+          <div key={c.id} className="dense-item mywork-fail">
+            <SeverityDot severity={c.severity} />
+            <div className="mywork-fail-main">
+              <Link to={`/checks/${c.id}`} className="mywork-strong" title={c.name}>
+                {c.name}
+              </Link>
+              <div className="sub">
+                {c.dataset_name} · {timeAgo(c.last_run_at)}
+                {broken && " · did not run — no exceptions captured"}
+              </div>
+            </div>
+            <div className="mywork-fail-side">
+              <StatusPill value={c.last_status} />
+              {broken ? (
+                <Link
+                  to={`/checks/${c.id}`}
+                  className="mywork-viewlink"
+                  title="This check errored instead of evaluating the data — it needs repair, not triage"
+                >
+                  Fix the check →
+                </Link>
+              ) : (
+                <Link to={`/exceptions?check_id=${c.id}&status=open`} className="mywork-viewlink">
+                  View exceptions →
+                </Link>
+              )}
             </div>
           </div>
-          <div className="mywork-fail-side">
-            <StatusPill value={c.last_status} />
-            <Link to={`/exceptions?check_id=${c.id}&status=open`} className="mywork-viewlink">
-              View exceptions →
-            </Link>
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
