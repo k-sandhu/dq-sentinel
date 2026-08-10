@@ -80,7 +80,7 @@ all-connectors = [
 # (ruff 0.16 added DTZ005/FURB122 and did exactly that). Dependabot proposes
 # bumps as reviewable PRs instead. Keep this in step with the version in
 # .github/workflows/ci.yml if that job ever installs ruff separately.
-dev = ["pytest>=8.2", "ruff==0.16.0"]
+dev = ["pytest>=8.2", "ruff==0.16.1"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
