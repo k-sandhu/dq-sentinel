@@ -28,10 +28,49 @@ from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.orm import Session
 
 from app.config import BACKEND_DIR
 from app.models import Base
+
+
+def test_schema_baseline_scope_migration_preserves_manual_pin():
+    from app.models import Connection, Dataset
+
+    tmp = Path(tempfile.mkdtemp(prefix="dq-scope-mig-"))
+    url = f"sqlite:///{(tmp / 'scope-migration.db').as_posix()}"
+    cfg = Config(str(BACKEND_DIR / "alembic.ini"))
+    cfg.set_main_option("sqlalchemy.url", url)
+    command.upgrade(cfg, "0008_data_contracts")
+    engine = create_engine(url)
+    with Session(engine) as db:
+        conn = Connection(name="migration source", kind="sqlite", dsn="sqlite://")
+        db.add(conn)
+        db.flush()
+        ds = Dataset(connection_id=conn.id, table_name="people")
+        db.add(ds)
+        db.flush()
+        dataset_id = ds.id
+        db.execute(text("INSERT INTO schema_snapshots "
+                        "(dataset_id, captured_at, source, columns, fingerprint, is_baseline) "
+                        "VALUES (:dataset_id, '2020-01-01', 'baseline', '[]', 'manual', true)"),
+                   {"dataset_id": dataset_id})
+        db.commit()
+    command.upgrade(cfg, "head")
+    with engine.begin() as conn:
+        assert conn.execute(text("SELECT baseline_scope FROM schema_snapshots")).scalar() == "manual"
+        conn.execute(text("INSERT INTO schema_snapshots "
+                          "(dataset_id, captured_at, source, columns, fingerprint, is_baseline, baseline_scope) "
+                          "VALUES (:dataset_id, '2020-01-02', 'baseline', '[]', 'contract', true, 'contract:1')"),
+                     {"dataset_id": dataset_id})
+    command.downgrade(cfg, "0008_data_contracts")
+    assert "baseline_scope" not in {c["name"] for c in inspect(engine).get_columns("schema_snapshots")}
+    with engine.connect() as conn:
+        pins = dict(conn.execute(text("SELECT fingerprint, is_baseline FROM schema_snapshots")).all())
+    assert pins == {"manual": 1, "contract": 0}
+    command.upgrade(cfg, "head")
+    engine.dispose()
 
 
 def _columns_by_table(engine) -> dict[str, set[str]]:

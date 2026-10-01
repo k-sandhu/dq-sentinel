@@ -25,6 +25,7 @@ from app.db import session_factory
 from app.llm import client as llm_client
 from app.llm import prompts
 from app.llm.client import format_rows, redact_rows
+from app.llm.privacy import guard_agent_sql, pii_for_connection
 from app.llm.providers import LlmResponse
 from app.models import (
     ChatMessage,
@@ -302,11 +303,7 @@ def _connector(db, connection_id: int) -> Connector:
 def _pii_for_connection(db, connection_id: int) -> list[str]:
     """Union of knowledge.pii_columns across the connection's datasets: chat
     queries are connection-scoped, so redact any column name marked PII anywhere."""
-    out: set[str] = set()
-    for ds in db.query(Dataset).filter(Dataset.connection_id == int(connection_id)).all():
-        if ds.knowledge and ds.knowledge.pii_columns:
-            out.update(str(c) for c in ds.knowledge.pii_columns)
-    return sorted(out)
+    return pii_for_connection(db, int(connection_id))
 
 
 def _system_prompt(db, user: User) -> str:
@@ -606,7 +603,8 @@ def _run_loop(
     def run_sql(inp: dict[str, Any]) -> str:
         connector = conn_for(inp.get("connection_id", 0), "editor")  # executes source SQL
         pii = _pii_for_connection(db, inp.get("connection_id", 0))
-        res = connector.run_select(str(inp.get("sql", "")), limit=settings.agent_query_row_limit)
+        sql = guard_agent_sql(str(inp.get("sql", "")), pii, connector.kind)
+        res = connector.run_select(sql, limit=min(25, settings.agent_query_row_limit))
         return format_rows(res.columns, redact_rows(res.columns, res.rows, pii))
 
     def get_code(inp: dict[str, Any]) -> str:
@@ -616,18 +614,20 @@ def _run_loop(
 
     def render_chart(inp: dict[str, Any]) -> str:
         connector = conn_for(inp.get("connection_id", 0), "editor")  # executes source SQL
+        pii = _pii_for_connection(db, inp.get("connection_id", 0))
+        sql = guard_agent_sql(str(inp.get("sql", "")), pii, connector.kind)
         viz_type = inp.get("chart_type") if inp.get("chart_type") in VIZ_TYPES else "table"
         panel = {
             "title": str(inp.get("title") or "Chart")[:300],
             "description": "",
-            "sql": str(inp.get("sql", "")),
+            "sql": sql,
             "viz": {"type": viz_type, "x": inp.get("x"), "y": inp.get("y")},
         }
-        # Same row cap as run_sql (200), not the 500-row dashboard cap (#159 / LLM-3).
+        # The chart may display the configured row cap; only its small preview
+        # enters model history (run_sql itself is capped at 25 sample rows).
         result = execute_panels(connector, [panel], limit=settings.agent_query_row_limit)[0]
         if result["error"]:
             raise ValueError(f"Chart query failed: {result['error']}")
-        pii = _pii_for_connection(db, inp.get("connection_id", 0))
         result["rows"] = redact_rows(result["columns"], result["rows"], pii)
         step(
             {

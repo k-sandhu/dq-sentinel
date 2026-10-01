@@ -22,6 +22,7 @@ from app.llm.client import (
     run_agent_loop,
     safe_user_error,
 )
+from app.llm.privacy import guard_agent_sql, pii_for_connection
 from app.models import Check, CheckRun, Dataset, ExceptionRecord, Profile, RcaSession, utcnow
 
 log = logging.getLogger(__name__)
@@ -274,12 +275,13 @@ def run_rca_session(session_id: int) -> None:
             dataset = db.get(Dataset, session.dataset_id)
             connector = connector_for(dataset.connection)
             ctx = _build_context(db, session)
-            pii = list(((ctx.get("knowledge") or {}).get("pii_columns")) or [])
+            pii = pii_for_connection(db, dataset.connection_id)
             transcript: list[dict[str, Any]] = []
 
             def execute_sql(inp: dict[str, Any]) -> str:
+                sql = guard_agent_sql(str(inp.get("sql", "")), pii, connector.kind)
                 res = connector.run_select(
-                    str(inp.get("sql", "")), limit=settings.agent_query_row_limit
+                    sql, limit=min(25, settings.agent_query_row_limit)
                 )
                 return format_rows(res.columns, redact_rows(res.columns, res.rows, pii))
 

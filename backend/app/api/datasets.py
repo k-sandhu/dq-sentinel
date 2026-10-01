@@ -243,7 +243,7 @@ def schema_history(
         .order_by(models.SchemaSnapshot.id.asc())
         .all()
     )
-    pinned = next((s.id for s in reversed(snaps) if s.is_baseline), None)
+    pinned = next((s.id for s in reversed(snaps) if s.is_baseline and s.baseline_scope == "manual"), None)
     out: list[schemas.SchemaSnapshotOut] = []
     prev_cols: list[dict] | None = None
     for s in snaps:
@@ -259,6 +259,7 @@ def schema_history(
                 captured_at=s.captured_at,
                 source=s.source,
                 is_baseline=s.is_baseline,
+                baseline_scope=s.baseline_scope,
                 fingerprint=s.fingerprint,
                 columns=s.columns,
                 change_summary=summary,
@@ -292,6 +293,7 @@ def pin_schema_baseline(
         captured_at=snap.captured_at,
         source=snap.source,
         is_baseline=snap.is_baseline,
+        baseline_scope=snap.baseline_scope,
         fingerprint=snap.fingerprint,
         columns=snap.columns,
     )

@@ -250,6 +250,56 @@ def test_ws_sql_error_fed_back_to_model(client, admin_headers, source_db, monkey
     assert "reads only" in final["content"]
 
 
+def test_agent_aliases_and_charts_cannot_leak_pii(client, admin_headers, source_db, monkeypatch):
+    conn_id = _setup_connection(client, admin_headers, source_db, "chat-pii-guard")
+    ds = client.post(
+        "/api/v1/datasets/register", headers=admin_headers,
+        json={"connection_id": conn_id, "tables": [{"table_name": "people"}]},
+    ).json()[0]
+    from app.db import session_factory
+    from app.models import TableKnowledge
+
+    with session_factory()() as db:
+        db.add(TableKnowledge(dataset_id=ds["id"], pii_columns=["email"]))
+        db.commit()
+
+    sid = client.post("/api/v1/chat/sessions", json={}, headers=admin_headers).json()["id"]
+    drop_history(sid)
+    unsafe_sql = [
+        "SELECT email AS e FROM people",
+        "SELECT LOWER(email) AS e FROM people",
+        "SELECT email || 'x' AS e FROM people",
+        "SELECT SUBSTR(email, 1, 3) AS e FROM people",
+        "WITH x AS (SELECT email AS e FROM people) SELECT e FROM x",
+        "SELECT * FROM people",
+    ]
+    calls = [ToolCall(f"unsafe-{i}", "run_sql", {
+        "connection_id": conn_id, "sql": sql, "purpose": "try a projection",
+    }) for i, sql in enumerate(unsafe_sql)]
+    calls.append(ToolCall("chart", "render_chart", {
+        "connection_id": conn_id, "sql": unsafe_sql[0], "chart_type": "table", "title": "PII chart",
+    }))
+    calls.append(ToolCall("count", "run_sql", {
+        "connection_id": conn_id, "sql": "SELECT COUNT(email) AS n FROM people", "purpose": "safe count",
+    }))
+    fake = FakeProvider([
+        LlmResponse(text="", tool_calls=calls, stop_reason="tool_use"),
+        LlmResponse(text="PII projections were blocked; aggregate counts still work."),
+    ])
+    monkeypatch.setattr(llm_client, "get_provider", lambda: fake)
+    token = admin_headers["Authorization"].removeprefix("Bearer ")
+    with client.websocket_connect(f"/api/v1/chat/ws/{sid}?token={token}") as ws:
+        ws.receive_json()
+        ws.send_json({"type": "user_message", "content": "Inspect email quality"})
+        events = _collect_until_done(ws)
+    results = fake.seen[-1][1][-1]["results"]
+    assert all(r["is_error"] and "PII" in r["content"] for r in results[:-1])
+    assert results[-1]["is_error"] is False
+    assert "195" in results[-1]["content"]
+    assert not any(e["type"] == "step" and e["step"]["type"] == "chart" for e in events)
+    assert "@example.com" not in str(results)
+
+
 def test_ws_without_provider_degrades(client, admin_headers):
     """No LLM configured -> error event + persisted explanatory message, socket stays sane."""
     token = _login(client, "admin@example.com", "admin123")

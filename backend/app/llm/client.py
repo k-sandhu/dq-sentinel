@@ -92,8 +92,8 @@ def format_rows(columns: list[str], rows: list[list[Any]], max_cell: int = 120) 
         return s[:max_cell] + "…" if len(s) > max_cell else s
 
     lines = [" | ".join(columns)]
-    lines += [" | ".join(cell(v) for v in r) for r in rows]
-    lines.append(f"({len(rows)} rows)")
+    lines += [" | ".join(cell(v) for v in r) for r in rows[:25]]
+    lines.append(f"({len(rows)} rows; showing first 25)" if len(rows) > 25 else f"({len(rows)} rows)")
     return "\n".join(lines)
 
 

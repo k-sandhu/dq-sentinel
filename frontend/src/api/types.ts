@@ -200,6 +200,7 @@ export interface SchemaSnapshot {
   captured_at: string;
   source: string; // profile | check | baseline
   is_baseline: boolean;
+  baseline_scope: string; // manual | contract:<id>
   fingerprint: string;
   columns: SchemaColumn[];
   change_summary: SchemaChangeSummary | null; // vs the chronologically previous snapshot

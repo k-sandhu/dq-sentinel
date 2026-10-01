@@ -13,6 +13,8 @@ import pandas as pd
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
 
+from app.config import get_settings
+
 # Name tokens that mark a column as an identifier or a code rather than a measurement.
 # A zone id, a vendor id or a payment type is numeric but has no magnitude: feeding it
 # to IsolationForest makes "row with a rare id" look like a data-quality problem (#263).
@@ -120,7 +122,8 @@ def detect_outliers(
 
     contamination = min(max(contamination, 1e-4), 0.5)
     forest = IsolationForest(
-        n_estimators=200, contamination=contamination, random_state=random_state, n_jobs=-1
+        n_estimators=200, contamination=contamination, random_state=random_state,
+        n_jobs=get_settings().ml_n_jobs,
     )
     labels = forest.fit_predict(X)
     scores = -forest.score_samples(X)  # higher = more anomalous

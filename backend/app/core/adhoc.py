@@ -121,8 +121,8 @@ def execute_panels(connector: Connector, panels: list[dict], limit: int = PANEL_
     """Run every panel; per-panel errors are reported, not raised.
 
     ``limit`` caps rows fetched per panel (default ``PANEL_ROW_CAP``). The chat
-    assistant passes the smaller agent row limit so ``render_chart`` returns no
-    more rows than ``run_sql`` — closing the 500-vs-200 exfil gap (#159 / LLM-3)."""
+    assistant passes its smaller agent row limit for chart displays; the preview
+    sent to the model is capped separately at 25 sample rows."""
     results = []
     for p in panels:
         item = dict(p)

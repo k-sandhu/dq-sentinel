@@ -11,8 +11,9 @@ started by hand consumes the slot it would otherwise have raced (#257).
 import logging
 import signal
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import date, datetime, timedelta
+from weakref import WeakKeyDictionary
 
 from sqlalchemy import delete, update
 from sqlalchemy.orm import Session
@@ -31,6 +32,9 @@ log = logging.getLogger(__name__)
 _last_audit_purge: datetime | None = None
 _last_sla_eval: datetime | None = None
 _last_scorecard_snapshot: date | None = None
+# Bound outstanding work per executor and retain check IDs to prevent overlapping
+# runs when a check takes longer than its interval. Polling happens on one thread.
+_pending: WeakKeyDictionary[ThreadPoolExecutor, dict[int, Future]] = WeakKeyDictionary()
 
 # Cooperative shutdown (#157). SIGTERM/SIGINT set this event; run_forever then
 # breaks its loop and drains in-flight checks (the ThreadPoolExecutor __exit__
@@ -209,6 +213,15 @@ def poll_once(executor: ThreadPoolExecutor) -> int:
     except Exception:  # noqa: BLE001 - escalation sends must never block check scheduling
         log.exception("Incident escalation pass failed; continuing")
     claimed = 0
+    pending = _pending.setdefault(executor, {})
+    for check_id, future in list(pending.items()):
+        if future.done():
+            del pending[check_id]
+            if not future.cancelled() and (exc := future.exception()) is not None:
+                log.error("Scheduled check %s failed", check_id, exc_info=(type(exc), exc, exc.__traceback__))
+    available = max(0, get_settings().worker_concurrency - len(pending))
+    if not available:
+        return 0
     with factory() as db:
         # Initialize schedules that were activated without a next_run_at
         missing = (
@@ -221,14 +234,23 @@ def poll_once(executor: ThreadPoolExecutor) -> int:
         if missing:
             db.commit()
 
-        due = (
+        due_query = (
             db.query(Check)
             .filter(Check.status == "active", Check.next_run_at.isnot(None), Check.next_run_at <= now)
-            .order_by(Check.next_run_at)
-            .limit(20)
+        )
+        if pending:
+            due_query = due_query.filter(Check.id.notin_(pending))
+        due = (
+            due_query.order_by(Check.next_run_at, Check.id)
+            # A malformed or lost-CAS candidate does not consume a slot. Inspect
+            # a small bounded batch so one poisoned schedule cannot hide siblings.
+            .limit(max(20, available))
             .all()
         )
         for check in due:
+            if claimed >= available:
+                break
+            scheduled_for = check.next_run_at
             try:
                 nxt = compute_next_run(check, now)
             except Exception:  # noqa: BLE001 - one bad schedule_expr must not wedge the pass
@@ -243,9 +265,16 @@ def poll_once(executor: ThreadPoolExecutor) -> int:
                 _cas_next_run(db, check, None)
                 continue
             if _cas_next_run(db, check, nxt):  # we won the claim
+                try:
+                    pending[check.id] = executor.submit(_execute, check.id)
+                except Exception:
+                    # Submission failures must not silently skip this schedule.
+                    db.execute(update(Check).where(Check.id == check.id, Check.next_run_at == nxt)
+                               .values(next_run_at=scheduled_for))
+                    db.commit()
+                    raise
                 claimed += 1
                 WORKER_CLAIMS.inc()
-                executor.submit(_execute, check.id)
     return claimed
 
 

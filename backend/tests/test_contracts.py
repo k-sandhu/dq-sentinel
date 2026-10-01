@@ -82,8 +82,9 @@ def test_contract_activate_materializes_checks_and_rolls_up_conformance(
     assert unknown_body["status"] == "unknown"
     assert next(c for c in unknown_body["clauses"] if c["kind"] == "schema")["status"] == "pass"
     hist = client.get(f"/api/v1/datasets/{ds['id']}/schema-history", headers=admin_headers).json()
-    pinned = next(s for s in hist["snapshots"] if s["id"] == hist["pinned_baseline_id"])
-    assert {c["name"] for c in pinned["columns"]} == {"id", "email", "created_at"}
+    assert hist["pinned_baseline_id"] is None  # activation does not create a manual pin
+    pinned = next(s for s in hist["snapshots"] if s["is_baseline"] and s["baseline_scope"] == f"contract:{contract['id']}")
+    assert {c["name"] for c in pinned["columns"]} == {"id", "email", "created_at", "optional_comment"}
 
     for check in body["created_checks"]:
         run = client.post(f"/api/v1/checks/{check['id']}/run", headers=admin_headers)
@@ -108,6 +109,65 @@ def test_contract_activate_materializes_checks_and_rolls_up_conformance(
     ).json()
     assert diff["added"]
     assert all(line.startswith("@@") for line in diff["changed"])
+
+
+def test_contract_pins_coexist_with_manual_baselines(client, admin_headers, source_db):
+    ds = _register_people(client, admin_headers, source_db)
+    path = f"/api/v1/datasets/{ds['id']}"
+    manual = client.post(f"{path}/schema-baseline", headers=admin_headers).json()
+    user_check = client.post("/api/v1/checks", headers=admin_headers, json={
+        "dataset_id": ds["id"], "name": "User schema pin", "check_type": "schema_change",
+        "params": {"baseline": "pinned", "on_added": True},
+    }).json()
+    contract = client.post(f"{path}/contract", headers=admin_headers, json={
+        "name": "Independent contract", "status": "active", "spec": {
+            "schema": {"columns": [{"name": "missing_required", "dtype": "TEXT"}], "allow_extra_columns": True},
+        },
+    }).json()
+    contract_check_id = contract["spec"]["materialized"]["checks"][0]["check_id"]
+    history = client.get(f"{path}/schema-history", headers=admin_headers).json()
+    assert history["pinned_baseline_id"] == manual["id"]
+    assert sum(s["is_baseline"] for s in history["snapshots"]) == 2
+    assert client.post(f"/api/v1/checks/{user_check['id']}/run", headers=admin_headers).json()["status"] == "pass"
+    assert client.post(f"/api/v1/checks/{contract_check_id}/run", headers=admin_headers).json()["status"] == "fail"
+
+    # A new manual pin must not change the contract's own requirements.
+    new_manual = client.post(f"{path}/schema-baseline", headers=admin_headers).json()
+    assert client.post(f"/api/v1/checks/{contract_check_id}/run", headers=admin_headers).json()["status"] == "fail"
+    history = client.get(f"{path}/schema-history", headers=admin_headers).json()
+    assert history["pinned_baseline_id"] == new_manual["id"]
+
+    # Simulate an active contract upgraded from the old unscoped schema. Its
+    # first run restores declared requirements without disturbing the manual pin.
+    from app.db import session_factory
+    from app.models import SchemaSnapshot
+
+    with session_factory()() as db:
+        db.query(SchemaSnapshot).filter(SchemaSnapshot.baseline_scope == f"contract:{contract['id']}").delete()
+        db.commit()
+    assert client.post(f"/api/v1/checks/{contract_check_id}/run", headers=admin_headers).json()["status"] == "fail"
+    history = client.get(f"{path}/schema-history", headers=admin_headers).json()
+    assert history["pinned_baseline_id"] == new_manual["id"]
+    assert sum(s["is_baseline"] for s in history["snapshots"]) == 2
+
+
+def test_live_contract_and_scheduled_check_agree_on_case_and_optional_columns(client, admin_headers, source_db):
+    ds = _register_people(client, admin_headers, source_db)
+    path = f"/api/v1/datasets/{ds['id']}/contract"
+    contract = client.post(path, headers=admin_headers, json={
+        "name": "Mixed case schema", "status": "active", "spec": {"schema": {
+            "columns": [
+                {"name": "ID", "dtype": "INTEGER", "required": True},
+                {"name": "EMAIL", "dtype": "TEXT", "required": False},
+                {"name": "optional_absent", "dtype": "TEXT", "required": False},
+            ], "allow_extra_columns": True,
+        }},
+    }).json()
+    check_id = contract["spec"]["materialized"]["checks"][0]["check_id"]
+    run = client.post(f"/api/v1/checks/{check_id}/run", headers=admin_headers).json()
+    assert run["status"] == "pass", run
+    live = client.get(f"{path}/{contract['id']}/conformance", headers=admin_headers).json()
+    assert live["status"] == "pass", live
 
 
 def test_contract_schema_break_and_odcs_round_trip(client, admin_headers, source_db):

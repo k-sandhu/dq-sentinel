@@ -13,6 +13,7 @@ from app.llm.client import (
     redact_rows,
     run_agent_loop,
 )
+from app.llm.privacy import guard_agent_sql
 
 log = logging.getLogger(__name__)
 
@@ -50,14 +51,16 @@ def explore_dataset(
     table_ref: str,
     profile_summary: str,
     knowledge: dict[str, Any] | None,
+    pii_columns: list[str] | None = None,
 ) -> dict[str, Any]:
     """Run the exploration loop. Returns {"insights": [...], "queries_run": n, "transcript": [...]}."""
     settings = get_settings()
-    pii = list((knowledge or {}).get("pii_columns") or [])
+    pii = list(set(pii_columns or []) | set((knowledge or {}).get("pii_columns") or []))
     transcript: list[dict[str, Any]] = []
 
     def execute_sql(inp: dict[str, Any]) -> str:
-        res = connector.run_select(str(inp.get("sql", "")), limit=settings.agent_query_row_limit)
+        sql = guard_agent_sql(str(inp.get("sql", "")), pii, connector.kind)
+        res = connector.run_select(sql, limit=min(25, settings.agent_query_row_limit))
         rows = redact_rows(res.columns, res.rows, pii)
         return format_rows(res.columns, rows)
 

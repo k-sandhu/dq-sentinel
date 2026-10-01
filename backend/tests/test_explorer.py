@@ -194,12 +194,13 @@ def test_explorer_sql_goes_through_guard_sql(source_db, monkeypatch, sql, expect
 
 
 # ----------------------------------------------------------------- PII redaction
-def test_explorer_redacts_pii_columns_before_the_prompt(source_db, monkeypatch):
+def test_explorer_blocks_pii_projections_before_the_prompt(source_db, monkeypatch):
     """Golden rule 8: columns listed in the dataset's knowledge pii_columns are
     redacted before any row text is sent to the model."""
     fake = FakeProvider(
         [
             _sql_call("t1", "SELECT id, email, status FROM people WHERE email IS NOT NULL"),
+            _sql_call("safe", "SELECT id, status FROM people WHERE email IS NOT NULL"),
             _submit("t2", {"insights": []}),
         ]
     )
@@ -209,10 +210,13 @@ def test_explorer_redacts_pii_columns_before_the_prompt(source_db, monkeypatch):
         Connector(source_db), "people", PROFILE, knowledge={"pii_columns": ["EMAIL"]}
     )
 
-    body = _results(out["transcript"])[0]["content"]
-    assert "[REDACTED]" in body
+    blocked, allowed = _results(out["transcript"])
+    body = blocked["content"]
+    assert blocked["error"] is True
+    assert "PII values cannot be selected" in body
     assert "@example.com" not in body  # no raw address survives, in any casing
-    assert "active" in body or "inactive" in body  # non-PII columns still readable
+    assert allowed["error"] is False
+    assert "active" in allowed["content"] or "inactive" in allowed["content"]
     # what the model actually received matches the transcript
     sent_back = fake.seen[-1][1][-1]["results"][0]["content"]
     assert "@example.com" not in sent_back

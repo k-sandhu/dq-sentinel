@@ -23,6 +23,8 @@ from app.connectors.safety import _DENY_FUNCTIONS, SqlNotAllowed, enforce_limit,
         "SELECT /* update; comment */ * FROM t",
         "SELECT $$delete; update$$ AS note",
         "SELECT $tag$drop; alter$tag$ AS note",
+        "SELECT '/*! INTO OUTFILE */' AS note",
+        'SELECT "into" FROM t',
     ],
 )
 def test_allows_readonly(sql):
@@ -43,6 +45,11 @@ def test_allows_readonly(sql):
         "SELECT * FROM t; SELECT * FROM u",
         "/* sneaky */ DELETE FROM t",
         "WITH x AS (SELECT 1) UPDATE t SET a = 1",
+        "SELECT * INTO new_table FROM t",
+        "SELECT * INTO OUTFILE '/tmp/leak' FROM t",
+        "SELECT 1 /*! INTO OUTFILE '/tmp/leak' */",
+        "SELECT 1 /*M!100100 INTO OUTFILE '/tmp/leak' */",
+        "SELECT 1 /*!50000 ; DROP TABLE t */",
         "EXPLAIN SELECT 1",  # not a plain SELECT/WITH
         'SELECT "delete" FROM t; DROP TABLE t',
         "SELECT `update` FROM t; UPDATE t SET a = 1",
@@ -491,3 +498,9 @@ def test_rejects_metadata_table_functions_that_disclose_server_paths(sql):
 )
 def test_metadata_rule_does_not_reject_legitimate_sql(sql):
     assert guard_sql(sql)
+
+
+@pytest.mark.parametrize("limit", [0, -1, -100])
+def test_enforce_limit_rejects_unbounded_limits(limit):
+    with pytest.raises(SqlNotAllowed, match="positive"):
+        enforce_limit("SELECT * FROM t", limit)

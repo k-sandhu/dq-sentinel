@@ -801,7 +801,9 @@ def _run_ml_outlier(ctx: CheckContext) -> CheckResult:
     settings = get_settings()
     explicit = ctx.params.get("columns") or None
     contamination = float(ctx.params.get("contamination", 0.005))
-    max_rows = int(ctx.params.get("max_rows", settings.ml_max_rows))
+    max_rows = min(int(ctx.params.get("max_rows") or settings.ml_max_rows), settings.ml_max_rows)
+    if max_rows < 1:
+        raise ValueError("ml_outlier 'max_rows' must be positive")
 
     df = ctx.connector.fetch_df(f"SELECT * FROM {ctx.ref}", limit=max_rows)
 
@@ -1528,14 +1530,36 @@ def _run_schema_change(ctx: CheckContext) -> CheckResult:
     cur_fp = sm.schema_fingerprint(current)
 
     dataset_id: int | None = None
+    baseline_scope = "manual"
+    contract = None
     if ctx.db is not None and ctx.check_id is not None:
         chk = ctx.db.get(Check, ctx.check_id)
         dataset_id = chk.dataset_id if chk else None
+        if chk is not None and chk.origin == "contract":
+            from app.core.contracts import MARKER_RE
+            from app.models import DataContract
+
+            match = MARKER_RE.search(chk.rationale or "")
+            if match:
+                contract = ctx.db.get(DataContract, int(match.group("contract_id")))
+                if contract is not None and contract.dataset_id == dataset_id:
+                    baseline_scope = f"contract:{contract.id}"
+                else:
+                    raise ValueError("Contract schema baseline owner not found")
+            else:
+                raise ValueError("Contract schema check is missing its owner marker")
 
     baseline: list[dict[str, Any]] | None = None
     if mode == "pinned":
         if ctx.db is not None and dataset_id is not None:
-            pin = sm.latest_pinned_baseline(ctx.db, dataset_id)
+            pin = sm.latest_pinned_baseline(ctx.db, dataset_id, scope=baseline_scope)
+            # Existing active contracts predate scoped pins. Recover their own
+            # declared baseline without ever replacing a user's manual pin.
+            if pin is None and contract is not None:
+                from app.core.contracts import _schema_monitor_columns, normalize_spec
+
+                pin = sm.pin_baseline(ctx.db, dataset_id,
+                                      _schema_monitor_columns(normalize_spec(contract.spec)), scope=baseline_scope)
             if pin is not None:
                 baseline = [c for c in pin.columns if c["name"] not in ignore]
     elif ctx.db is not None and ctx.check_id is not None:  # previous run
@@ -1553,7 +1577,7 @@ def _run_schema_change(ctx: CheckContext) -> CheckResult:
     # (pin first so the dedupe collapses the two into a single row).
     if ctx.db is not None and dataset_id is not None:
         if mode == "pinned" and baseline is None:
-            sm.pin_baseline(ctx.db, dataset_id, full)
+            sm.pin_baseline(ctx.db, dataset_id, full, scope=baseline_scope)
         sm.capture_schema_snapshot(ctx.db, dataset_id, full, source="check")
 
     base_metrics = {"baseline": mode, "schema": current, "schema_fingerprint": cur_fp, "column_count": len(current)}
@@ -1567,6 +1591,9 @@ def _run_schema_change(ctx: CheckContext) -> CheckResult:
         )
 
     delta = sm.diff_schemas(baseline, current)
+    # Optional contract columns may be absent; when present they still participate
+    # in type/nullability and extra-column checks just as in live conformance.
+    delta["removed"] = [c for c in delta["removed"] if c.get("required", True)]
     sample_rows: list[dict[str, Any]] = []
     reasons: list[str] = []
 

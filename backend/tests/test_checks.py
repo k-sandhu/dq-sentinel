@@ -44,6 +44,17 @@ def test_not_null(ctx_factory):
     assert all(row["email"] is None for row in r.sample_rows)
 
 
+def test_ml_check_cannot_override_process_sample_cap(ctx_factory, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.core import check_types
+
+    monkeypatch.setattr(check_types, "get_settings", lambda: SimpleNamespace(ml_max_rows=80, exception_sample_rows=5))
+    result = run_check_type(ctx_factory(params={"columns": ["age"], "max_rows": 10000}), "ml_outlier")
+    assert result.rows_evaluated == 80
+    assert len(result.sample_rows) <= 5
+
+
 def test_unique(ctx_factory):
     r = run_check_type(ctx_factory("email"), "unique")
     assert r.metrics["duplicate_groups"] == 1
