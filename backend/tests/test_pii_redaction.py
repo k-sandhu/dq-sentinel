@@ -61,6 +61,24 @@ def test_dynamic_projections_fail_closed(sql):
         guard_agent_sql(sql, ["email"], "duckdb")
 
 
+@pytest.mark.parametrize(
+    "kind,sql",
+    [
+        ("duckdb", "SELECT e FROM people CROSS JOIN UNNEST([email]) AS t(e)"),
+        ("duckdb", "SELECT value FROM people UNPIVOT (value FOR name IN (email))"),
+        ("clickhouse", "SELECT e FROM people ARRAY JOIN [email] AS e"),
+    ],
+)
+def test_reshaped_sources_cannot_rename_pii(kind, sql):
+    with pytest.raises(ValueError, match="PII"):
+        guard_agent_sql(sql, ["email"], kind)
+
+
+def test_named_table_joins_still_allow_safe_aggregates():
+    sql = "SELECT p.status, COUNT(a.email) FROM people p JOIN accounts a ON p.id = a.id GROUP BY p.status"
+    assert guard_agent_sql(sql, ["email"], "postgresql") == sql
+
+
 def test_no_pii_still_uses_source_guard():
     with pytest.raises(ValueError):
         guard_agent_sql("SELECT * INTO backup FROM people", [], "sqlite")

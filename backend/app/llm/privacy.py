@@ -43,6 +43,19 @@ def guard_agent_sql(sql: str, pii_columns: list[str], kind: str) -> str:
     if tree is None or not isinstance(tree, exp.Query):
         raise ValueError("Cannot verify PII safety for this SQL; use a SELECT")
 
+    # Row-producing functions and reshaping operators can move a protected value
+    # into a new name without a SELECT projection mentioning it (UNNEST(email),
+    # UNPIVOT, ARRAY JOIN, ...). Only named tables and inspected subqueries have
+    # a projection lineage we can verify here.
+    for source in tree.find_all(exp.From, exp.Join):
+        if not isinstance(source.this, (exp.Table, exp.Subquery)):
+            raise ValueError(
+                "Cannot verify PII safety for row-producing functions or reshaped sources; "
+                "use named tables and explicit non-PII columns"
+            )
+    if any(tree.find_all(exp.Pivot)):
+        raise ValueError("Cannot verify PII safety for PIVOT/UNPIVOT; use explicit non-PII columns")
+
     for table in tree.find_all(exp.Table):
         alias = table.args.get("alias")
         if not isinstance(table.this, exp.Identifier) or (alias and alias.args.get("columns")):
