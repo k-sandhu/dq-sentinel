@@ -57,10 +57,6 @@ def _slug(value: str, fallback: str) -> str:
     return slug or fallback
 
 
-def _column_map(columns: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    return {str(c.get("name") or "").lower(): c for c in columns if c.get("name")}
-
-
 def _latest_profile(db: Session, dataset_id: int) -> models.Profile | None:
     return (
         db.query(models.Profile)
@@ -353,7 +349,7 @@ def _materialized_check_items(spec: dict[str, Any] | None) -> list[dict[str, Any
 def _schema_monitor_columns(spec: dict[str, Any]) -> list[dict[str, Any]]:
     columns: list[dict[str, Any]] = []
     for idx, col in enumerate((spec.get("schema") or {}).get("columns") or []):
-        if not col.get("name") or not col.get("required", True):
+        if not col.get("name"):
             continue
         columns.append(
             {
@@ -361,6 +357,7 @@ def _schema_monitor_columns(spec: dict[str, Any]) -> list[dict[str, Any]]:
                 "dtype": str(col.get("dtype") or ""),
                 "nullable": bool(col.get("nullable", True)),
                 "ordinal": idx,
+                "required": bool(col.get("required", True)),
             }
         )
     return columns
@@ -526,7 +523,7 @@ def apply_contract(
     schema_columns = _schema_monitor_columns(spec)
     schema_pinned = False
     if schema_columns:
-        schema_monitor.pin_baseline(db, contract.dataset_id, schema_columns)
+        schema_monitor.pin_baseline(db, contract.dataset_id, schema_columns, scope=f"contract:{contract.id}")
         schema_pinned = True
 
     for desired in iter_materialized_check_specs(contract):
@@ -667,13 +664,14 @@ def _schema_conformance(contract: models.DataContract) -> dict[str, Any]:
             },
             "observed": {},
         }
-    current_by_name = _column_map(current)
+    collisions = schema_monitor.case_collisions(expected, current)
+    current_by_name = schema_monitor.columns_by_name(current, collisions)
     missing: list[str] = []
     type_mismatches: list[str] = []
     nullability_mismatches: list[str] = []
     for col in expected:
         name = str(col["name"])
-        observed = current_by_name.get(name.lower())
+        observed = current_by_name.get(schema_monitor.column_key(name, collisions))
         if observed is None:
             if col.get("required", True):
                 missing.append(name)
@@ -690,8 +688,8 @@ def _schema_conformance(contract: models.DataContract) -> dict[str, Any]:
                 nullability_mismatches.append(
                     f"{name}: expected nullable={want_nullable}, got nullable={got_nullable}"
                 )
-    expected_names = {str(c["name"]).lower() for c in expected}
-    extra = [c["name"] for c in current if str(c.get("name") or "").lower() not in expected_names]
+    expected_names = {schema_monitor.column_key(str(c["name"]), collisions) for c in expected}
+    extra = [c["name"] for c in current if schema_monitor.column_key(c["name"], collisions) not in expected_names]
     if schema.get("allow_extra_columns", True):
         extra = []
     problems = missing + type_mismatches + nullability_mismatches + [f"extra column {c}" for c in extra]

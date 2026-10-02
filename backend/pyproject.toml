@@ -32,11 +32,13 @@ classifiers = [
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
-    "sqlalchemy>=2.0.30",
+    # duckdb-engine 0.17 inherits PostgreSQL reflection that is incompatible
+    # with SQLAlchemy 2.1's pg_collation join. Keep sources on the supported line.
+    "sqlalchemy>=2.0.30,<2.1",
     "alembic>=1.13",
     "pydantic[email]>=2.8",
     "pydantic-settings>=2.4",
-    "PyJWT>=2.9",
+    "PyJWT>=2.15.1",
     "bcrypt>=4.2",
     "croniter>=3.0",
     "duckdb>=1.1",

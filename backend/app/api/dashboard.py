@@ -5,7 +5,7 @@ from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from app import models, schemas
-from app.api.serialize import check_out, dataset_out, run_out
+from app.api.serialize import check_out, dataset_out, runs_out
 from app.config import get_settings
 from app.core import scorecards
 from app.db import get_db
@@ -70,22 +70,24 @@ def summary(db: Session = Depends(get_db), user: models.User = Depends(get_curre
     pass_rate = round(week_counts.get("pass", 0) / week_total, 4) if week_total else None
 
     # daily trend over the last 14 days
+    # Aggregate in the metadata DB; never materialize the full run history.
+    day_expr = func.date(models.CheckRun.started_at)
     rows = (
         by_ds(
-            db.query(models.CheckRun).filter(models.CheckRun.started_at >= two_weeks_ago),
+            db.query(day_expr, models.CheckRun.status, func.count()).filter(
+                models.CheckRun.started_at >= two_weeks_ago, models.CheckRun.started_at <= now
+            ),
             models.CheckRun.dataset_id,
-        )
-        .order_by(models.CheckRun.started_at)
-        .all()
+        ).group_by(day_expr, models.CheckRun.status).all()
     )
     by_day: dict[str, dict[str, int]] = {}
     for i in range(13, -1, -1):
         day = (now - timedelta(days=i)).strftime("%Y-%m-%d")
         by_day[day] = {"pass": 0, "warn": 0, "fail": 0, "error": 0}
-    for r in rows:
-        day = r.started_at.strftime("%Y-%m-%d")
-        if day in by_day and r.status in by_day[day]:
-            by_day[day][r.status] += 1
+    for day, status, count in rows:
+        day = str(day)
+        if day in by_day and status in by_day[day]:
+            by_day[day][status] = count
     trend = [
         schemas.TrendPoint(
             day=d, passed=v["pass"], warned=v["warn"], failed=v["fail"], errored=v["error"]
@@ -122,7 +124,7 @@ def summary(db: Session = Depends(get_db), user: models.User = Depends(get_curre
         llm_enabled=get_settings().llm_enabled,
         pass_rate_7d=pass_rate,
         trend=trend,
-        recent_runs=[run_out(db, r) for r in recent],
+        recent_runs=runs_out(db, recent),
         worst_datasets=scorecards.annotate_monitoring(
             db, [dataset_out(db, d) for d in worst], worst
         ),

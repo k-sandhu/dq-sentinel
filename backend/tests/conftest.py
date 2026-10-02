@@ -22,6 +22,13 @@ os.environ["DQ_LLM_API_KEY"] = ""  # also shadow any ambient OPENROUTER_API_KEY
 os.environ["OPENROUTER_API_KEY"] = ""
 os.environ["DQ_LLM_MODEL"] = ""
 
+from app.config import Settings  # noqa: E402
+
+# env_ignore_empty means empty credential env vars do NOT shadow .env keys.
+# Never load a developer's real credentials/transports in the test process,
+# including after tests clear the settings cache.
+Settings.model_config = {**Settings.model_config, "env_file": None}
+
 from app.db import init_db, reset_for_tests  # noqa: E402
 
 reset_for_tests()

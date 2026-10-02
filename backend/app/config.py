@@ -211,10 +211,11 @@ class Settings(BaseSettings):
     exception_sample_rows: int = 50
     agent_query_row_limit: int = 200
     ml_max_rows: int = 50_000
+    ml_n_jobs: int = Field(default=1, ge=1)
 
     # Worker
     worker_poll_seconds: int = 15
-    worker_concurrency: int = 4
+    worker_concurrency: int = Field(default=1, ge=1)
     worker_metrics_port: int = 9100
     # SLA evaluation cadence (#102): the worker recomputes SLA rollups at most
     # this often (a row per SLA per pass, so don't set it as low as the poll).

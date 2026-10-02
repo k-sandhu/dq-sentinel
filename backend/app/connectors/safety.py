@@ -19,7 +19,7 @@ from dataclasses import dataclass
 # so inert values like 'create' and identifiers like "delete" don't trip it.
 _DENY = re.compile(
     r"\b(insert|update|delete|drop|alter|create|replace|attach|detach|copy|merge|grant|revoke"
-    r"|truncate|vacuum|pragma|call|exec|execute|reset|load|install|export|import|begin|commit|rollback)\b",
+    r"|truncate|vacuum|pragma|call|exec|execute|reset|load|install|export|import|begin|commit|rollback|into)\b",
     re.IGNORECASE,
 )
 
@@ -335,6 +335,10 @@ def _strip_comments_literals_and_identifiers(
             continue
 
         if sql.startswith("/*", i):
+            # MySQL/MariaDB execute these comments as SQL, including SELECT INTO
+            # and session changes. They must never be treated as inert text.
+            if sql.startswith("/*!", i) or sql[i:i + 4].lower() == "/*m!":
+                raise SqlNotAllowed("Executable SQL comments are not allowed")
             end = sql.find("*/", i + 2)
             if end == -1:
                 raise SqlNotAllowed("Unterminated block comment")
@@ -542,4 +546,7 @@ def guard_sql(sql: str) -> str:
 
 def enforce_limit(sql: str, limit: int) -> str:
     """Bound result size by wrapping the (already guarded) query in a LIMIT subquery."""
-    return f"SELECT * FROM (\n{sql}\n) AS _dq_guard LIMIT {int(limit)}"
+    limit = int(limit)
+    if limit < 1:
+        raise SqlNotAllowed("Query row limit must be positive")
+    return f"SELECT * FROM (\n{sql}\n) AS _dq_guard LIMIT {limit}"

@@ -364,6 +364,7 @@ def generate_checks(
             exploration = ds.exploration
             if body.explore:
                 from app.llm.explorer import explore_dataset
+                from app.llm.privacy import pii_for_connection
 
                 connector = connector_for(ds.connection)
                 exploration = explore_dataset(
@@ -373,6 +374,7 @@ def generate_checks(
                         profile_dict, (knowledge_dict or {}).get("pii_columns")
                     ),
                     knowledge_dict,
+                    pii_columns=pii_for_connection(db, ds.connection_id),
                 )
                 ds.exploration = {
                     "insights": exploration["insights"],

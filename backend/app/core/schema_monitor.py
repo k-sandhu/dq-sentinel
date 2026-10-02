@@ -13,11 +13,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.models import SchemaSnapshot
+
+log = logging.getLogger(__name__)
 
 
 def introspect_columns(connector: Any, table: str, schema: str | None = None) -> list[dict[str, Any]]:
@@ -57,19 +60,23 @@ def capture_schema_snapshot(
     return snap
 
 
-def latest_pinned_baseline(db: Session, dataset_id: int) -> SchemaSnapshot | None:
+def latest_pinned_baseline(db: Session, dataset_id: int, scope: str = "manual") -> SchemaSnapshot | None:
     return (
         db.query(SchemaSnapshot)
-        .filter(SchemaSnapshot.dataset_id == dataset_id, SchemaSnapshot.is_baseline.is_(True))
+        .filter(SchemaSnapshot.dataset_id == dataset_id, SchemaSnapshot.is_baseline.is_(True),
+                SchemaSnapshot.baseline_scope == scope)
         .order_by(SchemaSnapshot.id.desc())
         .first()
     )
 
 
-def pin_baseline(db: Session, dataset_id: int, columns: list[dict[str, Any]]) -> SchemaSnapshot:
-    """Pin ``columns`` as THE baseline for this dataset, clearing any previous pin."""
+def pin_baseline(
+    db: Session, dataset_id: int, columns: list[dict[str, Any]], scope: str = "manual"
+) -> SchemaSnapshot:
+    """Replace only this consumer's pin, preserving other consumers' baselines."""
     db.query(SchemaSnapshot).filter(
-        SchemaSnapshot.dataset_id == dataset_id, SchemaSnapshot.is_baseline.is_(True)
+        SchemaSnapshot.dataset_id == dataset_id, SchemaSnapshot.is_baseline.is_(True),
+        SchemaSnapshot.baseline_scope == scope,
     ).update({SchemaSnapshot.is_baseline: False}, synchronize_session=False)
     snap = SchemaSnapshot(
         dataset_id=dataset_id,
@@ -77,14 +84,39 @@ def pin_baseline(db: Session, dataset_id: int, columns: list[dict[str, Any]]) ->
         columns=columns,
         fingerprint=schema_fingerprint(columns),
         is_baseline=True,
+        baseline_scope=scope,
     )
     db.add(snap)
     db.flush()
     return snap
 
 
-def _by_name(columns: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    return {c["name"]: c for c in columns}
+def case_collisions(*schemas: list[dict[str, Any]]) -> set[str]:
+    """Identify case-sensitive duplicates without silently merging real columns.
+
+    Connectors fold identifiers differently (Postgres lower, Snowflake upper).
+    Match case-insensitively except names that collide within either schema.
+    """
+    collisions: set[str] = set()
+    for columns in schemas:
+        seen: set[str] = set()
+        for col in columns:
+            key = col["name"].lower()
+            if key in seen:
+                collisions.add(key)
+            seen.add(key)
+    if collisions:
+        log.warning("Column names collide after case folding; comparing those names exactly",
+                    extra={"event": "schema.case_collision"})
+    return collisions
+
+
+def column_key(name: str, collisions: set[str]) -> str:
+    return name if name.lower() in collisions else name.lower()
+
+
+def columns_by_name(columns: list[dict[str, Any]], collisions: set[str]) -> dict[str, dict[str, Any]]:
+    return {column_key(c["name"], collisions): c for c in columns}
 
 
 def diff_schemas(
@@ -96,7 +128,8 @@ def diff_schemas(
     ``added``/``removed`` are column dicts; ``type_changed``/``nullability_changed``
     are ``{column, from, to}``; ``reordered`` is a bool (same name set, new order).
     """
-    b, c = _by_name(baseline), _by_name(current)
+    collisions = case_collisions(baseline, current)
+    b, c = columns_by_name(baseline, collisions), columns_by_name(current, collisions)
     added = [c[n] for n in c if n not in b]
     removed = [b[n] for n in b if n not in c]
     type_changed: list[dict[str, Any]] = []
@@ -104,13 +137,13 @@ def diff_schemas(
     for n in c:
         if n in b:
             if str(b[n].get("dtype")) != str(c[n].get("dtype")):
-                type_changed.append({"column": n, "from": b[n].get("dtype"), "to": c[n].get("dtype")})
+                type_changed.append({"column": c[n]["name"], "from": b[n].get("dtype"), "to": c[n].get("dtype")})
             if bool(b[n].get("nullable")) != bool(c[n].get("nullable")):
                 nullability_changed.append(
-                    {"column": n, "from": bool(b[n].get("nullable")), "to": bool(c[n].get("nullable"))}
+                    {"column": c[n]["name"], "from": bool(b[n].get("nullable")), "to": bool(c[n].get("nullable"))}
                 )
-    order_b = [col["name"] for col in baseline if col["name"] in c]
-    order_c = [col["name"] for col in current if col["name"] in b]
+    order_b = [column_key(col["name"], collisions) for col in baseline if column_key(col["name"], collisions) in c]
+    order_c = [column_key(col["name"], collisions) for col in current if column_key(col["name"], collisions) in b]
     reordered = set(b) == set(c) and order_b != order_c
     return {
         "added": added,

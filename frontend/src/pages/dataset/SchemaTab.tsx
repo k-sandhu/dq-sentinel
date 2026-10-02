@@ -96,6 +96,9 @@ export default function SchemaTab({ datasetId }: { datasetId: number }) {
                       <span style={{ fontWeight: 600, color: "var(--text-dark)" }}>{timeAgo(s.captured_at)}</span>
                       <span className="sub" style={{ display: "flex", gap: 4, alignItems: "center" }}>
                         {s.id === pinnedId && <span title="Pinned baseline">★</span>}
+                        {s.is_baseline && s.baseline_scope.startsWith("contract:") && (
+                          <span title={`Contract baseline (${s.baseline_scope})`}>★ contract</span>
+                        )}
                         <span className="badge kind">{s.source}</span>
                       </span>
                     </div>

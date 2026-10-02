@@ -1,8 +1,9 @@
 """Shared ORM -> schema serializers that need joined display fields."""
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 
-from sqlalchemy.orm import Session
+from sqlalchemy import func
+from sqlalchemy.orm import Session, joinedload
 
 from app import models, schemas
 
@@ -91,6 +92,24 @@ def run_out(
         .count()
     )
     return out
+
+
+def runs_out(db: Session, runs: Sequence[models.CheckRun]) -> list[schemas.RunOut]:
+    """Serialize a page with two bounded queries instead of per-row lookups."""
+    if not runs:
+        return []
+    ids = [r.id for r in runs]
+    loaded = {
+        r.id: r for r in db.query(models.CheckRun)
+        .options(joinedload(models.CheckRun.check).joinedload(models.Check.dataset))
+        .filter(models.CheckRun.id.in_(ids)).all()
+    }
+    counts = dict(
+        db.query(models.ExceptionRecord.run_id, func.count(models.ExceptionRecord.id))
+        .filter(models.ExceptionRecord.run_id.in_(ids))
+        .group_by(models.ExceptionRecord.run_id).all()
+    )
+    return [run_out(db, loaded[r.id], counts.get(r.id, 0)) for r in runs]
 
 
 def _display_name(user: models.User | None) -> str | None:

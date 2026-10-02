@@ -9,9 +9,37 @@ import tempfile
 import uuid
 from pathlib import Path
 
+import pytest
+
 from app.core.runner import run_check
 from app.db import init_db, session_factory
 from app.models import Check, Connection, Dataset, ExceptionRecord, SchemaSnapshot
+
+
+@pytest.mark.parametrize("before,after", [("CustomerID", "customerid"), ("customerid", "CustomerID")])
+def test_schema_comparison_ignores_case_and_preserves_display_names(before, after):
+    from app.core.schema_monitor import diff_schemas
+
+    column = {"dtype": "INTEGER", "nullable": False, "ordinal": 0}
+    baseline = [{**column, "name": before}]
+    current = [{**column, "name": after}]
+    assert diff_schemas(baseline, current) == {
+        "added": [], "removed": [], "type_changed": [], "nullability_changed": [], "reordered": False,
+    }
+    assert diff_schemas(baseline, [])["removed"][0]["name"] == before
+    changed = diff_schemas(baseline, [{**current[0], "dtype": "TEXT"}])
+    assert changed["type_changed"][0]["column"] == after
+
+
+def test_case_collisions_compare_exactly_without_losing_columns(caplog):
+    from app.core.schema_monitor import diff_schemas
+
+    column = {"dtype": "INTEGER", "nullable": False, "ordinal": 0}
+    baseline = [{**column, "name": "id"}, {**column, "name": "ID", "ordinal": 1}]
+    assert diff_schemas(baseline, baseline)["removed"] == []
+    delta = diff_schemas(baseline, [baseline[1]])
+    assert [c["name"] for c in delta["removed"]] == ["id"]
+    assert "comparing those names exactly" in caplog.text
 
 
 def _source(cols_sql: str) -> tuple[str, Path]:

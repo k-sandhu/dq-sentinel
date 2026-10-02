@@ -245,6 +245,7 @@ class SchemaSnapshotOut(BaseModel):
     captured_at: datetime
     source: str
     is_baseline: bool
+    baseline_scope: str = "manual"
     fingerprint: str
     columns: list[SchemaColumnOut]
     change_summary: SchemaChangeSummary | None = None  # vs the chronologically previous snapshot

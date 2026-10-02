@@ -144,8 +144,7 @@ class SchemaSnapshot(Base):
     Captured (deduped by ``fingerprint``) on each profile run and on each
     ``schema_change`` check run. Powers the schema-history timeline and the
     ``schema_change`` check's pinned baseline. ``source``: profile | check |
-    baseline; ``is_baseline`` marks the single pinned baseline used by
-    ``baseline=pinned`` checks.
+    baseline; ``baseline_scope`` separates manual pins from contract pins.
     """
 
     __tablename__ = "schema_snapshots"
@@ -158,6 +157,7 @@ class SchemaSnapshot(Base):
     columns: Mapped[list] = mapped_column(JSON, default=list)  # [{name, dtype, nullable, ordinal}]
     fingerprint: Mapped[str] = mapped_column(String(64), default="")
     is_baseline: Mapped[bool] = mapped_column(Boolean, default=False)
+    baseline_scope: Mapped[str] = mapped_column(String(80), default="manual", server_default="manual")
 
 
 class TableKnowledge(Base):

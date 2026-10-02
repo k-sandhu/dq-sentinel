@@ -2,8 +2,29 @@ from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from app.core.ml import detect_outliers, looks_like_identifier_name, zscore_outliers
+
+
+@pytest.mark.parametrize("jobs", [1, 2])
+def test_isolation_forest_respects_cpu_budget(monkeypatch, jobs):
+    from types import SimpleNamespace
+
+    from app.core import ml
+
+    actual_forest = ml.IsolationForest
+    observed = []
+
+    def forest(**kwargs):
+        observed.append(kwargs["n_jobs"])
+        # Keep the test itself single-threaded even when testing the override.
+        return actual_forest(**{**kwargs, "n_jobs": 1})
+
+    monkeypatch.setattr(ml, "get_settings", lambda: SimpleNamespace(ml_n_jobs=jobs))
+    monkeypatch.setattr(ml, "IsolationForest", forest)
+    detect_outliers(_frame_with_outliers()[0])
+    assert observed == [jobs]
 
 
 def _frame_with_outliers() -> tuple[pd.DataFrame, list[int]]:

@@ -1,10 +1,105 @@
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 from app.core.runner import compute_next_run
 from app.core.scheduler import claim_due_slot, poll_once
 from app.db import init_db, session_factory
 from app.models import Check, CheckRun, Connection, Dataset, ExceptionRecord, utcnow
+
+
+def test_scheduler_bounds_pending_work_and_does_not_overlap(source_db, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.core import scheduler
+
+    monkeypatch.setattr(scheduler, "get_settings", lambda: SimpleNamespace(worker_concurrency=2))
+    monkeypatch.setattr(scheduler, "purge_audit_log", lambda now: 0)
+    monkeypatch.setattr(scheduler, "maybe_evaluate_slas", lambda now: 0)
+    monkeypatch.setattr(scheduler, "maybe_capture_scorecard_snapshots", lambda now: 0)
+    monkeypatch.setattr(scheduler, "process_due_escalations", lambda db, now: 0)
+
+    class HeldExecutor:
+        def __init__(self):
+            self.submitted = []
+
+        def submit(self, fn, check_id):
+            future = Future()
+            self.submitted.append((check_id, future))
+            return future
+
+    init_db()
+    with session_factory()() as db:
+        conn = Connection(name="scheduler-backpressure", kind="sqlite", dsn=source_db)
+        db.add(conn)
+        db.flush()
+        ds = Dataset(connection_id=conn.id, table_name="people")
+        db.add(ds)
+        db.flush()
+        due_at = datetime.now() - timedelta(days=90)
+        checks = [Check(dataset_id=ds.id, name=f"held-{i}", check_type="not_null", column_name="email",
+                        status="active", schedule_kind="interval", schedule_expr="1", next_run_at=due_at)
+                  for i in range(3)]
+        db.add_all(checks)
+        db.commit()
+        ids = [c.id for c in checks]
+    executor = HeldExecutor()
+    try:
+        assert poll_once(executor) == 2
+        assert [i for i, _ in executor.submitted] == ids[:2]
+        for _ in range(3):
+            assert poll_once(executor) == 0
+        with session_factory()() as db:
+            assert db.get(Check, ids[2]).next_run_at == due_at  # unclaimed work stays due
+            db.get(Check, ids[0]).next_run_at = due_at  # first check becomes due while still running
+            db.commit()
+        executor.submitted[1][1].set_result(None)  # free one slot
+        assert poll_once(executor) == 1
+        assert [i for i, _ in executor.submitted] == ids  # first check was not submitted twice
+    finally:
+        with session_factory()() as db:
+            db.query(Check).filter(Check.id.in_(ids)).update({Check.status: "archived"})
+            db.commit()
+        scheduler._pending.pop(executor, None)
+
+
+def test_scheduler_restores_due_time_if_submit_fails(source_db, monkeypatch):
+    import pytest
+
+    from app.core import scheduler
+
+    for name in ("purge_audit_log", "maybe_evaluate_slas", "maybe_capture_scorecard_snapshots"):
+        monkeypatch.setattr(scheduler, name, lambda now: 0)
+    monkeypatch.setattr(scheduler, "process_due_escalations", lambda db, now: 0)
+
+    class ClosedExecutor:
+        def submit(self, *args):
+            raise RuntimeError("executor closed")
+
+    init_db()
+    due_at = datetime.now() - timedelta(days=100)
+    with session_factory()() as db:
+        conn = Connection(name="scheduler-submit-fail", kind="sqlite", dsn=source_db)
+        db.add(conn)
+        db.flush()
+        ds = Dataset(connection_id=conn.id, table_name="people")
+        db.add(ds)
+        db.flush()
+        check = Check(dataset_id=ds.id, name="submit failure", check_type="not_null", column_name="email",
+                      status="active", schedule_kind="interval", schedule_expr="1", next_run_at=due_at)
+        db.add(check)
+        db.commit()
+        check_id = check.id
+    executor = ClosedExecutor()
+    try:
+        with pytest.raises(RuntimeError, match="executor closed"):
+            poll_once(executor)
+        with session_factory()() as db:
+            assert db.get(Check, check_id).next_run_at == due_at
+    finally:
+        with session_factory()() as db:
+            db.get(Check, check_id).status = "archived"
+            db.commit()
+        scheduler._pending.pop(executor, None)
 
 
 def test_compute_next_run_interval_and_cron():

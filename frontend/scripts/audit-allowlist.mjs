@@ -22,30 +22,11 @@
  *   - Severity is ignored on purpose: a `moderate` that is not allowlisted
  *     fails just like a `critical`. `--audit-level` is deliberately unused.
  *
- * NEVER run `npm audit fix --force` to clear a react-router finding: npm's
- * suggested "fix" for GHSA-qwww-vcr4-c8h2 is to install react-router@7.11.0,
- * which is BELOW 7.18.0 and silently reintroduces four advisories including
- * the open redirect (GHSA-wrjc-x8rr-h8h6). Verified 2026-07-30.
  */
 import { readFileSync } from "node:fs";
 
 /** @type {{id: string, package: string, expires: string, why: string}[]} */
-const ALLOW = [
-  {
-    id: "GHSA-qwww-vcr4-c8h2",
-    package: "react-router",
-    expires: "2026-10-31",
-    why:
-      "False positive from a stale advisory range, not an unpatched hole. (1) The " +
-      "advisory states it only affects apps using the unstable RSC APIs; this app is a " +
-      "client-only SPA (plain <BrowserRouter> + Vite, no SSR/RSC, no data router). " +
-      "(2) The fix is ALREADY in the version we run: 7.18.2 backported the 8.3.0 CSRF " +
-      "restructure (react-router #15353, published after 8.3.0's #15311) — the shipped " +
-      "dist hoists the CSRF check into its own try and gates the action behind " +
-      "`if (!potentialCSRFAttackError)`, identical to 8.3.0 and absent in 7.18.1. The " +
-      "GHSA range `>=7.12.0 <8.3.0` was never amended to carve out the patched 7.x line.",
-  },
-];
+const ALLOW = [];
 
 const raw = readFileSync(0, "utf8").trim();
 if (!raw) {
