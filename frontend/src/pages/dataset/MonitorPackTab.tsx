@@ -3,11 +3,12 @@ import { useState } from "react";
 import { Link } from "react-router";
 import { api } from "../../api/client";
 import { qk } from "../../api/queryKeys";
-import type { Check, MonitorKind, MonitorPackConfig, MonitorPackSkipped, MonitorPackState } from "../../api/types";
+import type { Check, MonitorKind, MonitorPackConfig, MonitorPackSkipped, MonitorPackState, Run } from "../../api/types";
 import { canEdit, useAuth } from "../../auth";
 import { checkTypeLabel } from "../../lib/checkMeta";
 import { describeSchedule, fmtDateTime, timeAgo } from "../../lib/format";
 import { EmptyState, ErrorBox, Icon, Modal, SeverityBadge, Spinner, StatusPill } from "../../components/ui";
+import { MonitorEvidence } from "./MonitorEvidence";
 
 const MONITOR_KINDS: { key: MonitorKind; label: string; hint: string }[] = [
   { key: "freshness", label: "Freshness", hint: "Late or stale arrivals against the table's temporal column." },
@@ -307,6 +308,7 @@ export default function MonitorPackTab({
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: qk.monitorPack.detail(datasetId) });
+    qc.invalidateQueries({ queryKey: ["monitor-evidence", datasetId] });
     qc.invalidateQueries({ queryKey: qk.checks.all });
     qc.invalidateQueries({ queryKey: qk.datasets.all });
   };
@@ -325,6 +327,18 @@ export default function MonitorPackTab({
     },
   });
 
+  const evidenceIds = (packQuery.data?.managed_checks ?? []).slice(0, 100).map((check) => check.id);
+  const evidenceQuery = useQuery({
+    queryKey: ["monitor-evidence", datasetId, evidenceIds],
+    queryFn: () => {
+      const params = new URLSearchParams({ dataset_id: String(datasetId) });
+      evidenceIds.forEach((id) => params.append("check_id", String(id)));
+      return api.get<Run[]>(`/runs/monitor-history?${params}`);
+    },
+    enabled: evidenceIds.length > 0,
+    refetchInterval: 30_000,
+  });
+
   const pack = packQuery.data;
   const checks = pack?.managed_checks ?? [];
   const skipped = pack?.reconciliation?.skipped ?? [];
@@ -337,95 +351,98 @@ export default function MonitorPackTab({
     <div className="monitor-pack-tab">
       <ErrorBox error={packQuery.error || reconcile.error || updatePack.error} />
 
-      {needsProfile && (
-        <div className="card card-pad" style={{ marginBottom: 16 }}>
-          <EmptyState
-            title="Profile this dataset before reconciling monitors"
-            hint="Monitor packs need column stats and table facts before freshness, volume, schema, and drift checks can be managed."
-          >
-            {editable && onProfileNow && (
-              <button className="primary" onClick={onProfileNow} disabled={profiling}>
-                {profiling ? <span className="spinner" style={{ width: 13, height: 13 }} /> : <Icon name="refresh" size={14} />}
-                {profiling ? "Profiling..." : "Profile now"}
-              </button>
-            )}
-          </EmptyState>
-        </div>
-      )}
-
       {pack && (
         <>
-          <div className="grid cols-4" style={{ marginBottom: 16 }}>
-            <div className="card stat-card">
-              <div className="label">Pack state</div>
-              <div className="value" style={{ fontSize: 18 }}>
-                <StatusPill value={packStatus(pack)} />
+          <MonitorEvidence checks={checks} runs={evidenceQuery.data ?? []} error={evidenceQuery.error} loading={evidenceIds.length > 0 && evidenceQuery.isLoading} />
+          <details className="monitor-administration">
+            <summary>Pack administration</summary>
+            {needsProfile && (
+              <div className="card card-pad" style={{ marginBottom: 16 }}>
+                <EmptyState
+                  title="Profile this dataset before reconciling monitors"
+                  hint="Monitor packs need column stats and table facts before freshness, volume, schema, and drift checks can be managed."
+                >
+                  {editable && onProfileNow && (
+                    <button className="primary" onClick={onProfileNow} disabled={profiling}>
+                      {profiling ? <span className="spinner" style={{ width: 13, height: 13 }} /> : <Icon name="refresh" size={14} />}
+                      {profiling ? "Profiling..." : "Profile now"}
+                    </button>
+                  )}
+                </EmptyState>
               </div>
-              <div className="hint">{pack.reconciliation?.message || pack.last_error || "Managed monitors stay aligned with this dataset."}</div>
-            </div>
-            <div className="card stat-card">
-              <div className="label">Last reconciled</div>
-              <div className="value" style={{ fontSize: 18 }}>{fmtDateTime(pack.last_reconciled_at)}</div>
-              <div className="hint">{timeAgo(pack.last_reconciled_at)}</div>
-            </div>
-            <div className="card stat-card">
-              <div className="label">Managed checks</div>
-              <div className="value">{checks.length}</div>
-              <div className="hint">{MONITOR_KINDS.filter((k) => config.monitors[k.key]).length} kinds enabled</div>
-            </div>
-            <div className="card stat-card">
-              <div className="label">Cadence</div>
-              <div className="value" style={{ fontSize: 15, lineHeight: 1.35 }}>{cadenceLabel(config)}</div>
-              <div className="hint">Per-kind interval schedule</div>
-            </div>
-          </div>
-
-          <div className="toolbar">
-            {editable ? (
-              <>
-                <button className="primary" onClick={() => reconcile.mutate()} disabled={reconcile.isPending || needsProfile}>
-                  {reconcile.isPending ? <span className="spinner" style={{ width: 13, height: 13 }} /> : <Icon name="refresh" size={14} />}
-                  {reconcile.isPending ? "Reconciling..." : "Reconcile now"}
-                </button>
-                <button onClick={() => updatePack.mutate({ enabled: !pack.enabled })} disabled={updatePack.isPending}>
-                  {pack.enabled ? "Disable pack" : "Enable pack"}
-                </button>
-                <button onClick={() => setConfigOpen(true)}>Configure</button>
-              </>
-            ) : (
-              <span className="badge">viewer: read only</span>
             )}
-            <div className="right">
-              <Link to={`/datasets/${datasetId}/checks`} className="btn">
-                Open checks tab
-              </Link>
+            <div className="grid cols-4" style={{ marginBottom: 16 }}>
+              <div className="card stat-card">
+                <div className="label">Pack state</div>
+                <div className="value" style={{ fontSize: 18 }}>
+                  <StatusPill value={packStatus(pack)} />
+                </div>
+                <div className="hint">{pack.reconciliation?.message || pack.last_error || "Managed monitors stay aligned with this dataset."}</div>
+              </div>
+              <div className="card stat-card">
+                <div className="label">Last reconciled</div>
+                <div className="value" style={{ fontSize: 18 }}>{fmtDateTime(pack.last_reconciled_at)}</div>
+                <div className="hint">{timeAgo(pack.last_reconciled_at)}</div>
+              </div>
+              <div className="card stat-card">
+                <div className="label">Managed checks</div>
+                <div className="value">{checks.length}</div>
+                <div className="hint">{MONITOR_KINDS.filter((k) => config.monitors[k.key]).length} kinds enabled</div>
+              </div>
+              <div className="card stat-card">
+                <div className="label">Cadence</div>
+                <div className="value" style={{ fontSize: 15, lineHeight: 1.35 }}>{cadenceLabel(config)}</div>
+                <div className="hint">Per-kind interval schedule</div>
+              </div>
             </div>
-          </div>
 
-          {pack.last_error && <div className="error-box">{pack.last_error}</div>}
-
-          {checks.length === 0 && !needsProfile && (
-            <div className="card" style={{ marginBottom: 16 }}>
-              <EmptyState title="No managed checks yet" hint="Reconcile the pack to create or refresh dataset-level monitors.">
-                {editable && (
-                  <button className="primary" onClick={() => reconcile.mutate()} disabled={reconcile.isPending}>
-                    <Icon name="refresh" size={14} /> Reconcile now
+            <div className="toolbar">
+              {editable ? (
+                <>
+                  <button className="primary" onClick={() => reconcile.mutate()} disabled={reconcile.isPending || needsProfile}>
+                    {reconcile.isPending ? <span className="spinner" style={{ width: 13, height: 13 }} /> : <Icon name="refresh" size={14} />}
+                    {reconcile.isPending ? "Reconciling..." : "Reconcile now"}
                   </button>
-                )}
-              </EmptyState>
+                  <button onClick={() => updatePack.mutate({ enabled: !pack.enabled })} disabled={updatePack.isPending}>
+                    {pack.enabled ? "Disable pack" : "Enable pack"}
+                  </button>
+                  <button onClick={() => setConfigOpen(true)}>Configure</button>
+                </>
+              ) : (
+                <span className="badge">viewer: read only</span>
+              )}
+              <div className="right">
+                <Link to={`/datasets/${datasetId}/checks`} className="btn">
+                  Open checks tab
+                </Link>
+              </div>
             </div>
-          )}
 
-          <div className="monitor-group-grid">
-            {MONITOR_KINDS.map((kind) => (
-              <MonitorGroup
-                key={kind.key}
-                kind={kind}
-                checks={checks.filter((check) => monitorKind(check) === kind.key)}
-                skipped={skipped.filter((row) => row.kind === kind.key)}
-              />
-            ))}
-          </div>
+            {pack.last_error && <div className="error-box">{pack.last_error}</div>}
+
+            {checks.length === 0 && !needsProfile && (
+              <div className="card" style={{ marginBottom: 16 }}>
+                <EmptyState title="No managed checks yet" hint="Reconcile the pack to create or refresh dataset-level monitors.">
+                  {editable && (
+                    <button className="primary" onClick={() => reconcile.mutate()} disabled={reconcile.isPending}>
+                      <Icon name="refresh" size={14} /> Reconcile now
+                    </button>
+                  )}
+                </EmptyState>
+              </div>
+            )}
+
+            <div className="monitor-group-grid">
+              {MONITOR_KINDS.map((kind) => (
+                <MonitorGroup
+                  key={kind.key}
+                  kind={kind}
+                  checks={checks.filter((check) => monitorKind(check) === kind.key)}
+                  skipped={skipped.filter((row) => row.kind === kind.key)}
+                />
+              ))}
+            </div>
+          </details>
         </>
       )}
 

@@ -174,3 +174,30 @@ def test_malformed_numeric_config_falls_back_during_reconcile(client, admin_head
     assert volume["params"]["multiplier"] == 3.0
     if drift is not None:
         assert drift["params"]["threshold"] == 0.2
+
+def test_monitor_history_is_bounded_and_scoped_to_dataset(client, admin_headers, source_db):
+    ds = _register_dataset(client, admin_headers, source_db)
+    other = _register_dataset(client, admin_headers, source_db)
+    with session_factory()() as db:
+        first = models.Check(dataset_id=ds["id"], name="first", check_type="row_count_anomaly")
+        second = models.Check(dataset_id=ds["id"], name="second", check_type="row_count_anomaly")
+        foreign = models.Check(dataset_id=other["id"], name="foreign", check_type="row_count_anomaly")
+        db.add_all([first, second, foreign])
+        db.flush()
+        ids = [first.id, second.id, foreign.id]
+        for check in [first, second, foreign]:
+            for n in range(7):
+                db.add(models.CheckRun(check_id=check.id, dataset_id=check.dataset_id,
+                                       status="error" if n == 6 else "pass", metrics={"row_count": n}))
+        db.commit()
+    params = [("dataset_id", ds["id"])] + [("check_id", i) for i in ids]
+    response = client.get("/api/v1/runs/monitor-history", params=params, headers=admin_headers)
+    assert response.status_code == 200, response.text
+    runs = response.json()
+    assert len(runs) == 10
+    assert {r["check_id"] for r in runs} == set(ids[:2])
+    for check_id in ids[:2]:
+        history = [r for r in runs if r["check_id"] == check_id]
+        assert history[0]["status"] == "error"
+        assert [r["metrics"]["row_count"] for r in history] == [6, 5, 4, 3, 2]
+    assert client.get("/api/v1/runs/monitor-history", params=[("dataset_id", ds["id"])] + [("check_id", 1)] * 101, headers=admin_headers).status_code == 422

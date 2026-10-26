@@ -87,6 +87,50 @@ def list_runs(
     return [run_out(db, r, exception_count=counts.get(r.id, 0)) for r in runs]
 
 
+@router.get("/monitor-history", response_model=list[schemas.RunOut])
+def monitor_history(
+    dataset_id: int,
+    check_id: list[int] = Query(default=[], max_length=100),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Return at most five recent runs per requested check in one scoped batch."""
+    assert_dataset_visible(db, user, dataset_id)
+    if not check_id:
+        return []
+    ranked = (
+        db.query(
+            models.CheckRun.id.label("id"),
+            func.row_number().over(
+                partition_by=models.CheckRun.check_id,
+                order_by=models.CheckRun.id.desc(),
+            ).label("rank"),
+        )
+        .join(models.Check, models.Check.id == models.CheckRun.check_id)
+        .filter(
+            models.CheckRun.dataset_id == dataset_id,
+            models.Check.dataset_id == dataset_id,
+            models.CheckRun.check_id.in_(check_id),
+        )
+        .subquery()
+    )
+    runs = (
+        db.query(models.CheckRun)
+        .join(ranked, ranked.c.id == models.CheckRun.id)
+        .filter(ranked.c.rank <= 5)
+        .options(joinedload(models.CheckRun.check).joinedload(models.Check.dataset))
+        .order_by(models.CheckRun.id.desc())
+        .all()
+    )
+    counts = dict(
+        db.query(models.ExceptionRecord.run_id, func.count(models.ExceptionRecord.id))
+        .filter(models.ExceptionRecord.run_id.in_([r.id for r in runs]))
+        .group_by(models.ExceptionRecord.run_id)
+        .all()
+    ) if runs else {}
+    return [run_out(db, r, exception_count=counts.get(r.id, 0)) for r in runs]
+
+
 @router.get("/{run_id}", response_model=schemas.RunOut)
 def get_run(run_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     run = db.get(models.CheckRun, run_id)
