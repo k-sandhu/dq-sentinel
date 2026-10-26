@@ -21,9 +21,11 @@ The UI implementation lives on `feat/simplify-quality-workflows`. Pre-existing l
 
 No backend API/model changes or new dependencies were introduced. This is the navigation/check-view/filter slice of the broader roadmap; monitoring metrics, check-generation traces, and checks-as-code remain separate work.
 
+CI also identified an inherited `certifi==2026.7.22` trust-bundle advisory. The existing pin was updated to `2026.10.19`, the fixed version documented by the [upstream advisory](https://github.com/certifi/python-certifi/security/advisories/GHSA-6q48-6c7w-9gw2), with other pins retained. This follow-up is tracked in [#328](https://github.com/k-sandhu/dq-sentinel/issues/328).
+
 ## Verification
 
-- Full backend pytest suite passed after updating to current main.
+- Full backend pytest suite passed after updating to current main and again after the certifi refresh.
 - Frontend typecheck and production build passed.
 - All **280 frontend tests across 32 files** passed, including production chunk budgets.
 - Added behavioral coverage for navigation reachability/deep links, disclosure keyboard behavior, Results/Proposals isolation and filter roundtrips, generation review, viewer restrictions, active-filter removal, saved views, search clearing, paging reset, and status-picker dismissal.
