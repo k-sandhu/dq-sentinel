@@ -295,6 +295,9 @@ export function Modal({
   dirty?: boolean;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
+  // Child autoFocus runs during commit, before effects. Capture the opener at
+  // render time so closing never tries to focus the dialog's detached button.
+  const openerRef = useRef(document.activeElement as HTMLElement | null);
   const titleId = useId();
 
   const requestClose = () => {
@@ -305,7 +308,6 @@ export function Modal({
   // Move focus into the dialog on open and restore it to the trigger on close,
   // so keyboard/screen-reader users aren't stranded at the top of the document.
   useEffect(() => {
-    const prevFocus = document.activeElement as HTMLElement | null;
     const id = window.setTimeout(() => {
       const dialog = dialogRef.current;
       if (!dialog || dialog.contains(document.activeElement)) return; // autoFocus already placed it
@@ -314,7 +316,7 @@ export function Modal({
     }, 0);
     return () => {
       window.clearTimeout(id);
-      prevFocus?.focus?.();
+      if (openerRef.current?.isConnected) openerRef.current.focus();
     };
   }, []);
 

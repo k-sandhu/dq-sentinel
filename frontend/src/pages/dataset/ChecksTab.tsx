@@ -1,12 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import { useLocation, useSearchParams } from "react-router";
 import { api } from "../../api/client";
 import { qk } from "../../api/queryKeys";
 import type { Check, CheckTypeInfo, ColumnInfo, GenerateResult, Health } from "../../api/types";
 import { canEdit, useAuth } from "../../auth";
 import ChecksTable, { invalidateCheckCaches } from "../../components/ChecksTable";
+import { CheckViewSwitch, useCheckView } from "../../components/CheckViews";
 import CheckParamsForm, { validateParams } from "../../components/CheckParamsForm";
-import { ErrorBox, Icon, Modal, Spinner } from "../../components/ui";
+import { EmptyState, ErrorBox, Icon, Modal, Spinner } from "../../components/ui";
 
 function NewCheckModal({ datasetId, onClose }: { datasetId: number; onClose: () => void }) {
   const qc = useQueryClient();
@@ -117,8 +119,27 @@ export default function ChecksTab({ datasetId, hasProfile }: { datasetId: number
   const { user } = useAuth();
   const qc = useQueryClient();
   const [creating, setCreating] = useState(false);
+  const { view, setView } = useCheckView();
+  const location = useLocation();
+  const mounted = useRef(false);
+  const currentRoute = useRef({ datasetId, pathname: location.pathname, setView });
+  currentRoute.current = { datasetId, pathname: location.pathname, setView };
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const search = searchParams.get("q") ?? "";
+  const status = ["active", "disabled"].includes(searchParams.get("status") ?? "") ? searchParams.get("status")! : "all";
+  const lastStatuses = searchParams.getAll("last_status").filter(Boolean);
+  const patchFilter = (key: string, value: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (value) next.set(key, value); else next.delete(key);
+    setSearchParams(next, { replace: key === "q" });
+  };
   const [explore, setExplore] = useState(false);
   const [genResult, setGenResult] = useState<GenerateResult | null>(null);
+  useEffect(() => { setGenResult(null); }, [datasetId]);
 
   const { data: health } = useQuery({ queryKey: qk.health.get(), queryFn: () => api.get<Health>("/health") });
   const llm = health?.llm_enabled ?? false;
@@ -129,22 +150,48 @@ export default function ChecksTab({ datasetId, hasProfile }: { datasetId: number
   });
 
   const generate = useMutation({
-    mutationFn: () =>
-      api.post<GenerateResult>("/checks/generate", { dataset_id: datasetId, use_llm: llm, explore: llm && explore }),
-    onSuccess: (result) => {
-      setGenResult(result);
+    mutationFn: (origin: { datasetId: number; pathname: string }) =>
+      api.post<GenerateResult>("/checks/generate", { dataset_id: origin.datasetId, use_llm: llm, explore: llm && explore }),
+    onSuccess: (result, origin) => {
       // Generation writes new `proposed` rows, which the home dashboard counts
       // as `proposed_checks` — same shared set, plus this tab's explorer log.
       invalidateCheckCaches(qc);
-      qc.invalidateQueries({ queryKey: qk.exploration.detail(datasetId) });
+      qc.invalidateQueries({ queryKey: qk.exploration.detail(origin.datasetId) });
+      // Mutation callbacks can outlive this tab and can run after the same
+      // component starts showing another dataset. Refresh shared data either
+      // way, but only move the originating, still-visible tab into review.
+      const current = currentRoute.current;
+      if (mounted.current && current.datasetId === origin.datasetId && current.pathname === origin.pathname) {
+        setGenResult(result);
+        // Read the latest setter so URL params changed during generation survive.
+        current.setView("proposals", true);
+      }
     },
   });
 
+  const proposals = (checks ?? []).filter((c) => c.status === "proposed");
+  const shown = (checks ?? []).filter((c) => (
+    view === "proposals" ? c.status === "proposed"
+      : c.status !== "proposed" && c.status !== "archived" && (status === "all" || c.status === status)
+        && (lastStatuses.length === 0 || lastStatuses.includes(c.last_status ?? "unknown"))
+  ) && (!search || `${c.name} ${c.column_name ?? ""} ${c.check_type}`.toLowerCase().includes(search.toLowerCase())));
+
   return (
     <div>
+      <CheckViewSwitch view={view} proposals={proposals.length} onChange={setView} />
+      <p className="check-scope">{view === "results"
+        ? "Latest recorded results, grouped by outcome and column. Includes paused checks and checks that have never run. Archived checks are excluded."
+        : "Review proposals before activating. They do not run until activated. Bulk actions apply to shown proposals."}</p>
+      <div className="toolbar">
+        <input type="search" aria-label="Search checks" placeholder="Search checks or columns…" value={search} onChange={(e) => patchFilter("q", e.target.value)} style={{ maxWidth: 320, marginTop: 0 }} />
+        {view === "results" && <div className="chip-row" role="group" aria-label="Check status">
+          {([ ["all", "All current checks"], ["active", "Active"], ["disabled", "Paused"] ] as const).map(([value, label]) => <button key={value} type="button" className={`filter-chip${status === value ? " on" : ""}`} aria-pressed={status === value} onClick={() => patchFilter("status", value === "all" ? "" : value)}>{label}</button>)}
+        </div>}
+        {view === "results" && lastStatuses.length > 0 && <span className="filter-tag">latest result {lastStatuses.join(" / ")}<button type="button" className="tag-x" aria-label="Clear latest result filter" onClick={() => patchFilter("last_status", "")}>&times;</button></span>}
+      </div>
       {canEdit(user) && (
         <div className="toolbar">
-          <button className="primary" onClick={() => generate.mutate()} disabled={generate.isPending || !hasProfile} title={!hasProfile ? "Profile the dataset first" : undefined}>
+          <button className="primary" onClick={() => generate.mutate({ datasetId, pathname: location.pathname })} disabled={generate.isPending || !hasProfile} title={!hasProfile ? "Profile the dataset first" : undefined}>
             {generate.isPending ? <span className="spinner" style={{ width: 13, height: 13 }} /> : <Icon name="bolt" size={14} />}
             {generate.isPending
               ? explore && llm ? "Exploring data & generating…" : "Generating…"
@@ -166,14 +213,17 @@ export default function ChecksTab({ datasetId, hasProfile }: { datasetId: number
       )}
       <ErrorBox error={error || generate.error} />
       {genResult && (
-        <div className="info-box">
+        <div className="info-box" role="status">
           Generated <strong>{genResult.created}</strong> proposal{genResult.created === 1 ? "" : "s"} via{" "}
           <strong>{genResult.mode === "llm" ? "AI" : "heuristics"}</strong>
           {genResult.explored ? " after exploring the data" : ""}
-          {genResult.skipped_duplicates ? ` (${genResult.skipped_duplicates} duplicates skipped)` : ""}. Review and activate them below.
+          {genResult.skipped_duplicates ? ` (${genResult.skipped_duplicates} duplicates skipped)` : ""}. Review and activate them in Proposals.
         </div>
       )}
-      {isLoading ? <Spinner /> : <ChecksTable checks={checks ?? []} showDataset={false} />}
+      {isLoading ? <Spinner /> : shown.length > 0 ? <ChecksTable checks={shown} showDataset={false} /> : <div className="card"><EmptyState
+        title={search || (view === "results" && (status !== "all" || lastStatuses.length > 0)) ? "No checks match your filters" : view === "proposals" ? "No proposals to review" : "No operational checks yet"}
+        hint={search || (view === "results" && (status !== "all" || lastStatuses.length > 0)) ? "Clear the search or status filters to see more checks." : view === "proposals" ? "Generate proposals from a profile to review them here." : "Review and activate proposals, or add a new check."}
+      /></div>}
       {creating && <NewCheckModal datasetId={datasetId} onClose={() => setCreating(false)} />}
     </div>
   );
