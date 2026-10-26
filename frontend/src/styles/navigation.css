@@ -1,0 +1,35 @@
+.primary-navigation { margin-top: 16px; }
+.context-navigation { display: flex; gap: 6px; padding: 8px 24px; border-bottom: 1px solid var(--border-light); overflow-x: auto; }
+.context-link { padding: 6px 12px; border-radius: 6px; color: var(--text); white-space: nowrap; }
+.context-link:hover { background: var(--bg); text-decoration: none; }
+.context-link.active { background: var(--brand-light); color: var(--text-dark); font-weight: 600; }
+.dataset-navigation.tabs { flex-wrap: nowrap; gap: 0; }
+.dataset-navigation > .tab, .dataset-more > .tab { white-space: nowrap; padding-inline: 12px; }
+.dataset-more { position: relative; margin-left: auto; }
+.dataset-more-links { position: absolute; right: 0; top: 100%; z-index: 25; min-width: 180px; padding: 6px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); }
+.dataset-more-links a { display: block; padding: 8px 12px; color: var(--text); border-radius: 4px; }
+.dataset-more-links a:hover, .dataset-more-links a:focus-visible { background: var(--bg); }
+.dataset-more-links a[aria-current] { color: var(--text-dark); font-weight: 600; background: var(--brand-light); }
+html[data-nav-layout="centered"] .main > .topnav { flex-wrap: nowrap; overflow-x: auto; top: 56px; }
+@media (max-width: 820px) {
+  .sidebar .primary-navigation { display: flex; margin-top: 0; }
+  .context-navigation { padding-inline: 14px; }
+  html[data-nav-layout="centered"] .main > .topnav { justify-content: flex-start; top: 0; }
+  .dataset-navigation > .tab, .dataset-more > .tab { padding-inline: 8px; font-size: 12px; }
+}
+@media (max-width: 520px) {
+  .dataset-navigation.tabs { overflow-x: auto; }
+  .dataset-more-links { position: fixed; top: auto; right: 14px; }
+}
+
+/* Keep the task strip compact at tablet width; the logo link retains its name. */
+@media (min-width: 600px) and (max-width: 820px) {
+  .sidebar .logo { font-size: 0; flex: none; gap: 0; padding: 0 8px 0 2px; }
+  .sidebar .primary-navigation { flex: 1; justify-content: space-between; gap: 0; }
+  .sidebar .primary-navigation .nav-item,
+  .sidebar > nav .nav-item { gap: 5px; padding: 7px 8px; font-size: 12px; }
+  .sidebar .primary-navigation .nav-item svg,
+  .sidebar > nav .nav-item svg { width: 14px; height: 14px; }
+  .sidebar { flex-wrap: wrap; }
+  .sidebar .favorites-navigation { order: 4; flex-basis: 100%; min-width: 0; overflow-x: auto; }
+}

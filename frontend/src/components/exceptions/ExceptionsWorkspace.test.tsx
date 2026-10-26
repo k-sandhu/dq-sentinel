@@ -15,6 +15,7 @@ import { ApiError } from "../../api/client";
 import type { ExceptionPage, ExceptionRecord } from "../../api/types";
 import ExceptionsWorkspace, { pruneTriagedSelection } from "./ExceptionsWorkspace";
 import { exportErrorMessage } from "./FilterBar";
+import { PREF_KEYS, setPref } from "../../lib/prefs";
 
 const mocks = vi.hoisted(() => ({
   get: vi.fn(),
@@ -144,6 +145,7 @@ function renderWorkspace(search: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  setPref(PREF_KEYS.views, []);
   currentPage = page([row(1), row(2)]);
   mocks.get.mockImplementation(async (path: string) => {
     if (path.startsWith("/exceptions/facets")) {
@@ -242,5 +244,146 @@ describe("ExceptionsWorkspace CSV export failures (#294)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /export csv/i }));
     expect(await screen.findByRole("status")).toHaveTextContent(/connection/i);
+  });
+});
+
+
+describe("Compact exception filters (#326)", () => {
+  const lastListParams = () => {
+    const paths = mocks.get.mock.calls.map(([path]) => String(path)).filter((path) => path.startsWith("/exceptions?"));
+    return new URLSearchParams(paths.at(-1)?.split("?")[1]);
+  };
+
+  it("keeps all-status semantics and discloses advanced controls without changing the query", async () => {
+    renderWorkspace("");
+    await screen.findByLabelText("Select exception 1");
+    expect(lastListParams().getAll("status")).toEqual([]);
+    expect(screen.getByLabelText("Search exceptions")).toBeInTheDocument();
+    expect(screen.getByLabelText("Filter by assignee")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Filter by recurrence")).not.toBeInTheDocument();
+    const calls = mocks.get.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "More filters" }));
+    expect(screen.getByRole("region", { name: "More exception filters" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "More filters" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Filter by recurrence")).toBeInTheDocument();
+    expect(mocks.get.mock.calls.length).toBe(calls);
+  });
+
+  it("preserves multi-status selection and native keyboard activation on filter controls", async () => {
+    renderWorkspace("status=open&status=expected&offset=50");
+    await screen.findByLabelText("Select exception 1");
+    const summary = screen.getByText("Status: open, expected");
+    summary.focus();
+    fireEvent.keyDown(summary, { key: "Enter" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    // jsdom does not implement the native details keyboard default action.
+    summary.closest("details")!.open = true;
+    fireEvent.click(screen.getByRole("checkbox", { name: "resolved" }));
+    await waitFor(() => expect(lastListParams().getAll("status")).toEqual(["open", "expected", "resolved"]));
+    expect(lastListParams().get("offset")).toBe("0");
+    fireEvent.click(screen.getByRole("checkbox", { name: "open" }));
+    await waitFor(() => expect(lastListParams().getAll("status")).toEqual(["expected", "resolved"]));
+    const more = screen.getByRole("button", { name: "More filters" });
+    more.focus();
+    fireEvent.keyDown(more, { key: "Enter" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mocks.post).not.toHaveBeenCalled();
+  });
+
+  it("dismisses status with Escape and restores focus without clearing queue selection", async () => {
+    renderWorkspace("status=open");
+    await screen.findByLabelText("Select exception 1");
+    fireEvent.click(screen.getByLabelText("Select exception 1"));
+    const summary = screen.getByText("Status: open");
+    const picker = summary.closest("details")!;
+    picker.open = true;
+    const resolved = screen.getByRole("checkbox", { name: "resolved" });
+    resolved.focus();
+    fireEvent.keyDown(resolved, { key: "Escape" });
+    expect(picker.open).toBe(false);
+    expect(summary).toHaveFocus();
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+    expect(lastListParams().getAll("status")).toEqual(["open"]);
+  });
+
+  it("keeps status open between checkbox choices, then closes when focus or a pointer leaves", async () => {
+    renderWorkspace("status=open");
+    await screen.findByLabelText("Select exception 1");
+    const summary = screen.getByText("Status: open");
+    const picker = summary.closest("details")!;
+    picker.open = true;
+    summary.focus();
+    const resolved = screen.getByRole("checkbox", { name: "resolved" });
+    resolved.focus();
+    fireEvent.pointerDown(resolved);
+    fireEvent.click(resolved);
+    await waitFor(() => expect(lastListParams().getAll("status")).toEqual(["open", "resolved"]));
+    expect(picker.open).toBe(true);
+    const expected = screen.getByRole("checkbox", { name: "expected" });
+    expected.focus();
+    fireEvent.click(expected);
+    await waitFor(() => expect(lastListParams().getAll("status")).toEqual(["open", "resolved", "expected"]));
+    expect(picker.open).toBe(true);
+    // Tab's browser default moves focus; jsdom requires that move explicitly.
+    screen.getByLabelText("Filter by assignee").focus();
+    expect(picker.open).toBe(false);
+    picker.open = true;
+    fireEvent.pointerDown(screen.getByRole("button", { name: "More filters" }));
+    expect(picker.open).toBe(false);
+    expect(lastListParams().getAll("status")).toEqual(["open", "resolved", "expected"]);
+  });
+
+  it("shows advanced URL filters while collapsed and removes one without dropping other filters", async () => {
+    renderWorkspace("status=resolved&severity=error&recurrence=recurring&assignee=me&offset=50");
+    await screen.findByLabelText("Select exception 1");
+    fireEvent.click(screen.getByRole("button", { name: "Remove Severity: error" }));
+    await waitFor(() => expect(lastListParams().getAll("severity")).toEqual([]));
+    expect(lastListParams().getAll("status")).toEqual(["resolved"]);
+    expect(lastListParams().get("assignee")).toBe("me");
+    expect(lastListParams().get("recurrence")).toBe("recurring");
+    expect(lastListParams().get("offset")).toBe("0");
+    expect(screen.getByRole("button", { name: "Remove Recurring" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Clear all" }));
+    await waitFor(() => expect(lastListParams().getAll("status")).toEqual([]));
+    expect(lastListParams().has("recurrence")).toBe(false);
+  });
+
+  it("applies a persisted personal view without merging the previous query", async () => {
+    setPref(PREF_KEYS.views, [{ name: "Review warnings", params: "severity=warn&assignee=none&status=expected" }]);
+    renderWorkspace("status=resolved&recurrence=new&q=old&offset=50");
+    await screen.findByLabelText("Select exception 1");
+    fireEvent.change(screen.getByLabelText("Saved views"), { target: { value: "saved:Review warnings" } });
+    await waitFor(() => expect(lastListParams().getAll("status")).toEqual(["expected"]));
+    expect(lastListParams().getAll("severity")).toEqual(["warn"]);
+    expect(lastListParams().get("assignee")).toBe("none");
+    expect(lastListParams().has("q")).toBe(false);
+    expect(lastListParams().has("recurrence")).toBe(false);
+    expect(lastListParams().get("offset")).toBe("0");
+    expect(screen.getByLabelText("Search exceptions")).toHaveValue("");
+  });
+
+  it("clears a pending search draft without reintroducing it after the debounce", async () => {
+    renderWorkspace("status=expected&q=previous&offset=50");
+    await screen.findByLabelText("Select exception 1");
+    fireEvent.change(screen.getByLabelText("Search exceptions"), { target: { value: "pending draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Clear all" }));
+    await waitFor(() => expect(lastListParams().has("q")).toBe(false));
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    expect(lastListParams().has("q")).toBe(false);
+    expect(screen.getByLabelText("Search exceptions")).toHaveValue("");
+  });
+
+  it("applies counted saved views and resets paging before changing an advanced filter", async () => {
+    renderWorkspace("status=resolved&severity=warn&offset=50");
+    await screen.findByLabelText("Select exception 1");
+    fireEvent.change(screen.getByLabelText("Saved views"), { target: { value: "builtin:high_severity" } });
+    await waitFor(() => expect(lastListParams().getAll("severity")).toEqual(["error"]));
+    expect(lastListParams().getAll("status")).toEqual(["open"]);
+    expect(lastListParams().get("offset")).toBe("0");
+    fireEvent.click(screen.getByRole("button", { name: "More filters (1)" }));
+    fireEvent.change(screen.getByLabelText("Filter by recurrence"), { target: { value: "new" } });
+    await waitFor(() => expect(lastListParams().get("recurrence")).toBe("new"));
+    expect(lastListParams().getAll("severity")).toEqual(["error"]);
+    expect(lastListParams().get("offset")).toBe("0");
   });
 });

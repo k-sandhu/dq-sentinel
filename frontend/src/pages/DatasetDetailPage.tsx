@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api, ApiError } from "../api/client";
 import { qk } from "../api/queryKeys";
@@ -23,9 +23,13 @@ import ProfileTab from "./dataset/ProfileTab";
 import RcaTab from "./dataset/RcaTab";
 import RunsTab from "./dataset/RunsTab";
 import SchemaTab from "./dataset/SchemaTab";
+import "../styles/navigation.css";
 
 const TABS = ["profile", "code", "schema", "lineage", "contract", "monitors", "checks", "runs", "exceptions", "dashboards", "knowledge", "rca"] as const;
 type Tab = (typeof TABS)[number];
+const CORE_TABS: Tab[] = ["profile", "checks", "monitors", "exceptions", "contract"];
+const MORE_TABS = TABS.filter((tab) => !CORE_TABS.includes(tab));
+const tabLabel = (tab: Tab) => tab === "profile" ? "Overview" : tab === "exceptions" ? "Issues" : tab === "rca" ? "Root cause" : tab[0].toUpperCase() + tab.slice(1);
 
 export default function DatasetDetailPage() {
   const { id, tab } = useParams();
@@ -35,13 +39,16 @@ export default function DatasetDetailPage() {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const unregisterHintId = useId();
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreButton = useRef<HTMLButtonElement>(null);
+  const moreId = useId();
   const active: Tab = TABS.includes(tab as Tab) ? (tab as Tab) : "profile";
 
   // Tabs are routes, so the tabs that hold in-progress typing (Knowledge BF-3,
   // Contract #D4) guard this switch themselves via useUnsavedGuard — the same
   // shared dialog that now also covers sidebar links and global search (#284).
   // This page no longer needs its own dirty bookkeeping or a native confirm().
-  const goTab = (t: Tab) => navigate(`/datasets/${datasetId}/${t}`);
+  const goTab = (t: Tab) => { setMoreOpen(false); navigate(`/datasets/${datasetId}/${t}`); };
 
   // This page holds no typing of its own (never blocks), but it needs the guard's
   // bypass handle: those tab-level guards patch the shared router navigator, so
@@ -217,13 +224,33 @@ export default function DatasetDetailPage() {
       </div>
       <ErrorBox error={runProfile.error || unregister.error} />
 
-      <div className="tabs">
-        {TABS.map((t) => (
-          <button key={t} className={`tab${active === t ? " on" : ""}`} onClick={() => goTab(t)}>
-            {t === "rca" ? "Root cause" : t[0].toUpperCase() + t.slice(1)}
+      <nav className="tabs dataset-navigation" aria-label="Dataset sections">
+        {CORE_TABS.map((t) => (
+          <button key={t} className={`tab${active === t ? " on" : ""}`} aria-current={active === t ? "page" : undefined} onClick={() => goTab(t)}>
+            {tabLabel(t)}
           </button>
         ))}
-      </div>
+        <div className="dataset-more" onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setMoreOpen(false);
+        }} onKeyDown={(event) => {
+          if (event.key === "Escape") { setMoreOpen(false); moreButton.current?.focus(); }
+        }}>
+          <button ref={moreButton} type="button" className={`tab${MORE_TABS.includes(active) ? " on" : ""}`}
+            aria-expanded={moreOpen} aria-controls={moreId} onClick={() => setMoreOpen(!moreOpen)}>
+            More{MORE_TABS.includes(active) ? ` · ${tabLabel(active)}` : ""} <span aria-hidden="true">▾</span>
+          </button>
+          {moreOpen && <div id={moreId} className="dataset-more-links" aria-label="More dataset sections">
+            {MORE_TABS.map((t) => (
+              <Link key={t} to={`/datasets/${datasetId}/${t}`} aria-current={active === t ? "page" : undefined}
+                onClick={() => {
+                  // The guard's dialog restores focus after Keep editing.
+                  moreButton.current?.focus();
+                  setMoreOpen(false);
+                }}>{tabLabel(t)}</Link>
+            ))}
+          </div>}
+        </div>
+      </nav>
 
       {active === "profile" && (
         <ProfileTab

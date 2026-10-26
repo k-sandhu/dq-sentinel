@@ -1,0 +1,14 @@
+.check-view-switch { display: inline-flex; flex-wrap: wrap; gap: 4px; padding: 4px; margin-bottom: 16px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); }
+.check-view-switch button { border-color: transparent; background: transparent; }
+.check-view-switch button[aria-pressed="true"] { background: var(--card); color: var(--text-dark); border-color: var(--border); font-weight: 700; }
+.check-view-switch button:focus-visible, .check-row-actions summary:focus-visible, .check-details summary:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
+.check-scope { color: var(--text); font-size: 12.5px; margin: 0 0 14px; }
+.check-group th { background: var(--card2); color: var(--text); font-size: 12px; border-top: 1px solid var(--border); }
+.check-row-controls { display: flex; gap: 6px; justify-content: flex-end; align-items: flex-start; }
+.check-row-actions { min-width: 86px; text-align: left; }
+.check-row-actions summary, .check-details summary { cursor: pointer; color: var(--brand-dark); font-size: 12px; padding: 6px 0; }
+.check-row-actions[open] { padding: 0 6px 6px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--card); }
+.check-row-actions button { display: block; margin-top: 5px; width: 100%; }
+.check-details { max-width: 520px; white-space: normal; }
+.check-details .rowdata { overflow-wrap: anywhere; white-space: pre-wrap; }
+@media (max-width: 700px) { .check-view-switch { display: flex; } .check-view-switch button { flex: 1; } .check-row-controls { flex-wrap: wrap; } }

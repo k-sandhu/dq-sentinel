@@ -48,6 +48,7 @@ export default function ExceptionsPage() {
               patchParams((p) => {
                 if (e.target.value) p.set("dataset_id", e.target.value);
                 else p.delete("dataset_id");
+                p.delete("offset");
               })
             }
             style={{ marginTop: 0, width: 220 }}

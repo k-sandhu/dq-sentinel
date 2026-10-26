@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import userEvent from "@testing-library/user-event";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -19,6 +20,8 @@ vi.mock("../lib/useUnsavedGuard", () => ({
   useUnsavedGuard: () => ({ bypass: (fn: () => void) => fn() }),
 }));
 vi.mock("./dataset/ProfileTab", () => ({ default: () => <div>profile tab</div> }));
+vi.mock("./dataset/CodeTab", () => ({ default: () => <div>code tab content</div> }));
+vi.mock("./dataset/ContractTab", () => ({ default: () => <div>contract tab content</div> }));
 
 import { api } from "../api/client";
 import type { Dataset } from "../api/types";
@@ -55,7 +58,7 @@ const makeDataset = (o: Partial<Dataset>): Dataset =>
     ...o,
   }) as Dataset;
 
-function renderPage(dataset: Dataset) {
+function renderPage(dataset: Dataset, entry = "/datasets/7") {
   mockGet.mockImplementation((path: string) => {
     if (path === "/datasets/7") return Promise.resolve(dataset as never);
     return Promise.reject(new Error("not found"));
@@ -63,9 +66,9 @@ function renderPage(dataset: Dataset) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={["/datasets/7"]}>
+      <MemoryRouter initialEntries={[entry]}>
         <Routes>
-          <Route path="/datasets/:id" element={<DatasetDetailPage />} />
+          <Route path="/datasets/:id/:tab?" element={<DatasetDetailPage />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -120,5 +123,46 @@ describe("DatasetDetailPage health header", () => {
     expect(
       screen.queryByRole("link", { name: /not running|checks broken/ }),
     ).not.toBeInTheDocument();
+  });
+});
+
+
+describe("DatasetDetailPage navigation", () => {
+  it("keeps core sections visible and technical sections behind More", async () => {
+    renderPage(makeDataset({}));
+    expect(await screen.findByRole("button", { name: "Overview" })).toHaveAttribute("aria-current", "page");
+    for (const label of ["Checks", "Monitors", "Issues", "Contract"])
+      expect(screen.getByRole("button", { name: label })).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Code" })).not.toBeInTheDocument();
+    const user = userEvent.setup();
+    const more = screen.getByRole("button", { name: "More" });
+    more.focus();
+    await user.keyboard("{Enter}");
+    expect(more).toHaveAttribute("aria-expanded", "true");
+    await user.tab();
+    expect(screen.getByRole("link", { name: "Code" })).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(await screen.findByText("code tab content")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /More · Code/ })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("marks a directly opened technical section and dismisses More with Escape", async () => {
+    renderPage(makeDataset({}), "/datasets/7/code");
+    expect(await screen.findByText("code tab content")).toBeInTheDocument();
+    const more = screen.getByRole("button", { name: /More · Code/ });
+    expect(more).toHaveClass("on");
+    const user = userEvent.setup();
+    await user.click(more);
+    expect(screen.getByRole("link", { name: "Code" })).toHaveAttribute("aria-current", "page");
+    await user.tab();
+    await user.keyboard("{Escape}");
+    expect(more).toHaveFocus();
+    expect(more).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("preserves existing contract deep links as a core section", async () => {
+    renderPage(makeDataset({}), "/datasets/7/contract?baseline=current");
+    expect(await screen.findByText("contract tab content")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Contract" })).toHaveAttribute("aria-current", "page");
   });
 });

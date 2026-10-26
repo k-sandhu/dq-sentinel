@@ -1,6 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useId, useState } from "react";
+import { Fragment, useId, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { api } from "../api/client";
 import { qk } from "../api/queryKeys";
@@ -9,6 +9,7 @@ import { canEdit, useAuth } from "../auth";
 import { checkTypeLabel, originLabel } from "../lib/checkMeta";
 import { describeSchedule, timeAgo } from "../lib/format";
 import CheckHistory from "./CheckHistory";
+import { orderCheckResults, resultGroup } from "./CheckViews";
 import { useConfirm } from "./confirm";
 import CheckParamsForm, { validateParams } from "./CheckParamsForm";
 import { EmptyState, ErrorBox, Icon, Modal, SeverityBadge, StatusPill } from "./ui";
@@ -226,7 +227,7 @@ export default function ChecksTable({
   });
 
   const proposed = checks.filter((c) => c.status === "proposed");
-  const rest = checks.filter((c) => c.status !== "proposed");
+  const rest = orderCheckResults(checks.filter((c) => c.status !== "proposed" && c.status !== "archived"), showDataset);
   // Auto-collapse only when proposals share the page with real checks. When the
   // view is proposals-only (the "proposed" filter, a fresh dataset tab), force
   // the panel open regardless of any earlier Collapse click — a persisted
@@ -306,7 +307,7 @@ export default function ChecksTable({
         {!bulk && bulkNotice && <div className="info-box">{bulkNotice}</div>}
       </div>
       {proposed.length > 0 && (
-        <div className="card" style={{ marginBottom: 16, borderColor: "#e0d2ef" }} aria-busy={bulk !== null}>
+        <div className="card" style={{ marginBottom: 16, borderColor: "var(--purple)" }} aria-busy={bulk !== null}>
           <div
             className="card-pad"
             style={{
@@ -377,10 +378,11 @@ export default function ChecksTable({
                           <span style={{ fontWeight: 400, color: "var(--text-light)" }}> · {c.dataset_name}</span>
                         )}
                       </div>
-                      <div style={{ fontSize: 12, color: "var(--text-light)", marginTop: 2 }}>{c.rationale}</div>
-                      {paramsSummary(c) && (
-                        <div className="rowdata" style={{ marginTop: 2 }}>{paramsSummary(c)}</div>
-                      )}
+                      <details className="check-details" onClick={(e) => e.stopPropagation()}>
+                        <summary>Rationale & parameters</summary>
+                        <div>{c.rationale || "No rationale provided."}</div>
+                        <div className="rowdata">{paramsSummary(c) || "No parameters"}</div>
+                      </details>
                     </td>
                     <td style={{ whiteSpace: "nowrap" }}>
                       <SeverityBadge severity={c.severity} />
@@ -469,8 +471,12 @@ export default function ChecksTable({
                 </tr>
               </thead>
               <tbody>
-                {rest.map((c) => (
-                  <tr key={c.id} className="clickable" onClick={() => navigate(`/checks/${c.id}`)}>
+                {rest.map((c, index) => (
+                  <Fragment key={c.id}>
+                  {(index === 0 || resultGroup(c, showDataset) !== resultGroup(rest[index - 1], showDataset)) && (
+                    <tr className="check-group"><th scope="rowgroup" colSpan={5 + Number(showDataset) + Number(editable)}>{resultGroup(c, showDataset)}</th></tr>
+                  )}
+                  <tr className="clickable" onClick={() => navigate(`/checks/${c.id}`)}>
                     <td>
                       <div style={{ fontWeight: 600 }}>
                         <Link to={`/checks/${c.id}`} className="row-title-link" onClick={(e) => e.stopPropagation()}>
@@ -513,6 +519,7 @@ export default function ChecksTable({
                     </td>
                     {editable && (
                       <td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
+                        <div className="check-row-controls">
                         <button
                           className="small"
                           disabled={runningId === c.id}
@@ -524,7 +531,10 @@ export default function ChecksTable({
                         >
                           {runningId === c.id ? <span className="spinner" style={{ width: 12, height: 12 }} /> : <Icon name="play" size={12} />}
                           Run
-                        </button>{" "}
+                        </button>
+                        <button className="small" onClick={(e) => { e.stopPropagation(); setEditing(c); }}>Edit</button>
+                        <details className="check-row-actions" onClick={(e) => e.stopPropagation()}>
+                        <summary aria-label={`More actions for ${c.name}`}>More actions</summary>
                         {c.status === "active" ? (
                           <button
                             className="small"
@@ -546,15 +556,6 @@ export default function ChecksTable({
                             Resume
                           </button>
                         )}{" "}
-                        <button
-                          className="small"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setEditing(c);
-                          }}
-                        >
-                          Edit
-                        </button>{" "}
                         <button
                           className="small"
                           onClick={(e) => {
@@ -587,9 +588,12 @@ export default function ChecksTable({
                         >
                           Archive
                         </button>
+                        </details>
+                        </div>
                       </td>
                     )}
                   </tr>
+                  </Fragment>
                 ))}
               </tbody>
             </table>

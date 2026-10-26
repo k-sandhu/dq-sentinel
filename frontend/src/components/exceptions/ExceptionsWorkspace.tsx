@@ -281,7 +281,7 @@ export default function ExceptionsWorkspace({
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const el = document.activeElement as HTMLElement | null;
       const tag = el?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el?.isContentEditable) return;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || ((tag === "BUTTON" || tag === "SUMMARY") && e.key !== "?" && e.key !== "Escape") || el?.isContentEditable) return;
 
       const idx = focusedId != null ? items.findIndex((x) => x.id === focusedId) : -1;
       const moveTo = (n: number) => {

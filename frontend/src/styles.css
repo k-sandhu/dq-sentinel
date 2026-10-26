@@ -7,6 +7,8 @@
   --brand: #509ee3;
   --brand-dark: #2f72ab;
   --brand-light: #cbe2f7;
+  --action-bg: var(--brand-dark);
+  --action-text: #ffffff;
   --bg: #f9fbfc;
   --card: #ffffff;
   --card2: #fbfcfd;
@@ -14,7 +16,7 @@
   --border-light: #eef0f2;
   --text: #4c5773;
   --text-dark: #2e353b;
-  --text-light: #949aab;
+  --text-light: #667085;
   --ok: #84bb4c;
   --warn: #f2a86f;
   --warn-strong: #e8a541;
@@ -52,7 +54,7 @@ html[data-dir="graphite"] {
   --font: "SF Mono", "Cascadia Code", ui-monospace, "Segoe UI", system-ui, sans-serif;
   --bg: #f5f6f7; --card: #ffffff; --card2: #fafbfb;
   --border: #e0e3e6; --border-light: #eceef0;
-  --text: #444b54; --text-dark: #20262c; --text-light: #828a93;
+  --text: #444b54; --text-dark: #20262c; --text-light: #66707c;
   --input-bg: #ffffff; --hover: #eef1f3; --hover-soft: #f3f5f6;
   --topbar-bg: rgba(245, 246, 247, 0.94); --inverse-bg: #20262c;
 }
@@ -62,13 +64,15 @@ html[data-dir="editorial"] {
   --font: "Inter", "Segoe UI", -apple-system, system-ui, sans-serif;
   --bg: #faf9f7; --card: #ffffff; --card2: #fcfbf9;
   --border: #e9e6e1; --border-light: #f0eeea;
-  --text: #4a4a55; --text-dark: #28282f; --text-light: #918d99;
+  --text: #4a4a55; --text-dark: #28282f; --text-light: #726c7a;
   --input-bg: #ffffff; --hover: #f6f4ff; --hover-soft: #faf9ff;
   --topbar-bg: rgba(250, 249, 247, 0.94); --inverse-bg: #28282f;
 }
 
 html[data-theme="dark"] {
   color-scheme: dark;
+  --action-bg: var(--brand);
+  --action-text: #14181d;
   --brand: #5ba3e8;
   --brand-dark: #84bdf0;
   --brand-light: #1f3a52;
@@ -79,7 +83,7 @@ html[data-theme="dark"] {
   --border-light: #242b33;
   --text: #aeb8c4;
   --text-dark: #e9edf2;
-  --text-light: #717c8a;
+  --text-light: #949eac;
   --hover: #202a34;
   --hover-soft: #1e2832;
   --input-bg: #161b21;
@@ -94,7 +98,7 @@ html[data-dir="graphite"][data-theme="dark"] {
   --brand: #3fd0bb; --brand-dark: #2bb6a3; --brand-light: #143b35;
   --bg: #0b0e11; --card: #14181d; --card2: #0f1318;
   --border: #222831; --border-light: #191e25;
-  --text: #a6b0ba; --text-dark: #e9edf2; --text-light: #6a7480;
+  --text: #a6b0ba; --text-dark: #e9edf2; --text-light: #929eaa;
   --input-bg: #0d1014; --hover: #181d24; --hover-soft: #14181d;
   --topbar-bg: rgba(11, 14, 17, 0.92); --inverse-bg: #e9edf2;
 }
@@ -102,7 +106,7 @@ html[data-dir="editorial"][data-theme="dark"] {
   --brand: #8585ec; --brand-dark: #6c6cf0; --brand-light: #2c2a55;
   --bg: #14131a; --card: #1c1b24; --card2: #17161e;
   --border: #2c2a37; --border-light: #211f2a;
-  --text: #b0acbd; --text-dark: #ecebf3; --text-light: #756f82;
+  --text: #b0acbd; --text-dark: #ecebf3; --text-light: #a09aad;
   --input-bg: #161520; --hover: #221f2e; --hover-soft: #1c1b24;
   --topbar-bg: rgba(20, 19, 26, 0.92); --inverse-bg: #ecebf3;
 }
@@ -139,7 +143,7 @@ html[data-font="rounded"] { --font: "SF Pro Rounded", "Nunito", "Quicksand", ui-
   line-height: 1.2; cursor: pointer;
 }
 .seg-btn:hover { background: var(--hover); }
-.seg-btn.on { background: var(--brand); color: #fff; border-color: var(--brand); }
+.seg-btn.on { background: var(--action-bg); color: var(--action-text); border-color: var(--action-bg); }
 .seg-btn:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 .accent-row { display: flex; align-items: center; gap: 10px; }
 .accent-row input[type="color"] {
@@ -297,15 +301,15 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
   color: var(--text); font-weight: 600; cursor: pointer; margin-bottom: 2px;
 }
 .nav-item:hover { background: var(--bg); text-decoration: none; }
-.nav-item.active { background: var(--brand); color: #fff; }
-.nav-item.active svg { stroke: #fff; }
+.nav-item.active { background: var(--action-bg); color: var(--action-text); }
+.nav-item.active svg { stroke: currentColor; }
 .nav-item svg { stroke: var(--text-light); flex: none; }
 .sidebar .spacer { flex: 1; }
 .sidebar .user-box { border-top: 1px solid var(--border-light); padding: 10px 10px 2px; font-size: 12.5px; }
 .sidebar .user-box .email { color: var(--text-dark); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
 .sidebar .user-box button { margin-top: 6px; }
 
-.main { flex: 1; overflow-y: auto; }
+.main { flex: 1; min-width: 0; overflow-y: auto; }
 
 /* ---------- topbar ---------- */
 .topbar {
@@ -621,8 +625,8 @@ button, .btn {
 }
 button:hover, .btn:hover { border-color: var(--brand); color: var(--brand-dark); text-decoration: none; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
-button.primary, .btn.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
-button.primary:hover, .btn.primary:hover { background: var(--brand-dark); border-color: var(--brand-dark); color: #fff; }
+button.primary, .btn.primary { background: var(--action-bg); border-color: var(--action-bg); color: var(--action-text); }
+button.primary:hover, .btn.primary:hover { background: var(--action-bg); border-color: var(--text-dark); color: var(--action-text); }
 button.danger { color: var(--danger-dark); }
 button.danger:hover { border-color: var(--danger); }
 button.small, .btn.small { padding: 4px 10px; font-size: 12px; min-height: 26px; }
@@ -663,7 +667,7 @@ label.field span.req { color: var(--danger); }
    at 12.5px/700. The caption then needs nothing but its own box. */
 .field-set { display: block; margin-bottom: 12px; font-size: 12.5px; font-weight: 700; color: var(--text-dark); }
 .field-set > .field-caption { display: block; }
-input[type="text"], input[type="password"], input[type="email"], input[type="number"], textarea, select {
+input[type="text"], input[type="search"], input[type="password"], input[type="email"], input[type="number"], textarea, select {
   font: inherit; width: 100%; margin-top: 5px; padding: 8px 10px; border: 1px solid var(--border);
   border-radius: 6px; color: var(--text-dark); background: var(--input-bg); outline: none;
 }
@@ -690,7 +694,7 @@ textarea { resize: vertical; min-height: 70px; }
   padding: 4px 12px; border-radius: 99px; border: 1px solid var(--border); background: var(--card);
   cursor: pointer; font-size: 12px; font-weight: 600; color: var(--text); min-height: 28px;
 }
-.filter-chip.on { background: var(--brand); border-color: var(--brand); color: #fff; }
+.filter-chip.on { background: var(--action-bg); border-color: var(--action-bg); color: var(--action-text); }
 .kbd {
   font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--border); border-bottom-width: 2px;
   border-radius: 4px; padding: 0 5px; color: var(--text-light); background: var(--card2);
@@ -718,7 +722,7 @@ html[data-theme="dark"] .modal-backdrop { background: rgba(0, 0, 0, 0.55); }
 .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 18px; flex-wrap: wrap; }
 .tab { padding: 9px 16px; font-weight: 700; font-size: 13.5px; color: var(--text-light); cursor: pointer; border: none; background: none; border-bottom: 2.5px solid transparent; border-radius: 0; min-height: 38px; }
 .tab:hover { color: var(--brand-dark); border-color: transparent; }
-.tab.on { color: var(--brand); border-bottom-color: var(--brand); }
+.tab.on { color: var(--text-dark); border-bottom-color: var(--brand); }
 .tab .count { background: var(--bg); border: 1px solid var(--border); border-radius: 99px; font-size: 11px; padding: 0 7px; margin-left: 6px; color: var(--text-light); }
 
 /* ---------- monitor packs ---------- */
@@ -918,7 +922,7 @@ details.step .body { padding: 4px 12px 10px; }
 /* Granularity rendered as a true segmented control rather than loose chips. */
 .lf-seg { background: var(--card2); border: 1px solid var(--border-light); border-radius: 8px; padding: 2px; gap: 2px; }
 .lf-seg .filter-chip { border: none; background: transparent; min-height: 26px; border-radius: 6px; text-transform: capitalize; color: var(--text); }
-.lf-seg .filter-chip.on { background: var(--brand); color: #fff; box-shadow: var(--shadow); }
+.lf-seg .filter-chip.on { background: var(--action-bg); color: var(--action-text); box-shadow: var(--shadow); }
 
 /* Body — canvas + side rail. */
 .lf-body { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 12px; min-height: 560px; }
@@ -1510,8 +1514,8 @@ html[data-density="compact"] .dense-item { padding: 7px 10px; }
 th.star-col, td.star-col { width: 34px; padding-left: 12px; padding-right: 0; text-align: center; }
 /* Sidebar favorites: keep long table names on one line. */
 .sidebar .fav-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.sidebar .nav-item svg[aria-hidden] { stroke: var(--warn-strong); }
-.sidebar .nav-item.active svg[aria-hidden] { stroke: #fff; }
+.sidebar .favorites-navigation .nav-item svg[aria-hidden] { stroke: var(--warn-strong); }
+.sidebar .nav-item.active svg[aria-hidden] { stroke: currentColor; }
 /* Recently-viewed chip strip above the datasets table. */
 .recents-strip { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 12px; }
 .recents-strip .recents-label { font-size: 11px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: var(--text-light); }
@@ -1637,14 +1641,22 @@ th.star-col, td.star-col { width: 34px; padding-left: 12px; padding-right: 0; te
 }
 .doc-launcher-fab:hover { background: var(--brand-dark); transform: translateY(-1px); }
 .doc-launcher-fab svg { stroke: #fff; }
+/* Keep documentation in the header rather than over the triage/check actions. */
+.topbar .doc-launcher { position: relative; right: auto; bottom: auto; z-index: 20; }
+.topbar .doc-launcher-fab {
+  width: auto; height: 32px; padding: 0 10px; gap: 6px; border-radius: var(--radius-sm);
+  background: var(--card); color: var(--text); border: 1px solid var(--border);
+  box-shadow: none;
+}
+.topbar .doc-launcher-fab svg { width: 16px; height: 16px; stroke: currentColor; }
+.topbar .doc-launcher-fab:hover { background: var(--hover); color: var(--brand-dark); transform: none; }
+.topbar .doc-launcher-menu { top: 100%; bottom: auto; padding-top: 8px; padding-bottom: 0; }
 .doc-launcher-menu {
   position: absolute; right: 0; bottom: 100%; width: 290px; padding-bottom: 12px;
   display: flex; flex-direction: column; gap: 8px;
   opacity: 0; transform: translateY(6px); pointer-events: none;
   transition: opacity 0.14s ease, transform 0.14s ease;
 }
-.doc-launcher:hover .doc-launcher-menu,
-.doc-launcher:focus-within .doc-launcher-menu,
 .doc-launcher.open .doc-launcher-menu { opacity: 1; transform: translateY(0); pointer-events: auto; }
 .doc-launcher-item {
   display: flex; align-items: flex-start; gap: 11px; padding: 11px 13px;

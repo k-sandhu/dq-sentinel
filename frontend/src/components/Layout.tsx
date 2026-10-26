@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { api } from "../api/client";
 import { qk } from "../api/queryKeys";
@@ -12,47 +12,22 @@ import { AppearanceButton } from "./AppearanceDrawer";
 import DocsLauncher from "./DocsLauncher";
 import ErrorBoundary from "./ErrorBoundary";
 import { Icon } from "./ui";
+import "../styles/navigation.css";
 
-const NAV_GROUPS: {
-  label: string;
-  items: { to: string; label: string; icon: string; end?: boolean }[];
-}[] = [
-  {
-    label: "Overview",
-    items: [
-      { to: "/", label: "Home", icon: "home", end: true },
-      { to: "/my-work", label: "My work", icon: "check" },
-      { to: "/dashboards", label: "Dashboards", icon: "grid" },
-      { to: "/status", label: "Status", icon: "activity" },
-    ],
-  },
-  {
-    label: "Sources",
-    items: [
-      { to: "/catalog", label: "Data catalog", icon: "book" },
-      { to: "/connections", label: "Connections", icon: "db" },
-      { to: "/datasets", label: "Datasets", icon: "table" },
-    ],
-  },
-  {
-    label: "Quality",
-    items: [
-      { to: "/checks", label: "Checks", icon: "shield" },
-      { to: "/runs", label: "Runs", icon: "play" },
-      { to: "/exceptions", label: "Exceptions", icon: "alert" },
-      { to: "/incidents", label: "Incidents", icon: "bell" },
-      { to: "/reliability", label: "Reliability", icon: "bolt" },
-    ],
-  },
-  {
-    label: "Explore",
-    items: [
-      { to: "/workbench", label: "Workbench", icon: "search" },
-      { to: "/lineage", label: "Lineage", icon: "graph" },
-      { to: "/assistant", label: "Assistant", icon: "chat" },
-    ],
-  },
+export const NAV_GROUPS = [
+  { label: "Overview", to: "/", icon: "home", secondary: [{ to: "/my-work", label: "My work" }] },
+  { label: "Datasets", to: "/datasets", icon: "table", secondary: [{ to: "/catalog", label: "Catalog" }, { to: "/connections", label: "Connections" }] },
+  { label: "Checks", to: "/checks", icon: "shield", secondary: [{ to: "/runs", label: "Runs" }] },
+  { label: "Issues", to: "/exceptions", icon: "alert", secondary: [{ to: "/incidents", label: "Incidents" }] },
+  { label: "Reports", to: "/dashboards", icon: "grid", secondary: [{ to: "/reliability", label: "Reliability" }, { to: "/status", label: "Status" }] },
+  { label: "Explore", to: "/workbench", icon: "search", secondary: [{ to: "/lineage", label: "Lineage" }, { to: "/assistant", label: "Assistant" }] },
 ];
+
+export function activeNavigationGroup(path: string) {
+  return NAV_GROUPS.find((group) => [group, ...group.secondary].some(({ to }) =>
+    to === "/" ? path === "/" : path === to || path.startsWith(`${to}/`),
+  ));
+}
 
 /** Fleet-health pill: polls GET /connections/health once a minute (shares the
  *  "fleet-health" cache key with ConnectionsPage's on-demand probe). */
@@ -380,7 +355,7 @@ function FavoritesNav() {
   if (items.length === 0) return null;
 
   return (
-    <div className="nav-group" key="Favorites">
+    <div className="nav-group favorites-navigation" key="Favorites">
       <div className="nav-section">Favorites</div>
       <nav>
         {items.map((d) => {
@@ -405,6 +380,7 @@ function FavoritesNav() {
 export default function Layout() {
   const { user, logout } = useAuth();
   const location = useLocation();
+  const activeGroup = activeNavigationGroup(location.pathname);
   // Keep "system" mode following the OS while the app is open (the pre-paint
   // bootstrap only resolves it once at load). No-op unless mode === "system".
   useEffect(() => {
@@ -435,29 +411,16 @@ export default function Layout() {
           </span>
           DQ Sentinel
         </Link>
-        {NAV_GROUPS.map((group) => (
-          <Fragment key={group.label}>
-            <div className="nav-group">
-              <div className="nav-section">{group.label}</div>
-              <nav>
-                {group.items.map((n) => (
-                  <NavLink
-                    key={n.to}
-                    to={n.to}
-                    end={n.end}
-                    className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
-                    title={n.label}
-                  >
-                    <Icon name={n.icon} />
-                    <span className="nav-label">{n.label}</span>
-                  </NavLink>
-                ))}
-              </nav>
-            </div>
-            {/* Favorites group sits between "Overview" and "Sources" (#59). */}
-            {group.label === "Overview" && <FavoritesNav />}
-          </Fragment>
-        ))}
+        <nav className="primary-navigation" aria-label="Primary">
+          {NAV_GROUPS.map((group) => (
+            <Link key={group.to} to={group.to}
+              className={`nav-item${activeGroup === group ? " active" : ""}`}
+              aria-current={activeGroup === group ? (location.pathname === group.to ? "page" : "location") : undefined} title={group.label}>
+              <Icon name={group.icon} /><span className="nav-label">{group.label}</span>
+            </Link>
+          ))}
+        </nav>
+        <FavoritesNav />
         <div className="spacer" />
         <nav>
           <NavLink to="/settings" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`} title="Settings">
@@ -480,23 +443,19 @@ export default function Layout() {
           <FleetHealthPill />
           <GlobalSearch />
           <div className="topbar-actions">
+            <DocsLauncher />
             <AppearanceButton />
           </div>
         </div>
         {/* Centered nav-layout (#173): hidden except when data-nav-layout="centered",
             then a sticky bar replaces the hidden sidebar. Reuses NAV_GROUPS. */}
         <nav className="topnav" aria-label="Primary">
-          {NAV_GROUPS.flatMap((group) => group.items).map((n) => (
-            <NavLink
-              key={n.to}
-              to={n.to}
-              end={n.end}
-              className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
-              title={n.label}
-            >
-              <Icon name={n.icon} />
-              <span className="nav-label">{n.label}</span>
-            </NavLink>
+          {NAV_GROUPS.map((group) => (
+            <Link key={group.to} to={group.to}
+              className={`nav-item${activeGroup === group ? " active" : ""}`}
+              aria-current={activeGroup === group ? (location.pathname === group.to ? "page" : "location") : undefined} title={group.label}>
+              <Icon name={group.icon} /><span className="nav-label">{group.label}</span>
+            </Link>
           ))}
           {/* Centered hides the sidebar, so the sidebar-only account controls must
               live here too or they vanish entirely — Settings + Sign out (#182 review). */}
@@ -512,13 +471,21 @@ export default function Layout() {
             Sign out
           </button>
         </nav>
+        {activeGroup && (
+          <nav className="context-navigation" aria-label={`${activeGroup.label} navigation`}>
+            {[activeGroup, ...activeGroup.secondary].map((item) => (
+              <NavLink key={item.to} to={item.to} end={item.to === "/"}
+                className={({ isActive }) => `context-link${isActive ? " active" : ""}`}>
+                {item === activeGroup && activeGroup.label === "Explore" ? "Workbench" : item.label}
+              </NavLink>
+            ))}
+          </nav>
+        )}
         {/* keyed by path so a crashed page resets when the user navigates away */}
         <ErrorBoundary key={location.pathname}>
           <Outlet />
         </ErrorBoundary>
       </main>
-      {/* Floating overlay links to the standalone Docs & Features pages. */}
-      <DocsLauncher />
     </div>
   );
 }
