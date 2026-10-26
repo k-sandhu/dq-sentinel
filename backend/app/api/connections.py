@@ -219,6 +219,11 @@ def delete_connection(
     db.query(models.SavedQuery).filter(
         models.SavedQuery.connection_id == connection_id
     ).delete(synchronize_session=False)
+    # Remove stale scopes before a deleted SQLite id can be reused by a new connection.
+    for token in db.query(models.ApiToken).all():
+        scope = token.connection_scope
+        if isinstance(scope, list) and connection_id in scope:
+            token.connection_scope = [value for value in scope if value != connection_id]
     db.delete(conn)  # cascades to datasets/checks/profiles/knowledge via ORM relationships
     db.commit()
     dispose_connection(connection_id)

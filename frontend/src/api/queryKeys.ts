@@ -45,6 +45,7 @@ type SuggestScope = {
 // ---------------------------------------------------------------------------
 
 export const qk = {
+  apiTokens: { all: ["apiTokens"] as const, list: () => ["apiTokens"] as const },
   // === Datasets =========================================================
   // [datasets] list, [datasets, id] detail, [datasets, { connectionId }] scoped list.
   datasets: {

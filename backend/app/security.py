@@ -1,20 +1,48 @@
 """Password hashing, JWT issuing/verification, and auth dependencies."""
 
+import hashlib
+import re
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import bcrypt
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import Connection, ConnectionGrant, Dataset, User
+from app.models import ApiToken, Connection, ConnectionGrant, Dataset, User, utcnow
 
 ROLE_RANK = {"viewer": 0, "editor": 1, "admin": 2}
 
 _bearer = HTTPBearer(auto_error=False)
+
+
+@dataclass
+class TokenPrincipal:
+    token: ApiToken
+    id: None = None
+    is_active: bool = True
+
+    @property
+    def role(self) -> str:
+        return self.token.role
+
+    @property
+    def email(self) -> str:
+        return f"token:{self.token.name}"
+
+
+Principal = User | TokenPrincipal
+
+
+def _token_scope(token: ApiToken) -> set[int]:
+    scope = token.connection_scope
+    if not isinstance(scope, list) or any(type(i) is not int or i <= 0 for i in scope):
+        return set()
+    return set(scope)
 
 
 def hash_password(plain: str) -> str:
@@ -40,11 +68,42 @@ def create_access_token(user: User) -> str:
 
 
 def get_current_user(
+    request: Request,
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: Session = Depends(get_db),
-) -> User:
+) -> Principal:
     if creds is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
+    if creds.credentials.startswith("dqs_"):
+        secret = creds.credentials
+        if not re.fullmatch(r"dqs_[0-9a-f]{32}", secret):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
+        digest = hashlib.sha256(secret.encode()).hexdigest()
+        token = db.query(ApiToken).filter(ApiToken.token_hash == digest).first()
+        now = utcnow()
+        if token is None or token.revoked_at is not None or token.expires_at <= now or token.role not in ("viewer", "editor"):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
+        # Only explicitly audited connection-scoped routes are available to machines.
+        path = request.url.path
+        allowed = (
+            path == "/api/v1/datasets" and request.method == "GET"
+            or re.fullmatch(r"/api/v1/datasets/\d+", path) and request.method == "GET"
+            or path == "/api/v1/checks" and request.method in ("GET", "POST")
+            or re.fullmatch(r"/api/v1/checks/\d+", path) and request.method == "GET"
+            or re.fullmatch(r"/api/v1/checks/\d+/run", path) and request.method == "POST"
+            or path == "/api/v1/exceptions" and request.method == "GET"
+            or path == "/api/v1/runs" and request.method == "GET"
+            or re.fullmatch(r"/api/v1/runs/\d+(?:/exceptions)?", path) and request.method == "GET"
+            or path == "/api/v1/exceptions/triage" and request.method == "POST"
+        )
+        if path == "/api/v1/exceptions" and request.query_params.get("assignee") == "me":
+            allowed = False
+        if not allowed:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "This endpoint requires a human account")
+        if token.last_used_at is None or now - token.last_used_at > timedelta(minutes=1):
+            db.query(ApiToken).filter(ApiToken.id == token.id).update({ApiToken.last_used_at: now})
+            db.commit()
+        return TokenPrincipal(token)
     try:
         payload = jwt.decode(creds.credentials, get_settings().secret_key, algorithms=["HS256"])
         # A validly-signed token can still carry a missing/non-numeric "sub" (foreign
@@ -83,6 +142,8 @@ def visible_connection_ids(db: Session, user: User) -> set[int] | None:
     Per-request only — callers must NOT cache this across requests, so a grant
     change takes effect immediately (matching the role-check posture).
     """
+    if isinstance(user, TokenPrincipal):
+        return _token_scope(user.token)
     if user.role == "admin":
         return None
     ids = {
@@ -109,6 +170,8 @@ def connection_role(db: Session, user: User, connection_id: int) -> str | None:
     """
     if db.get(Connection, connection_id) is None:
         return None  # nonexistent connection -> no role (keeps the by-id gate 404-consistent)
+    if isinstance(user, TokenPrincipal):
+        return user.role if connection_id in _token_scope(user.token) else None
     if user.role == "admin":
         return "admin"
     grants = dict(
