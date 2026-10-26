@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router";
 import { describe, expect, it } from "vitest";
@@ -13,6 +13,21 @@ function DirtyEditorWithDocs() {
 }
 
 describe("header documentation disclosure", () => {
+  it("keeps a focused reference link mounted when the pointer leaves", async () => {
+    const user = userEvent.setup();
+    render(<MemoryRouter><DocsLauncher /></MemoryRouter>);
+    const trigger = screen.getByRole("button", { name: "Open documentation and features" });
+    await user.click(trigger);
+    await user.tab();
+    const documentation = screen.getByRole("link", { name: /Documentation Guides/ });
+    expect(documentation).toHaveFocus();
+    fireEvent.mouseLeave(trigger.parentElement!);
+    expect(documentation).toHaveFocus();
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    await user.keyboard("{Escape}");
+    expect(trigger).toHaveFocus();
+  });
+
   it.each([/Documentation Guides/, /Features Everything/])("restores trigger focus when guarded navigation to %s is cancelled", async (name) => {
     const user = userEvent.setup();
     render(<MemoryRouter initialEntries={["/editor"]}><ConfirmProvider><DirtyEditorWithDocs /></ConfirmProvider></MemoryRouter>);

@@ -27,9 +27,10 @@ CI also identified an inherited `certifi==2026.7.22` trust-bundle advisory. The 
 
 - Full backend pytest suite passed after updating to current main and again after the certifi refresh.
 - Frontend typecheck and production build passed.
-- All **280 frontend tests across 32 files** passed, including production chunk budgets.
+- All **281 frontend tests across 32 files** passed, including production chunk budgets and the subsequent review regression test.
 - Added behavioral coverage for navigation reachability/deep links, disclosure keyboard behavior, Results/Proposals isolation and filter roundtrips, generation review, viewer restrictions, active-filter removal, saved views, search clearing, paging reset, and status-picker dismissal.
 - Cross-review regressions cover generation completing after navigation or dataset replacement, saved views with identical filters/different presentation or aliases, and cancellation of guarded menu navigation. Modal focus restoration captures its opener before child autofocus runs.
+- The pre-merge parallel review found and fixed pointer dismissal removing a focused Docs link. The disclosure now remains mounted while it contains keyboard focus; Escape and focus-leaving behavior are retained and tested. Review of check and exception state handling found no further concrete regressions.
 - A PostgreSQL dump of the previous demo metadata was restored to a separate rehearsal database. Startup migrated it from `0008_data_contracts` to `0013_schema_baseline_scopes`, retaining 1 user, 5 datasets, 70 checks, and 50 exceptions. The standing demo then upgraded successfully using the supported development Compose overlay.
 - Browser checks used synthetic data at 1280×720 and 768×900. Checked separate result/proposal views, saved-view application, removal of one advanced filter without dropping others, all six standard theme/mode combinations, and contextual navigation. Component tests cover mutation/permission behavior without invoking paid generation.
 

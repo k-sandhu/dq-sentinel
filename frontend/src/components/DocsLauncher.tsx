@@ -17,7 +17,10 @@ export default function DocsLauncher() {
   return (
     <div
       className={`doc-launcher${open ? " open" : ""}`}
-      onMouseLeave={() => setOpen(false)}
+      onMouseLeave={(event) => {
+        // Pointer movement must not unmount a keyboard user's focused link.
+        if (!event.currentTarget.contains(document.activeElement)) setOpen(false);
+      }}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);
       }}
