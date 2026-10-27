@@ -49,6 +49,29 @@ class TokenOut(BaseModel):
     user: UserOut
 
 
+class ApiTokenIn(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    role: Literal["viewer", "editor"] = "viewer"
+    connection_scope: list[Annotated[int, Field(strict=True, gt=0)]] = Field(min_length=1)
+    expires_in_days: int = Field(default=400, ge=1, le=400)
+
+
+class ApiTokenOut(ORMModel):
+    id: int
+    name: str
+    role: Literal["viewer", "editor"]
+    connection_scope: list[int] | None
+    created_by_id: int | None
+    created_at: datetime
+    last_used_at: datetime | None
+    expires_at: datetime
+    revoked_at: datetime | None
+
+
+class ApiTokenCreatedOut(ApiTokenOut):
+    token: str
+
+
 class AssigneeOut(ORMModel):
     """Minimal active-user shape for the triage assignee picker (#56).
 

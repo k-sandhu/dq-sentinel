@@ -1342,3 +1342,10 @@ export interface CatalogEntry {
   importance: string;
   tables: CatalogTablePreview[];
 }
+
+export interface ApiToken {
+  id: number; name: string; role: "viewer" | "editor"; connection_scope: number[] | null;
+  created_by_id: number | null; created_at: string; last_used_at: string | null;
+  expires_at: string; revoked_at: string | null;
+}
+export interface ApiTokenCreated extends ApiToken { token: string }

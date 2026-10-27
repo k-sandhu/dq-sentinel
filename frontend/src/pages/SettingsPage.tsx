@@ -2,6 +2,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { useState } from "react";
 import { Link } from "react-router";
 import { api } from "../api/client";
+import { ApiTokensCard } from "../components/ApiTokensCard";
 import { qk } from "../api/queryKeys";
 import type {
   AuditPage,
@@ -1227,6 +1228,7 @@ export default function SettingsPage() {
             </div>
           )}
         </div>
+        <ApiTokensCard />
         <AuditCard />
         </>
       ) : (

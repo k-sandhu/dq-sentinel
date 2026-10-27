@@ -30,7 +30,10 @@ def audit(
     ``detail`` payload.
     """
     from app.observability import client_ip_var, request_id_var
+    from app.security import TokenPrincipal
 
+    if isinstance(user, TokenPrincipal):
+        detail["actor"] = user.email
     rid = request_id_var.get()
     db.add(
         AuditEntry(
