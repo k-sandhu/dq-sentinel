@@ -41,19 +41,25 @@ class ExceptionRefs:
 
 
 def mask_dsn(dsn: str) -> str:
-    """Hide credentials in a DSN for display."""
-    if "@" in dsn and "://" in dsn:
-        scheme, rest = dsn.split("://", 1)
-        if "@" in rest:
-            creds, host = rest.rsplit("@", 1)
-            user = creds.split(":", 1)[0]
-            return f"{scheme}://{user}:****@{host}"
-    return dsn
+    """Render a parsed URL without its password or query values; fail closed."""
+    from sqlalchemy.engine import make_url
+
+    try:
+        url = make_url(dsn)
+        if url.host and "@" in url.host:
+            return "[invalid connection URL]"
+        database = url.database.split("#", 1)[0] if url.database else url.database
+        rendered = url.set(query={}, database=database).render_as_string(hide_password=True)
+        return rendered.replace(":***@", ":****@", 1)
+    except Exception:  # noqa: BLE001 - malformed legacy values must never be echoed
+        return "[invalid connection URL]"
 
 
 def connection_out(conn: models.Connection, dataset_count: int = 0) -> schemas.ConnectionOut:
     out = schemas.ConnectionOut.model_validate(conn)
-    out.dsn_masked = mask_dsn(conn.dsn)
+    from app.crypto import decrypt_dsn
+
+    out.dsn_masked = mask_dsn(decrypt_dsn(conn.dsn))
     out.dataset_count = dataset_count
     return out
 

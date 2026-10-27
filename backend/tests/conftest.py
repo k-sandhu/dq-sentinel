@@ -11,9 +11,12 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from cryptography.fernet import Fernet
 
 _TMP = Path(tempfile.mkdtemp(prefix="dqsentinel-test-"))
 os.environ["DQ_DATABASE_URL"] = f"sqlite:///{(_TMP / 'app.db').as_posix()}"
+os.environ["DQ_ENCRYPTION_KEY"] = Fernet.generate_key().decode()
+os.environ["DQ_ALLOW_PLAINTEXT_DSNS"] = "false"
 os.environ["DQ_SECRET_KEY"] = "test-secret-0123456789abcdef0123456789abcdef"
 os.environ["DQ_BOOTSTRAP_ADMIN_EMAIL"] = "admin@example.com"
 os.environ["DQ_BOOTSTRAP_ADMIN_PASSWORD"] = "admin123"

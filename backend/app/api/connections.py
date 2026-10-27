@@ -11,6 +11,7 @@ from app.connectors.sa import Connector, SqlNotAllowed, connector_for, dispose_c
 from app.core.audit import audit
 from app.core.deletion import cleanup_dataset_dependents
 from app.core.errors import redact_probe_message, redact_source_error
+from app.crypto import encrypt_dsn
 from app.db import get_db
 from app.security import (
     assert_connection_visible,
@@ -95,10 +96,10 @@ def create_connection(
     except SqlNotAllowed as exc:
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - malformed URL
-        raise HTTPException(400, f"Invalid DSN: {exc}") from exc
+        raise HTTPException(400, "Invalid DSN format") from exc
     if db.query(models.Connection).filter(models.Connection.name == body.name).first():
         raise HTTPException(409, "A connection with this name already exists")
-    conn = models.Connection(name=body.name, kind=kind, dsn=body.dsn, created_by_id=user.id)
+    conn = models.Connection(name=body.name, kind=kind, dsn=encrypt_dsn(body.dsn), created_by_id=user.id)
     db.add(conn)
     db.flush()  # assign conn.id for the audit row
     audit(db, user, "connection.create", "connection", conn.id, name=conn.name, kind=conn.kind)
@@ -114,9 +115,11 @@ def test_dsn(body: schemas.ConnectionIn, _: models.User = Depends(require_role("
         connector = Connector(body.dsn)
     except DriverNotInstalled as exc:
         return schemas.ConnectionTestOut(ok=False, message=str(exc))  # verbatim, incl. pip hint
-    except Exception as exc:  # noqa: BLE001
-        return schemas.ConnectionTestOut(ok=False, message=f"Invalid DSN: {exc}")
+    except Exception:  # noqa: BLE001
+        return schemas.ConnectionTestOut(ok=False, message="Invalid DSN format")
     ok, message, table_count = connector.test()
+    if not ok:
+        message = "Could not connect to this source; check its connection settings."
     return schemas.ConnectionTestOut(ok=ok, message=message, table_count=table_count)
 
 

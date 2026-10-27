@@ -90,7 +90,7 @@ docker compose -f docker-compose.yml -f compose.dev.yml up --build
 # UI on http://localhost:3000 · sign in as admin@example.com / admin123
 ```
 
-The overlay sets `DQ_ENV=dev` and supplies the documented throwaway credentials. It turns
+The overlay sets `DQ_ENV=dev`, explicitly allows plaintext DSNs for this throwaway demo, and supplies the documented throwaway credentials. For persistent deployments, configure `DQ_ENCRYPTION_KEY` as described in [credential encryption](docs/credential-encryption.md). It turns
 the config guard **off**: JWTs are then signed with a secret published in this repository,
 so anyone who can reach the API can mint an admin token. Localhost demos only.
 

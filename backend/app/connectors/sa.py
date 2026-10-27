@@ -437,4 +437,6 @@ class Connector:
 
 
 def connector_for(connection: Connection) -> Connector:
-    return Connector(connection.dsn, connection_id=connection.id)
+    from app.crypto import decrypt_dsn
+
+    return Connector(decrypt_dsn(connection.dsn), connection_id=connection.id)

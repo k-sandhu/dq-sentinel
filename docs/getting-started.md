@@ -90,3 +90,5 @@ actions. The full query transcript is shown in the UI.
 
 Without an LLM key everything above still works — check generation falls back to
 heuristics and the agentic features explain what they need.
+
+Connection credentials require `DQ_ENCRYPTION_KEY` at startup. For key generation, offline rotation and recovery, see [credential encryption](credential-encryption.md). A throwaway development environment may explicitly opt into plaintext storage with `DQ_ALLOW_PLAINTEXT_DSNS=true`.

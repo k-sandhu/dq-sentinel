@@ -36,6 +36,7 @@ from app.core import check_authoring, contracts, monitors, schema_monitor
 from app.core import sla as sla_core
 from app.core.audit import audit
 from app.core.profiler import profile_dataset
+from app.crypto import decrypt_dsn, encrypt_dsn
 from app.models import utcnow
 
 log = logging.getLogger(__name__)
@@ -227,7 +228,7 @@ def find_connection(db: Session, entry: CatalogEntry) -> models.Connection | Non
     user connection that happens to share the source-system name is never
     adopted as "already connected" — and never deleted by disconnect."""
     conn = _connection_named(db, entry.source_system)
-    if conn is not None and conn.dsn != dsn_for(entry):
+    if conn is not None and decrypt_dsn(conn.dsn) != dsn_for(entry):
         return None
     return conn
 
@@ -257,7 +258,7 @@ def connect_entry(db: Session, entry: CatalogEntry, actor: models.User) -> model
         conn = models.Connection(
             name=entry.source_system,
             kind=kind_from_dsn(dsn),
-            dsn=dsn,
+            dsn=encrypt_dsn(dsn),
             created_by_id=actor.id,
         )
         db.add(conn)

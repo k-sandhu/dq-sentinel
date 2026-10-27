@@ -34,6 +34,7 @@ DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-8"
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="DQ_",
+        hide_input_in_errors=True,
         env_file=(REPO_DIR / ".env", BACKEND_DIR / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
@@ -60,6 +61,9 @@ class Settings(BaseSettings):
     # `prod` turns on the fail-fast security validation below (#155). Set DQ_ENV=prod
     # for any non-local deployment.
     env: str = "dev"  # dev | prod
+
+    encryption_key: str = ""
+    allow_plaintext_dsns: bool = False
 
     # Auth
     secret_key: str = "dev-only-secret-change-me"
@@ -301,9 +305,17 @@ class Settings(BaseSettings):
                 f"got {self.env!r}. Unknown values are rejected so a typo cannot "
                 "silently disable the production security checks."
             )
+        if self.encryption_key:
+            from app.crypto import cipher
+
+            cipher(self.encryption_key)
         if mode not in PROD_ENVS:
             return self
         problems: list[str] = []
+        if not self.encryption_key:
+            problems.append("DQ_ENCRYPTION_KEY is required in production.")
+        if self.allow_plaintext_dsns:
+            problems.append("DQ_ALLOW_PLAINTEXT_DSNS is only allowed in development.")
         if self.secret_key in INSECURE_SECRET_KEYS or len(self.secret_key) < MIN_SECRET_KEY_LENGTH:
             problems.append(
                 "DQ_SECRET_KEY is a known default or shorter than "

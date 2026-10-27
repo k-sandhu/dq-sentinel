@@ -261,6 +261,7 @@ def test_init_db_survives_losing_the_bootstrap_seed_race(monkeypatch, caplog):
 
     session = _LoserSession()
     monkeypatch.setattr(db_module, "_run_migrations", lambda _engine: None)
+    monkeypatch.setattr("app.crypto.rewrite_credentials", lambda *_args: 0)
     monkeypatch.setattr(db_module, "get_engine", lambda: object())
     monkeypatch.setattr(db_module, "session_factory", lambda: (lambda: session))
 
