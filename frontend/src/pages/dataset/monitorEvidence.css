@@ -1,0 +1,8 @@
+.monitor-evidence { margin-bottom: 20px; }
+.monitor-evidence-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 12px; }
+.monitor-evidence-card { padding: 16px; min-width: 0; overflow-wrap: anywhere; }
+.monitor-evidence-card h3 { margin: 0 0 10px; }
+.monitor-evidence-card p { margin: 6px 0; color: var(--text-light); }
+.monitor-evidence-card p strong { color: var(--text-dark); }
+.monitor-evidence-card ol { padding-left: 20px; font-size: 12px; }
+.monitor-administration > summary { cursor: pointer; font-weight: 700; padding: 12px 0; }
