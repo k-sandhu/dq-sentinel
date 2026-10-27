@@ -9,12 +9,11 @@ from datetime import timedelta
 from threading import Barrier, Event
 from uuid import uuid4
 
-from sqlalchemy import delete, event
-
 from app.core.runner import StaleClaimError, _finish_claim
 from app.core.scheduler import _claim_scheduled, _recover_expired
 from app.db import session_factory
 from app.models import Check, Connection, Dataset, utcnow
+from sqlalchemy import delete, event
 
 
 def main() -> None:
