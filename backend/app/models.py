@@ -294,6 +294,8 @@ class Check(Base):
     schedule_kind: Mapped[str | None] = mapped_column(String(10), nullable=True)  # interval | cron
     schedule_expr: Mapped[str | None] = mapped_column(String(100), nullable=True)  # minutes or cron string
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    claimed_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    claim_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_status: Mapped[str | None] = mapped_column(String(10), nullable=True)
     created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)

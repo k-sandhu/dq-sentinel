@@ -6,6 +6,7 @@ import logging
 import time
 from datetime import datetime
 
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.connectors.sa import connector_for
@@ -190,7 +191,25 @@ def _auto_resolve_passing(db: Session, check: Check, run: CheckRun) -> None:
         )
 
 
-def run_check(db: Session, check: Check, triggered_by: str = "manual") -> CheckRun:
+class StaleClaimError(Exception):
+    """A replacement worker owns this scheduled attempt."""
+
+
+def _finish_claim(db: Session, check_id: int, token: str | None) -> None:
+    if token is None:
+        return
+    result = db.execute(
+        update(Check).where(Check.id == check_id, Check.claim_token == token)
+        .values(claim_token=None, claimed_until=None)
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        raise StaleClaimError(f"Scheduled claim for check {check_id} is no longer owned")
+
+
+def run_check(
+    db: Session, check: Check, triggered_by: str = "manual", claim_token: str | None = None,
+) -> CheckRun:
     dataset = check.dataset
     started = time.perf_counter()
     prev_status = check.last_status  # capture BEFORE this run overwrites it (issue #27)
@@ -212,6 +231,7 @@ def run_check(db: Session, check: Check, triggered_by: str = "manual") -> CheckR
             check_id=check.id,
         )
         result = run_check_type(ctx, check.check_type)
+        _finish_claim(db, check.id, claim_token)
         run.status = _status_for(check, result)
         run.violation_count = result.violation_count
         run.rows_evaluated = result.rows_evaluated
@@ -239,9 +259,13 @@ def run_check(db: Session, check: Check, triggered_by: str = "manual") -> CheckR
             new_records = _reconcile_exceptions(db, check, run, result, metrics)
 
         run.metrics = metrics
+    except StaleClaimError:
+        db.rollback()
+        raise
     except Exception as exc:  # noqa: BLE001 - run must record any failure
         log.exception("Check %s (%s) errored", check.id, check.name)
         db.rollback()
+        _finish_claim(db, check.id, claim_token)
         run.status = "error"
         run.error_message = f"{type(exc).__name__}: {exc}"
         new_records = 0

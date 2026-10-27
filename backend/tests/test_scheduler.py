@@ -12,7 +12,7 @@ def test_scheduler_bounds_pending_work_and_does_not_overlap(source_db, monkeypat
 
     from app.core import scheduler
 
-    monkeypatch.setattr(scheduler, "get_settings", lambda: SimpleNamespace(worker_concurrency=2))
+    monkeypatch.setattr(scheduler, "get_settings", lambda: SimpleNamespace(worker_concurrency=2, worker_lease_seconds=900))
     monkeypatch.setattr(scheduler, "purge_audit_log", lambda now: 0)
     monkeypatch.setattr(scheduler, "maybe_evaluate_slas", lambda now: 0)
     monkeypatch.setattr(scheduler, "maybe_capture_scorecard_snapshots", lambda now: 0)
@@ -95,6 +95,8 @@ def test_scheduler_restores_due_time_if_submit_fails(source_db, monkeypatch):
             poll_once(executor)
         with session_factory()() as db:
             assert db.get(Check, check_id).next_run_at == due_at
+            assert db.get(Check, check_id).claim_token is None
+            assert db.get(Check, check_id).claimed_until is None
     finally:
         with session_factory()() as db:
             db.get(Check, check_id).status = "archived"
@@ -556,3 +558,218 @@ def test_compose_worker_healthcheck_probes_readiness_not_just_the_port():
     assert worker_svc["healthcheck"]["test"] == [
         "CMD", "python", "-m", "app.worker", "--healthcheck",
     ]
+
+
+def test_expired_claim_recovery_and_fencing(source_db, unique_name, caplog):
+    import pytest
+
+    from app.core.runner import StaleClaimError, run_check
+    from app.core.scheduler import _claim_scheduled, _recover_expired, _release_claim
+    from app.observability import WORKER_LEASE_EXPIRED
+
+    init_db()
+    now = utcnow()
+    with session_factory()() as db:
+        conn = Connection(name=unique_name("lease"), kind="sqlite", dsn=source_db)
+        db.add(conn)
+        db.flush()
+        dataset = Dataset(connection_id=conn.id, table_name="people")
+        db.add(dataset)
+        db.flush()
+        check = Check(dataset_id=dataset.id, name="lease", check_type="not_null", column_name="email",
+                      status="active", schedule_kind="interval", schedule_expr="1", next_run_at=now)
+        db.add(check)
+        db.commit()
+        check_id = check.id
+        old = _claim_scheduled(db, check, now, now + timedelta(minutes=1))
+        assert old
+        _recover_expired(db, now + timedelta(seconds=1))
+        db.refresh(check)
+        assert check.claim_token == old
+        before = WORKER_LEASE_EXPIRED._value.get()
+        _recover_expired(db, now + timedelta(days=1))
+        db.refresh(check)
+        assert check.claim_token is None
+        assert WORKER_LEASE_EXPIRED._value.get() >= before + 1
+        assert f"check {check_id}" in caplog.text
+        new = _claim_scheduled(db, check, now + timedelta(days=1), now + timedelta(days=2))
+        assert new and new != old
+        _release_claim(check_id, old)
+        db.refresh(check)
+        assert check.claim_token == new
+        with pytest.raises(StaleClaimError):
+            run_check(db, check, triggered_by="schedule", claim_token=old)
+        assert db.query(CheckRun).filter_by(check_id=check_id).count() == 0
+        db.refresh(check)
+        run_check(db, check, triggered_by="schedule", claim_token=new)
+        db.refresh(check)
+        assert check.claim_token is None and check.claimed_until is None
+        assert db.query(CheckRun).filter_by(check_id=check_id).count() == 1
+        check.status = "archived"
+        db.commit()
+
+
+def test_competing_scheduled_claims_have_one_owner(source_db, unique_name):
+    from app.core.scheduler import _claim_scheduled
+
+    init_db()
+    now = utcnow()
+    with session_factory()() as db:
+        conn = Connection(name=unique_name("lease-cas"), kind="sqlite", dsn=source_db)
+        db.add(conn)
+        db.flush()
+        dataset = Dataset(connection_id=conn.id, table_name="people")
+        db.add(dataset)
+        db.flush()
+        check = Check(dataset_id=dataset.id, name="cas", check_type="not_null", status="active",
+                      schedule_kind="interval", schedule_expr="1", next_run_at=now)
+        db.add(check)
+        db.commit()
+        check_id = check.id
+    with session_factory()() as first, session_factory()() as second:
+        a, b = first.get(Check, check_id), second.get(Check, check_id)
+        assert _claim_scheduled(first, a, now, now + timedelta(minutes=1))
+        assert _claim_scheduled(second, b, now, now + timedelta(minutes=1)) is None
+        first.refresh(a)
+        a.status = "archived"
+        first.commit()
+
+
+def test_abandoned_claim_is_recovered_by_poll(source_db, unique_name, tmp_path, monkeypatch):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.core import scheduler
+    from app.models import Base
+
+    # Other tests share an app DB and can leave older checks due. Recovery assigns
+    # a fresh due time, so isolate this poll to ensure it runs the recovered check.
+    engine = create_engine(f"sqlite:///{(tmp_path / 'scheduler.db').as_posix()}")
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    monkeypatch.setattr(scheduler, "session_factory", lambda: factory)
+    now = utcnow()
+    with factory() as db:
+        conn = Connection(name=unique_name("abandoned"), kind="sqlite", dsn=source_db)
+        db.add(conn)
+        db.flush()
+        dataset = Dataset(connection_id=conn.id, table_name="people")
+        db.add(dataset)
+        db.flush()
+        check = Check(dataset_id=dataset.id, name="abandoned", check_type="not_null", column_name="email",
+                      status="active", schedule_kind="interval", schedule_expr="60", next_run_at=now)
+        db.add(check)
+        db.commit()
+        check_id = check.id
+        assert scheduler._claim_scheduled(db, check, now - timedelta(days=1), now + timedelta(hours=1))
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        assert poll_once(executor) >= 1
+    with factory() as db:
+        check = db.get(Check, check_id)
+        assert check.claim_token is None
+        assert db.query(CheckRun).filter_by(check_id=check_id, triggered_by="schedule").count() == 1
+        check.status = "archived"
+        db.commit()
+    engine.dispose()
+
+
+def test_cancelled_submission_restores_claim(source_db, unique_name, monkeypatch):
+    from app.core import scheduler
+
+    for name in ("purge_audit_log", "maybe_evaluate_slas", "maybe_capture_scorecard_snapshots"):
+        monkeypatch.setattr(scheduler, name, lambda now: 0)
+    monkeypatch.setattr(scheduler, "process_due_escalations", lambda db, now: 0)
+
+    class QueuedExecutor:
+        def submit(self, fn, check_id):
+            self.future = Future()
+            return self.future
+
+    init_db()
+    due = utcnow() - timedelta(days=200)
+    with session_factory()() as db:
+        conn = Connection(name=unique_name("cancel"), kind="sqlite", dsn=source_db)
+        db.add(conn)
+        db.flush()
+        ds = Dataset(connection_id=conn.id, table_name="people")
+        db.add(ds)
+        db.flush()
+        check = Check(dataset_id=ds.id, name="cancel", check_type="not_null", status="active",
+                      schedule_kind="interval", schedule_expr="1", next_run_at=due)
+        db.add(check)
+        db.commit()
+        check_id = check.id
+    executor = QueuedExecutor()
+    try:
+        assert poll_once(executor) == 1
+        assert executor.future.cancel()
+        with session_factory()() as db:
+            check = db.get(Check, check_id)
+            assert check.claim_token is None and check.claimed_until is None
+            assert check.next_run_at == due
+            check.status = "archived"
+            db.commit()
+    finally:
+        scheduler._pending.pop(executor, None)
+
+
+def test_unexpected_execution_error_preserves_claim_for_recovery(source_db, unique_name, monkeypatch):
+    import pytest
+
+    from app.core import scheduler
+
+    init_db()
+    now = utcnow()
+    with session_factory()() as db:
+        conn = Connection(name=unique_name("error-lease"), kind="sqlite", dsn=source_db)
+        db.add(conn)
+        db.flush()
+        ds = Dataset(connection_id=conn.id, table_name="people")
+        db.add(ds)
+        db.flush()
+        check = Check(dataset_id=ds.id, name="error", check_type="not_null", status="active",
+                      schedule_kind="interval", schedule_expr="1", next_run_at=now)
+        db.add(check)
+        db.commit()
+        check_id = check.id
+        token = scheduler._claim_scheduled(db, check, now, now + timedelta(minutes=1))
+    def fail(*args, **kwargs):
+        raise RuntimeError("injected persistence error")
+    monkeypatch.setattr(scheduler, "run_check", fail)
+    with pytest.raises(RuntimeError, match="injected persistence error"):
+        scheduler._execute(check_id, token)
+    with session_factory()() as db:
+        check = db.get(Check, check_id)
+        assert check.claim_token == token and check.claimed_until is not None
+        scheduler._recover_expired(db, now + timedelta(days=1))
+        db.refresh(check)
+        assert check.claim_token is None and check.next_run_at == now + timedelta(days=1)
+        check.status = "archived"
+        db.commit()
+
+
+def test_recorded_check_error_releases_claim(source_db, unique_name):
+    from app.core.scheduler import _claim_scheduled, _execute
+
+    init_db()
+    now = utcnow()
+    with session_factory()() as db:
+        conn = Connection(name=unique_name("recorded-error"), kind="sqlite", dsn=source_db)
+        db.add(conn)
+        db.flush()
+        ds = Dataset(connection_id=conn.id, table_name="missing_table_for_lease_test")
+        db.add(ds)
+        db.flush()
+        check = Check(dataset_id=ds.id, name="error", check_type="not_null", column_name="email",
+                      status="active", schedule_kind="interval", schedule_expr="1", next_run_at=now)
+        db.add(check)
+        db.commit()
+        check_id = check.id
+        token = _claim_scheduled(db, check, now, now + timedelta(minutes=1))
+    _execute(check_id, token)
+    with session_factory()() as db:
+        check = db.get(Check, check_id)
+        assert check.claim_token is None and check.claimed_until is None
+        assert db.query(CheckRun).filter_by(check_id=check_id, status="error").count() == 1
+        check.status = "archived"
+        db.commit()

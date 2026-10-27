@@ -1,8 +1,8 @@
 """Worker loop: claim due checks and run them.
 
-Claiming uses an optimistic compare-and-swap UPDATE on next_run_at, so multiple
-workers can poll the same database without double-running a check (on PostgreSQL;
-run a single worker against SQLite). See issue #25 for the queue-based design.
+Claims are durable, expiring, and fenced by an ownership token. A crash can
+repeat source execution; only the current owner may persist its result. Run a
+single worker against SQLite. Cross-worker source budgets remain issue #25.
 
 The API's manual-run path goes through the same CAS (``claim_due_slot``): a run
 started by hand consumes the slot it would otherwise have raced (#257).
@@ -13,6 +13,8 @@ import signal
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import date, datetime, timedelta
+from functools import partial
+from uuid import uuid4
 from weakref import WeakKeyDictionary
 
 from sqlalchemy import delete, update
@@ -20,10 +22,10 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.core.incidents import process_due_escalations
-from app.core.runner import compute_next_run, run_check
+from app.core.runner import StaleClaimError, compute_next_run, run_check
 from app.db import session_factory
 from app.models import AuditEntry, Check, utcnow
-from app.observability import WORKER_CLAIMS, WORKER_UP
+from app.observability import WORKER_CLAIMS, WORKER_LEASE_EXPIRED, WORKER_UP
 
 log = logging.getLogger(__name__)
 
@@ -123,7 +125,7 @@ def _cas_next_run(db: Session, check: Check, new: datetime | None) -> bool:
     expected = check.next_run_at
     res = db.execute(
         update(Check)
-        .where(Check.id == check.id, Check.next_run_at == expected)
+        .where(Check.id == check.id, Check.next_run_at == expected, Check.claim_token.is_(None))
         .values(next_run_at=new)
     )
     db.commit()
@@ -181,17 +183,58 @@ def claim_due_slot(db: Session, check: Check, now: datetime | None = None) -> bo
     return _cas_next_run(db, check, nxt)
 
 
-def _execute(check_id: int) -> None:
-    factory = session_factory()
-    with factory() as db:
+def _release_claim(check_id: int, token: str, restore: datetime | None = None) -> None:
+    with session_factory()() as db:
+        values = {"claim_token": None, "claimed_until": None}
+        if restore is not None:
+            values["next_run_at"] = restore
+        db.execute(update(Check).where(Check.id == check_id, Check.claim_token == token).values(**values))
+        db.commit()
+
+
+def _execute(check_id: int, token: str) -> None:
+    with session_factory()() as db:
         check = db.get(Check, check_id)
-        if check is None or check.status != "active":
+        if check is None or check.claim_token != token:
             return
-        run = run_check(db, check, triggered_by="schedule")
-        log.info(
-            "Ran check %s '%s' -> %s (%s violations)",
-            check.id, check.name, run.status, run.violation_count,
-        )
+        if check.status != "active":
+            _release_claim(check_id, token)
+            return
+        try:
+            run = run_check(db, check, triggered_by="schedule", claim_token=token)
+        except StaleClaimError:
+            log.warning("Discarded stale scheduled result for check %s", check_id)
+            return
+        # A successful run clears the lease atomically with result persistence.
+        # Unexpected errors leave the lease for recovery after expiration.
+        log.info("Ran check %s -> %s (%s violations)", check.id, run.status, run.violation_count)
+
+
+def _recover_expired(db: Session, now: datetime, check_id: int | None = None) -> None:
+    query = db.query(Check.id, Check.claim_token).filter(
+        Check.claimed_until.isnot(None), Check.claimed_until <= now,
+    )
+    if check_id is not None:
+        query = query.filter(Check.id == check_id)
+    expired = query.all()
+    for check_id, token in expired:
+        result = db.execute(update(Check).where(
+            Check.id == check_id, Check.claim_token == token, Check.claimed_until <= now,
+        ).values(claim_token=None, claimed_until=None, next_run_at=now))
+        db.commit()
+        if result.rowcount == 1:
+            WORKER_LEASE_EXPIRED.inc()
+            log.warning("Expired scheduler lease recovered for check %s", check_id)
+
+
+def _claim_scheduled(db: Session, check: Check, now: datetime, nxt: datetime | None) -> str | None:
+    token = str(uuid4())
+    result = db.execute(update(Check).where(
+        Check.id == check.id, Check.next_run_at == check.next_run_at, Check.claim_token.is_(None),
+    ).values(next_run_at=nxt, claim_token=token,
+             claimed_until=now + timedelta(seconds=get_settings().worker_lease_seconds)))
+    db.commit()
+    return token if result.rowcount == 1 else None
 
 
 def poll_once(executor: ThreadPoolExecutor) -> int:
@@ -223,6 +266,7 @@ def poll_once(executor: ThreadPoolExecutor) -> int:
     if not available:
         return 0
     with factory() as db:
+        _recover_expired(db, now)
         # Initialize schedules that were activated without a next_run_at
         missing = (
             db.query(Check)
@@ -236,7 +280,8 @@ def poll_once(executor: ThreadPoolExecutor) -> int:
 
         due_query = (
             db.query(Check)
-            .filter(Check.status == "active", Check.next_run_at.isnot(None), Check.next_run_at <= now)
+            .filter(Check.status == "active", Check.next_run_at.isnot(None), Check.next_run_at <= now,
+                    Check.claim_token.is_(None))
         )
         if pending:
             due_query = due_query.filter(Check.id.notin_(pending))
@@ -264,14 +309,17 @@ def poll_once(executor: ThreadPoolExecutor) -> int:
                 )
                 _cas_next_run(db, check, None)
                 continue
-            if _cas_next_run(db, check, nxt):  # we won the claim
+            if token := _claim_scheduled(db, check, now, nxt):
                 try:
-                    pending[check.id] = executor.submit(_execute, check.id)
+                    future = executor.submit(partial(_execute, token=token), check.id)
+                    pending[check.id] = future
+                    future.add_done_callback(
+                        lambda f, cid=check.id, owner=token, due_at=scheduled_for:
+                            _release_claim(cid, owner, due_at) if f.cancelled() else None
+                    )
                 except Exception:
                     # Submission failures must not silently skip this schedule.
-                    db.execute(update(Check).where(Check.id == check.id, Check.next_run_at == nxt)
-                               .values(next_run_at=scheduled_for))
-                    db.commit()
+                    _release_claim(check.id, token, scheduled_for)
                     raise
                 claimed += 1
                 WORKER_CLAIMS.inc()

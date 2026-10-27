@@ -8,6 +8,11 @@
   "time": { "from": "now-3h", "to": "now" },
   "panels": [
     {
+      "id": 98, "type": "stat", "title": "Expired worker leases (1h)",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 20 },
+      "targets": [{ "expr": "sum(increase(dq_worker_lease_expired_total[1h]))" }]
+    },
+    {
       "id": 1, "type": "timeseries", "title": "API requests/s by status",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
       "datasource": { "uid": "dq-prometheus" },

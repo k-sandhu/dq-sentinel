@@ -216,6 +216,7 @@ class Settings(BaseSettings):
     # Worker
     worker_poll_seconds: int = 15
     worker_concurrency: int = Field(default=1, ge=1)
+    worker_lease_seconds: int = Field(default=900, ge=1)
     worker_metrics_port: int = 9100
     # SLA evaluation cadence (#102): the worker recomputes SLA rollups at most
     # this often (a row per SLA per pass, so don't set it as low as the poll).

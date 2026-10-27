@@ -222,3 +222,7 @@ checks-as-code, reconciliation, BI lineage, PII classification). See the
 ## License
 
 MIT
+
+### Worker crash recovery
+
+Scheduled claims expire after `DQ_WORKER_LEASE_SECONDS` (default 900; positive seconds). Set this longer than the slowest expected check. An expired claim is retried and emits `dq_worker_lease_expired_total` and a warning with the check ID. Source queries can execute more than once after a crash or slow run; ownership fences stale results, and result persistence clears the claim atomically. Use one worker with SQLite. Cross-worker source concurrency limits, timeouts, query budgets, retry classification and notification delivery guarantees remain future work (#25).
