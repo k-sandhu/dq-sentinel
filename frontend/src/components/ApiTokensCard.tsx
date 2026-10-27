@@ -126,7 +126,7 @@ export function ApiTokensCard() {
               <p>Choose a descriptive name, such as airflow-prod-orders. At least one connection is required.</p>
               <ErrorBox error={create.error || connections.error} />
               <label className="field">Name
-                <input value={name} maxLength={255} onChange={(event) => setName(event.target.value)} />
+                <input type="text" value={name} maxLength={255} onChange={(event) => setName(event.target.value)} />
               </label>
               <label className="field">Role
                 <select value={role} onChange={(event) => setRole(event.target.value as "viewer" | "editor")}>
