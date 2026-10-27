@@ -662,6 +662,18 @@ def test_monitor_pack_scoped_to_grants(client, admin_headers, source_db):
         assert resp.status_code == 404, resp.text
         assert resp.json()["detail"] == missing.json()["detail"]
 
+    # Batch history obeys the same hidden-dataset boundary even for a valid check id.
+    from app.db import session_factory
+    from app.models import Check
+
+    with session_factory()() as db:
+        check = Check(dataset_id=ds_b["id"], name="hidden monitor", check_type="row_count_anomaly")
+        db.add(check)
+        db.commit()
+        check_id = check.id
+    history = client.get(f"{QH}/runs/monitor-history", params={"dataset_id": ds_b["id"], "check_id": check_id}, headers=ah)
+    assert history.status_code == 404
+
     # Monitoring on B was NOT silently disabled.
     assert client.get(base, headers=h).json()["enabled"] is True
 
@@ -670,6 +682,7 @@ def test_monitor_pack_scoped_to_grants(client, admin_headers, source_db):
     _grant(client, h, carol["id"], b["id"], "viewer")
     ch = _login(client, f"rs-mp-carol-{sfx}@x.com")
     assert client.get(base, headers=ch).status_code == 200
+    assert client.get(f"{QH}/runs/monitor-history", params={"dataset_id": ds_b["id"], "check_id": check_id}, headers=ch).status_code == 200
     assert client.patch(base, json={"enabled": False}, headers=ch).status_code == 403
     assert client.post(f"{base}/reconcile", headers=ch).status_code == 403
     assert client.get(base, headers=h).json()["enabled"] is True

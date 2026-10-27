@@ -12,7 +12,8 @@ vi.mock("./confirm", () => ({ useConfirm: () => mocks.confirm }));
 const token = { id: 4, name: "ci", role: "viewer", connection_scope: [1], created_at: "2026-01-01T00:00:00", expires_at: "2099-01-01T00:00:00", last_used_at: null, revoked_at: null, created_by_id: 1 };
 function show() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  render(<BrowserRouter><QueryClientProvider client={client}><ApiTokensCard /></QueryClientProvider></BrowserRouter>);
+  const view = render(<BrowserRouter><QueryClientProvider client={client}><ApiTokensCard /></QueryClientProvider></BrowserRouter>);
+  return { client, ...view };
 }
 beforeEach(() => {
   vi.clearAllMocks();
@@ -23,7 +24,7 @@ beforeEach(() => {
 });
 describe("API tokens card", () => {
   it("requires explicit scope and shows the secret once", async () => {
-    const user = userEvent.setup(); show();
+    const user = userEvent.setup(); const { client } = show();
     await user.click(await screen.findByRole("button", { name: "Create token" }));
     await user.type(screen.getByLabelText("Name"), "ci");
     expect(screen.getByRole("button", { name: "Create" })).toBeDisabled();
@@ -33,8 +34,21 @@ describe("API tokens card", () => {
     expect(mocks.post).toHaveBeenCalledWith("/tokens", { name: "ci", role: "viewer", connection_scope: [1], expires_in_days: 400 });
     await user.click(screen.getAllByRole("button", { name: "Close" })[1]);
     await waitFor(() => expect(screen.queryByText("dqs_once")).not.toBeInTheDocument());
+    await waitFor(() => expect(client.getMutationCache().getAll()).toHaveLength(0));
     await user.click(screen.getByRole("button", { name: "Create token" }));
     expect(screen.queryByText("dqs_once")).not.toBeInTheDocument();
+  });
+  it("discards a pending creation response from the cache after navigation unmounts the card", async () => {
+    const user = userEvent.setup(); const { client, unmount } = show();
+    let resolve!: (value: unknown) => void;
+    mocks.post.mockReturnValueOnce(new Promise(r => { resolve = r; }));
+    await user.click(await screen.findByRole("button", { name: "Create token" }));
+    await user.type(screen.getByLabelText("Name"), "ci");
+    await user.click(await screen.findByLabelText("Orders"));
+    await user.click(screen.getByRole("button", { name: "Create" }));
+    unmount();
+    resolve({ ...token, token: "dqs_once" });
+    await waitFor(() => expect(client.getMutationCache().getAll()).toHaveLength(0));
   });
   it("confirms revocation and honors cancellation", async () => {
     const user = userEvent.setup(); show();

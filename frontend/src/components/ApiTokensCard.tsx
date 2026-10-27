@@ -34,6 +34,9 @@ export function ApiTokensCard() {
   });
   const refresh = () => client.invalidateQueries({ queryKey: qk.apiTokens.all });
   const create = useMutation({
+    // The response contains the one-time secret. Drop it from the mutation cache
+    // as soon as the dialog resets or this component unmounts.
+    gcTime: 0,
     mutationFn: () => api.post<ApiTokenCreated>("/tokens", {
       name, role, connection_scope: scope, expires_in_days: days,
     }),
