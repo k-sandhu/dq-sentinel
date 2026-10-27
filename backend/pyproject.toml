@@ -40,6 +40,7 @@ dependencies = [
     "pydantic-settings>=2.4",
     "PyJWT>=2.15.1",
     "bcrypt>=4.2",
+    "cryptography>=50.0.2,<51",  # authenticated encryption of stored connection DSNs
     "croniter>=3.0",
     "duckdb>=1.1",
     "duckdb-engine>=0.13",

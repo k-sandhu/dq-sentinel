@@ -187,6 +187,13 @@ def init_db() -> None:
     _run_migrations(engine)
 
     settings = get_settings()
+    from app.crypto import rewrite_credentials
+
+    if not settings.encryption_key and not settings.allow_plaintext_dsns:
+        raise RuntimeError("Set DQ_ENCRYPTION_KEY or explicitly enable DQ_ALLOW_PLAINTEXT_DSNS in development.")
+    if not settings.encryption_key:
+        log.warning("Connection DSNs are stored as plaintext; configure DQ_ENCRYPTION_KEY.")
+    rewrite_credentials(engine, settings.encryption_key, settings.encryption_key)
     with session_factory()() as db:
         if db.query(models.User).count() == 0:
             admin = models.User(

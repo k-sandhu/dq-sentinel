@@ -46,6 +46,8 @@ services:
       # REQUIRED in prod — a strong password for the seeded first admin.
       DQ_BOOTSTRAP_ADMIN_PASSWORD: ${DQ_BOOTSTRAP_ADMIN_PASSWORD:-}
       DQ_CORS_ORIGINS: http://localhost:3000,http://localhost:5173
+      DQ_ENCRYPTION_KEY: ${DQ_ENCRYPTION_KEY:-}
+      DQ_ALLOW_PLAINTEXT_DSNS: ${DQ_ALLOW_PLAINTEXT_DSNS:-false}
       DQ_LOG_FORMAT: json
       # LLM (provider-agnostic): set ANTHROPIC_API_KEY for native Anthropic, or
       # DQ_LLM_API_KEY + DQ_LLM_MODEL for any OpenAI-compatible endpoint

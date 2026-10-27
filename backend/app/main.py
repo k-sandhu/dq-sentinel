@@ -12,6 +12,7 @@ from app import __version__
 from app.api import api_router
 from app.api.lineage import router as lineage_router
 from app.config import get_settings
+from app.crypto import CredentialEncryptionError
 from app.db import init_db
 from app.observability import (
     RequestContextMiddleware,
@@ -118,6 +119,10 @@ def create_app() -> FastAPI:
         docs_url="/docs",
         openapi_url="/api/v1/openapi.json",
     )
+    @app.exception_handler(CredentialEncryptionError)
+    async def credential_error(_request, exc: CredentialEncryptionError):
+        return JSONResponse({"detail": str(exc)}, status_code=500)
+
     # Middleware order matters: add_middleware() prepends, so the LAST added is
     # outermost. Desired stack: CORS -> RequestContext -> UnhandledError -> routes,
     # which keeps the request-id contextvar alive while the 500 body is built.

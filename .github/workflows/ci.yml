@@ -208,6 +208,7 @@ jobs:
         # satisfiable by a real deployment.
         run: |
           {
+            echo "DQ_ENCRYPTION_KEY=$(python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
             echo "DQ_SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
             echo "DQ_BOOTSTRAP_ADMIN_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
           } >> "$GITHUB_ENV"

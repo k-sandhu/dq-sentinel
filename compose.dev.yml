@@ -37,6 +37,7 @@ services:
   api:
     environment:
       DQ_ENV: dev
+      DQ_ALLOW_PLAINTEXT_DSNS: "true"  # explicit throwaway local demo opt-in
       DQ_SECRET_KEY: dev-only-secret-change-me
       DQ_BOOTSTRAP_ADMIN_PASSWORD: admin123
 
@@ -46,5 +47,6 @@ services:
     # services, but a compose overlay merges per service, not per anchor.
     environment:
       DQ_ENV: dev
+      DQ_ALLOW_PLAINTEXT_DSNS: "true"  # explicit throwaway local demo opt-in
       DQ_SECRET_KEY: dev-only-secret-change-me
       DQ_BOOTSTRAP_ADMIN_PASSWORD: admin123
