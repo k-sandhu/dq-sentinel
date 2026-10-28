@@ -50,6 +50,7 @@ CHECK_RUN_SECONDS = Histogram(
 EXCEPTIONS_RECORDED = Counter(
     "dq_exceptions_recorded_total", "Exception rows captured by failed runs"
 )
+WORKER_LEASE_EXPIRED = Counter("dq_worker_lease_expired_total", "Expired scheduler claims recovered")
 WORKER_CLAIMS = Counter("dq_worker_claims_total", "Checks claimed by the scheduler worker")
 WORKER_UP = Gauge("dq_worker_up", "1 while a worker process is polling")
 SOURCE_QUERIES = Counter(

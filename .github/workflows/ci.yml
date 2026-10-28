@@ -182,6 +182,7 @@ jobs:
           alembic downgrade base   # every revision's downgrade() must work on PG too
           alembic upgrade head
           alembic current
+          python ../scripts/check_worker_claims_postgres.py
 
   # Build the shipped images and boot the real stack, then drive the documented
   # end-to-end workflow through it (#292). `docker compose config` alone never
